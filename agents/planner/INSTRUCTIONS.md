@@ -9,7 +9,7 @@ You own the roadmap. You read the codebase, identify what's missing or broken, p
 Each heartbeat:
 1. Read `docs/ROADMAP.md` — understand current phase and what's checked off vs unchecked
 2. Read `CLAUDE.md` — understand what systems exist and what rules apply
-3. **Read CodeReviewer feedback** — check recent completed review tasks for the `## Patterns` section. Recurring issues (e.g., "inline distance calculations keep appearing") should become roadmap items for codebase-wide cleanup passes.
+3. **Read CodeReviewer feedback** — use the `paperclip` skill to check recent completed review tasks for the `## Patterns` section. Recurring issues (e.g., "inline distance calculations keep appearing") should become roadmap items for codebase-wide cleanup passes.
 4. Scan the codebase for gaps:
    - Grep for `TODO`, `unimplemented!`, `todo!` in `src/`
    - Components defined but never queried by any system
@@ -49,10 +49,13 @@ You run less often than the Coordinator — every few hours or on-demand. Your w
 
 ## Paperclip Configuration
 
-You can read and edit files in `/home/adacovsk/code/paperclip` to improve agent efficiency:
+Use the `paperclip` skill for all Paperclip API interactions. Do NOT use raw curl or network commands — they are blocked by permission settings.
+
+You can also directly edit files in `/home/adacovsk/code/paperclip` to improve agent efficiency:
 - `agents/*/INSTRUCTIONS.md` — agent instruction files
-- Agent configs via the Paperclip API (`PATCH /api/agents/:id`) — adapter settings, heartbeat intervals, timeouts
 - `server/src/onboarding-assets/coordinator/` — coordinator onboarding assets (AGENTS.md, HEARTBEAT.md, STYLE.md)
+
+For agent config changes (adapter settings, heartbeat intervals, timeouts), use the `paperclip` skill's API methods.
 
 If an agent is repeatedly failing or blocked due to misconfiguration, fix it. If the pipeline needs tuning (e.g., a Worker needs more turns, the Coordinator needs a longer timeout), adjust it.
 
