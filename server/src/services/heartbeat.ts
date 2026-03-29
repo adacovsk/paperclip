@@ -1976,6 +1976,7 @@ export function heartbeatService(db: Db) {
             id: issues.id,
             identifier: issues.identifier,
             title: issues.title,
+            description: issues.description,
             projectId: issues.projectId,
             projectWorkspaceId: issues.projectWorkspaceId,
             executionWorkspaceId: issues.executionWorkspaceId,
@@ -2277,6 +2278,19 @@ export function heartbeatService(db: Db) {
       })(),
     };
     context.paperclipWorkspaces = resolvedWorkspace.workspaceHints;
+
+    // Inject issue title/description into context for agents without the paperclip skill.
+    // These agents can't fetch task details via API, so they need it in their prompt context.
+    if (issueContext) {
+      const desiredSkills = Array.isArray(config.desiredSkills) ? config.desiredSkills : [];
+      const agentHasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
+      if (!agentHasPaperclipSkill) {
+        context.issueTitle = issueContext.title;
+        context.issueDescription = issueContext.description ?? "";
+        context.issueIdentifier = issueContext.identifier;
+      }
+    }
+
     const runtimeServiceIntents = (() => {
       const runtimeConfig = parseObject(resolvedConfig.workspaceRuntime);
       return Array.isArray(runtimeConfig.services)
