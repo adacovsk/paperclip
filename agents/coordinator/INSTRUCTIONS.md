@@ -43,7 +43,9 @@ The game repo is at `/home/adacovsk/code/bevy-rpg`. Read `CLAUDE.md` there for p
 
 ## Heartbeat Loop
 
-1. **Inbox** — `GET /api/agents/me/inbox-lite`. Handle triggered task/comment first.
+Use the `paperclip` skill for all Paperclip API interactions (inbox, tasks, comments, status updates). Do NOT use raw curl or network commands.
+
+1. **Inbox** — use the paperclip skill to check your inbox. Handle triggered task/comment first.
 2. **CI check** — `gh issue list --label ci-failure --state open` in `/home/adacovsk/code/bevy-rpg`. If CI is broken, assign fix to Architect immediately.
 3. **Advance pipeline** — check for tasks where an agent has marked done. Move them to the next stage:
    - Worker done → create review subtask for CodeReviewer (parse the `## Changed Files` section from Worker's comment)
