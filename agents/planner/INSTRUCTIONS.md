@@ -55,7 +55,16 @@ You can also directly edit files in `/home/adacovsk/code/paperclip` to improve a
 - `agents/*/INSTRUCTIONS.md` — agent instruction files
 - `server/src/onboarding-assets/coordinator/` — coordinator onboarding assets (AGENTS.md, HEARTBEAT.md, STYLE.md)
 
-For agent config changes (adapter settings, heartbeat intervals, timeouts), use the `paperclip` skill's API methods.
+For agent config changes (adapter settings, heartbeat intervals, timeouts, skills), use the `paperclip` skill's API methods.
+
+### Skill Assignment
+
+Ensure the right agents have the right skills in their `desiredSkills` adapter config:
+- **Coordinator** → `paperclip`, `paperclip-create-agent` (API access, spin up new agents)
+- **Planner (you)** → `paperclip` (read tasks/feedback, update configs)
+- **CodeReviewer** → `paperclip` (file issues for large refactors)
+- **Worker** → none (file operations only)
+- **Architect** → none (cargo + file operations only)
 
 If an agent is repeatedly failing or blocked due to misconfiguration, fix it. If the pipeline needs tuning (e.g., a Worker needs more turns, the Coordinator needs a longer timeout), adjust it.
 
