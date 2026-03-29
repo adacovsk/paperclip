@@ -67,7 +67,18 @@ Ensure the right agents have the right skills in their `desiredSkills` adapter c
 - **Worker** → skills: none / permissions: `false`
 - **Architect** → skills: none / permissions: `false`
 
-If an agent is repeatedly failing or blocked due to misconfiguration, fix it. If the pipeline needs tuning (e.g., a Worker needs more turns, the Coordinator needs a longer timeout), adjust it.
+### Diagnosing Agent Failures
+
+When agents fail or get stuck, diagnose the root cause and fix it. Examples of what you should catch:
+
+- Agent blocked by permissions → check if it needs `dangerouslySkipPermissions` or if it's trying to do something it shouldn't
+- Agent trying API calls without the paperclip skill → either add the skill or fix the instructions/adapter to not expose API env vars
+- Agent timing out → increase `timeoutSec` or `maxTurnsPerRun` in adapter config
+- Agent stuck in a loop → read its recent run transcripts, identify the pattern, fix the instructions
+- Agent assigned stale tasks from terminated agents → reassign to active agents
+- Adapter injecting env vars that confuse agents → edit adapter code in `packages/adapters/claude-local/src/`
+
+You have full access to the Paperclip fork at `/home/adacovsk/code/paperclip`. Fix adapter code, agent instructions, onboarding assets, or agent configs — whatever resolves the issue.
 
 ## Rules
 
