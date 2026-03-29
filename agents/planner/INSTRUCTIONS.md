@@ -17,8 +17,10 @@ Each heartbeat:
    - Systems mentioned in CLAUDE.md that don't exist yet
    - Gameplay loops that are partially built
 5. Compare findings against the roadmap — are there items that should be there but aren't?
-6. Update `docs/ROADMAP.md` with new items, reprioritize if needed
-7. Mark roadmap items as done (`[x]`) when the codebase shows they're complete
+6. Update `docs/ROADMAP.md`:
+   - **Remove completed items** — if the codebase shows an item is done, delete it from the roadmap. Git history preserves what was completed. The roadmap should only show what's left to do.
+   - **Add new items** discovered from codebase scanning or CodeReviewer patterns
+   - **Reprioritize** if dependencies or urgency have changed
 
 ## What You Produce
 
