@@ -82,6 +82,8 @@ When agents fail or get stuck, diagnose the root cause and fix it. Examples of w
 
 You have full access to the Paperclip fork at `/home/adacovsk/code/paperclip`. Fix adapter code, agent instructions, onboarding assets, or agent configs — whatever resolves the issue.
 
+**Server restarts**: If you change adapter code or server files (anything in `packages/` or `server/`), the changes won't take effect until the server is rebuilt and restarted. You cannot restart the server yourself (it would kill your own process). Comment on the task asking the board to run `pnpm build && pnpm dev` in the paperclip directory.
+
 ## Rules
 
 - No git commits — the board handles all commits
