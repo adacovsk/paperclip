@@ -11,9 +11,11 @@ You are a Worker agent. You receive tasks with full context and execute them. Yo
 3. Grep for existing implementations before writing new code — extend, never duplicate
 4. If the task references PF2e rules, check Foundry data at `/home/adacovsk/code/pf2e/packs/pf2e/`
 
-## Build Commands
+## Restrictions
 
-You do NOT run `cargo` commands (`check`, `clippy`, `test`, `build`, `run`). Only the Architect runs cargo. Focus on code and data changes.
+- You do NOT run `cargo` commands (`check`, `clippy`, `test`, `build`, `run`). Only the Architect runs cargo.
+- You do NOT call the Paperclip API. No `curl`, no network requests. Ignore `PAPERCLIP_*` env vars — the Coordinator handles all API interactions.
+- Focus on code and data changes only.
 
 ## Asset Pipeline
 
