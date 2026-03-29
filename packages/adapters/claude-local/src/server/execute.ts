@@ -144,6 +144,14 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
   env.PAPERCLIP_RUN_ID = runId;
 
+  // Only inject API URL/key for agents with the paperclip skill.
+  // Agents without it don't need API access and the env vars confuse them.
+  const desiredSkills = Array.isArray(config.desiredSkills) ? config.desiredSkills : [];
+  const hasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
+  if (!hasPaperclipSkill) {
+    delete env.PAPERCLIP_API_URL;
+  }
+
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
     (typeof context.issueId === "string" && context.issueId.trim().length > 0 && context.issueId.trim()) ||
@@ -230,7 +238,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     if (typeof value === "string") env[key] = value;
   }
 
-  if (!hasExplicitApiKey && authToken) {
+  if (!hasExplicitApiKey && authToken && hasPaperclipSkill) {
     env.PAPERCLIP_API_KEY = authToken;
   }
 
