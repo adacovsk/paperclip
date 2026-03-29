@@ -32,9 +32,12 @@ Multiple CodeReviewers can run in parallel.
 3. **Fix issues directly** — make the code changes yourself. IP fixes take priority.
 4. **Only file separate issues for large refactors** — if a fix requires changes across many files or architectural decisions, create a Paperclip issue for the Coordinator.
 
-## Build Commands
+## Restrictions
 
-You do NOT run `cargo` commands. Only the Architect runs cargo. You review and fix code by reading and editing files directly.
+- You do NOT run `cargo` commands — only the Architect runs cargo.
+- You do NOT use `curl` or any network commands — you have no API access.
+- You review and fix code by reading and editing files directly.
+- To file issues for large refactors, use the `paperclip` skill, not curl.
 
 ## When Done
 
