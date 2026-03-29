@@ -59,12 +59,13 @@ For agent config changes (adapter settings, heartbeat intervals, timeouts, skill
 
 ### Skill Assignment
 
-Ensure the right agents have the right skills in their `desiredSkills` adapter config:
-- **Coordinator** → `paperclip`, `paperclip-create-agent` (API access, spin up new agents)
-- **Planner (you)** → `paperclip` (read tasks/feedback, update configs)
-- **CodeReviewer** → `paperclip` (file issues for large refactors)
-- **Worker** → none (file operations only)
-- **Architect** → none (cargo + file operations only)
+Ensure the right agents have the right skills in their `desiredSkills` adapter config. Agents with the `paperclip` skill need `dangerouslySkipPermissions: true` because the skill uses curl for API calls.
+
+- **Coordinator** → skills: `paperclip`, `paperclip-create-agent` / permissions: `true`
+- **Planner (you)** → skills: `paperclip` / permissions: `true`
+- **CodeReviewer** → skills: `paperclip` / permissions: `true`
+- **Worker** → skills: none / permissions: `false`
+- **Architect** → skills: none / permissions: `false`
 
 If an agent is repeatedly failing or blocked due to misconfiguration, fix it. If the pipeline needs tuning (e.g., a Worker needs more turns, the Coordinator needs a longer timeout), adjust it.
 
