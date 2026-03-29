@@ -31,7 +31,7 @@ import {
   resolveDefaultLogsDir,
   resolvePaperclipInstanceId,
 } from "../config/home.js";
-import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
+import { bootstrapCoordinatorInvite } from "./auth-bootstrap-coordinator.js";
 import { printPaperclipCliBanner } from "../utils/banner.js";
 
 type SetupMode = "quickstart" | "advanced";
@@ -456,7 +456,7 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
 
   if (canCreateBootstrapInviteImmediately({ database, server })) {
     p.log.step("Generating bootstrap CEO invite");
-    await bootstrapCeoInvite({ config: configPath });
+    await bootstrapCoordinatorInvite({ config: configPath });
   }
 
   let shouldRunNow = opts.run === true || opts.yes === true;

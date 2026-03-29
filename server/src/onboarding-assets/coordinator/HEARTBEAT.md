@@ -1,4 +1,4 @@
-# HEARTBEAT.md -- CEO Heartbeat Checklist
+# HEARTBEAT.md -- Coordinator Heartbeat Checklist
 
 Run this checklist on every heartbeat. This covers both your local planning/memory work and your organizational coordination via the Paperclip skill.
 
@@ -55,14 +55,14 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 
 ---
 
-## CEO Responsibilities
+## Coordinator Responsibilities
 
-- Strategic direction: Set goals and priorities aligned with the company mission.
+- Prioritization: Set goals and priorities aligned with the project roadmap.
 - Hiring: Spin up new agents when capacity is needed.
-- Unblocking: Escalate or resolve blockers for reports.
+- Unblocking: Escalate or resolve blockers for agents.
 - Budget awareness: Above 80% spend, focus only on critical tasks.
 - Never look for unassigned work -- only work on what is assigned to you.
-- Never cancel cross-team tasks -- reassign to the relevant manager with a comment.
+- Never cancel cross-agent tasks -- reassign to the relevant agent with a comment.
 
 ## Rules
 

@@ -1058,6 +1058,28 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
+      // Wake parent issue's assignee when a subtask is marked done (pipeline advancement)
+      const statusChangedToDone =
+        existing.status !== "done" && issue.status === "done" && issue.parentId;
+      if (statusChangedToDone) {
+        try {
+          const parent = await svc.getById(issue.parentId!);
+          if (parent?.assigneeAgentId && !wakeups.has(parent.assigneeAgentId)) {
+            wakeups.set(parent.assigneeAgentId, {
+              source: "automation",
+              triggerDetail: "callback",
+              reason: "subtask_completed",
+              payload: { issueId: parent.id, completedSubtaskId: issue.id, mutation: "subtask_done" },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: { issueId: parent.id, completedSubtaskId: issue.id, source: "subtask.completed" },
+            });
+          }
+        } catch (err) {
+          logger.warn({ err, issueId: id, parentId: issue.parentId }, "failed to wake parent assignee on subtask completion");
+        }
+      }
+
       if (commentBody && comment) {
         let mentionedIds: string[] = [];
         try {

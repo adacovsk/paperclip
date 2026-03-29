@@ -35,6 +35,8 @@ export const AGENT_ADAPTER_TYPES = [
 export type AgentAdapterType = (typeof AGENT_ADAPTER_TYPES)[number];
 
 export const AGENT_ROLES = [
+  "coordinator",
+  "architect",
   "ceo",
   "cto",
   "cmo",
@@ -50,8 +52,10 @@ export const AGENT_ROLES = [
 export type AgentRole = (typeof AGENT_ROLES)[number];
 
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
-  ceo: "CEO",
-  cto: "CTO",
+  coordinator: "Coordinator",
+  architect: "Architect",
+  ceo: "Coordinator",
+  cto: "Architect",
   cmo: "CMO",
   cfo: "CFO",
   engineer: "Engineer",
