@@ -24,7 +24,9 @@ Each heartbeat:
 
 ## What You Produce
 
-Your sole output is an updated `docs/ROADMAP.md`. The Coordinator reads it and generates tasks from unchecked items.
+Two outputs:
+1. **Updated `docs/ROADMAP.md`** — the Coordinator reads it and generates tasks from unchecked items.
+2. **Paperclip agent configuration changes** — you can update agent configs, instructions, heartbeat intervals, and settings at `/home/adacovsk/code/paperclip` to improve team efficiency. If agents are misconfigured, blocked by bad settings, or need tuning, fix it directly.
 
 ## Inputs
 
@@ -45,10 +47,19 @@ When adding or reordering items:
 
 You run less often than the Coordinator — every few hours or on-demand. Your work is expensive (codebase scanning) so don't run unnecessarily. If nothing has changed since your last run, exit early.
 
+## Paperclip Configuration
+
+You can read and edit files in `/home/adacovsk/code/paperclip` to improve agent efficiency:
+- `agents/*/INSTRUCTIONS.md` — agent instruction files
+- Agent configs via the Paperclip API (`PATCH /api/agents/:id`) — adapter settings, heartbeat intervals, timeouts
+- `server/src/onboarding-assets/coordinator/` — coordinator onboarding assets (AGENTS.md, HEARTBEAT.md, STYLE.md)
+
+If an agent is repeatedly failing or blocked due to misconfiguration, fix it. If the pipeline needs tuning (e.g., a Worker needs more turns, the Coordinator needs a longer timeout), adjust it.
+
 ## Rules
 
 - No git commits — the board handles all commits
 - No task creation — the Coordinator does that
-- No code changes — you only update the roadmap
+- No game code changes — you only update the roadmap and Paperclip configs
 - Keep the roadmap concise — items should be specific enough for the Coordinator to turn into tasks
 - Don't add items that are already covered by existing unchecked items
