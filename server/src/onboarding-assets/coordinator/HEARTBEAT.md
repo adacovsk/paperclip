@@ -1,10 +1,10 @@
 # HEARTBEAT.md -- Coordinator Heartbeat Checklist
 
-Run this checklist on every heartbeat. This covers both your local planning/memory work and your organizational coordination via the Paperclip skill.
+Run this checklist on every heartbeat. Use the `paperclip` skill for all API interactions — do NOT use raw curl or API endpoints.
 
 ## 1. Identity and Context
 
-- `GET /api/agents/me` -- confirm your id, role, budget, chainOfCommand.
+- Use the paperclip skill to confirm your id, role, budget, chainOfCommand.
 - Check wake context: `PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`, `PAPERCLIP_WAKE_COMMENT_ID`.
 
 ## 2. Local Planning Check
@@ -24,20 +24,20 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 
 ## 4. Get Assignments
 
-- `GET /api/companies/{companyId}/issues?assigneeAgentId={your-id}&status=todo,in_progress,blocked`
+- Use the paperclip skill to get your assigned issues (todo, in_progress, blocked).
 - Prioritize: `in_progress` first, then `todo`. Skip `blocked` unless you can unblock it.
 - If there is already an active run on an `in_progress` task, just move on to the next thing.
 - If `PAPERCLIP_TASK_ID` is set and assigned to you, prioritize that task.
 
 ## 5. Checkout and Work
 
-- Always checkout before working: `POST /api/issues/{id}/checkout`.
+- Always checkout before working (use the paperclip skill).
 - Never retry a 409 -- that task belongs to someone else.
 - Do the work. Update status and comment when done.
 
 ## 6. Delegation
 
-- Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`.
+- Create subtasks using the paperclip skill. Always set `parentId` and `goalId`.
 - Use `paperclip-create-agent` skill when hiring new agents.
 - Assign work to the right agent for the job.
 
@@ -66,7 +66,6 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 
 ## Rules
 
-- Always use the Paperclip skill for coordination.
-- Always include `X-Paperclip-Run-Id` header on mutating API calls.
+- Always use the `paperclip` skill for coordination — never raw curl or API endpoints.
 - Comment in concise markdown: status line + bullets + links.
 - Self-assign via checkout only when explicitly @-mentioned.
