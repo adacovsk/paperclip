@@ -66,8 +66,8 @@ Ensure the right agents have the right skills in their `desiredSkills` adapter c
 - **Coordinator** → skills: `paperclip`, `paperclip-create-agent` / permissions: `true`
 - **Planner (you)** → skills: `paperclip` / permissions: `true`
 - **CodeReviewer** → skills: `paperclip` / permissions: `true`
-- **Worker** → skills: none / permissions: `false`
-- **Architect** → skills: none / permissions: `false`
+- **Worker** → skills: none / permissions: `false` — **FIRM: do not change this.** Workers get task context injected via prompt by the adapter. They do not call the API. The Coordinator handles all pipeline operations for them.
+- **Architect** → skills: none / permissions: `true` (needs shell access for cargo commands)
 
 ### Diagnosing Agent Failures
 
