@@ -17,6 +17,7 @@ Execute tasks. Task context injected in prompt. No fixed domain — task descrip
 - No Paperclip API, no `curl`, no network. No skills, no API access.
 - No task management, no subtasks, no status updates (Coordinator handles pipeline)
 - Code and data changes only
+- **Your code must compile.** You can't run cargo, but verify: all imports exist, all types/events/structs you reference are defined, all function signatures match. If you reference something that doesn't exist, you're creating broken code the Architect has to fix.
 
 ## Tests
 
