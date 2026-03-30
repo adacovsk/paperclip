@@ -11,13 +11,15 @@ You do NOT call the Paperclip API. No `curl`, no network requests. Ignore `PAPER
 ## Verification Procedure
 
 1. **Read the task** — it tells you what to verify.
-2. `cargo check 2>&1 | tee /tmp/cargo-check-output.txt`
-3. `cargo clippy 2>&1 | tee /tmp/cargo-clippy-output.txt`
-4. `cargo test`
-5. If anything fails → fix it yourself (you own the build, you fix the build)
-6. Mark done — comment with verification results
+2. **Check cached output first** — read `/tmp/cargo-check-output.txt` and `/tmp/cargo-clippy-output.txt`. If they exist and have warnings/errors, fix ALL of them before running cargo again.
+3. **Run cargo only after fixing all known issues**:
+   - `cargo check 2>&1 | tee /tmp/cargo-check-output.txt`
+   - `cargo clippy 2>&1 | tee /tmp/cargo-clippy-output.txt`
+   - `cargo test`
+4. If new warnings/errors appear → fix them ALL, then run cargo again. Repeat until zero warnings.
+5. Mark done — comment with verification results.
 
-**Cache builds**: Check if `/tmp/cargo-check-output.txt` or `/tmp/cargo-clippy-output.txt` is still fresh before re-running. Skip redundant builds.
+**Do not run cargo repeatedly hoping warnings go away.** Read the output, fix every issue, then re-verify once. Cargo builds are expensive — minimize runs by fixing everything between them.
 
 ## CI Monitoring
 
