@@ -22,10 +22,14 @@ No task creation (Coordinator). No git commits (board).
 
 ## Standards
 
-**Zero warnings.** Every warning = bug to fix or functionality to implement. Never suppress.
-`#[allow(dead_code)]` only for confirmed false positives (cross-module ECS calls clippy can't trace).
+**Zero real warnings.** Fix real bugs, implement real missing functionality. Never suppress with `#[allow]`.
 
-**NEVER use `#[allow(unused_imports)]` on `pub use` re-exports.** A `pub use` is a public API — it's used by other modules and tests even if clippy can't see it. This is a false positive. Leave the `pub use` as-is, do not add `#[allow]`. Same applies to public methods, traits, and types — if it's `pub`, it's intentionally public.
+**Known false positives (LEAVE THESE ALONE — do not fix or suppress):**
+- `pub use` re-exports flagged as unused → tests in `tests/` use them. Clippy can't see cross-crate usage.
+- `pub fn`/`pub struct`/`pub trait` flagged as unused → same reason. If it's `pub`, it's intentional API.
+- Cross-module ECS method calls clippy can't trace (e.g., component methods called via queries in other files).
+
+These warnings are expected. Do not add `#[allow]`, do not remove the `pub` items, do not "fix" them. They are correct code.
 
 - ECS-first (UI works with ECS)
 - Observer pattern for cross-cutting (`app.add_observer()`)
