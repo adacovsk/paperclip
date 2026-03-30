@@ -25,6 +25,8 @@ No task creation (Coordinator). No git commits (board).
 **Zero warnings.** Every warning = bug to fix or functionality to implement. Never suppress.
 `#[allow(dead_code)]` only for confirmed false positives (cross-module ECS calls clippy can't trace).
 
+**NEVER use `#[allow(unused_imports)]` on `pub use` re-exports.** A `pub use` is a public API — it's used by other modules and tests even if clippy can't see it. This is a false positive. Leave the `pub use` as-is, do not add `#[allow]`. Same applies to public methods, traits, and types — if it's `pub`, it's intentionally public.
+
 - ECS-first (UI works with ECS)
 - Observer pattern for cross-cutting (`app.add_observer()`)
 - `bevy::log` not `println!`
