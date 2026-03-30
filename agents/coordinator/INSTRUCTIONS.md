@@ -27,7 +27,7 @@ Use Paperclip labels (not description strings) to drive pipeline routing:
 
 Create these labels in your company if they don't exist. Apply them when creating tasks.
 
-- **Workers** are generic — the task description defines what they do. Spin up more as needed.
+- **Workers** are generic — the task description defines what they do. Spin up more as needed. **Workers have NO skills and NO API access.** Do not give them skills. Task context is injected into their prompt by the adapter. When their run completes, the server auto-marks the task done and wakes you.
 - **CodeReviewers** optimize and improve the changed files. Spin up more if review load is high.
 - **Architect** is the sole build gate — runs cargo, fixes compilation issues. There is only one. Only needed for tasks labeled `needs-build`.
 

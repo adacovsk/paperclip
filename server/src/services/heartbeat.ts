@@ -2281,13 +2281,42 @@ export function heartbeatService(db: Db) {
 
     // Inject issue title/description into context for agents without the paperclip skill.
     // These agents can't fetch task details via API, so they need it in their prompt context.
-    if (issueContext) {
-      const desiredSkills = Array.isArray(config.desiredSkills) ? config.desiredSkills : [];
-      const agentHasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
-      if (!agentHasPaperclipSkill) {
-        context.issueTitle = issueContext.title;
-        context.issueDescription = issueContext.description ?? "";
-        context.issueIdentifier = issueContext.identifier;
+    // If no issueContext (agent woken without a specific task), find their first todo task.
+    const desiredSkills = Array.isArray(config.desiredSkills) ? config.desiredSkills : [];
+    const agentHasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
+    if (!agentHasPaperclipSkill) {
+      let taskContext = issueContext;
+      if (!taskContext) {
+        // Agent woken without a specific task — find their first todo assignment
+        const firstTodo = await db
+          .select({
+            id: issues.id,
+            identifier: issues.identifier,
+            title: issues.title,
+            description: issues.description,
+          })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.companyId, agent.companyId),
+              eq(issues.assigneeAgentId, agent.id),
+              eq(issues.status, "todo"),
+            ),
+          )
+          .orderBy(asc(issues.createdAt))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (firstTodo) {
+          taskContext = firstTodo;
+          // Set issueId in context so auto-done works after run completes
+          context.issueId = firstTodo.id;
+          context.taskId = firstTodo.id;
+        }
+      }
+      if (taskContext) {
+        context.issueTitle = taskContext.title;
+        context.issueDescription = taskContext.description ?? "";
+        context.issueIdentifier = taskContext.identifier;
       }
     }
 
