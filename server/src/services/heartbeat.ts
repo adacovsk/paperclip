@@ -2702,6 +2702,40 @@ export function heartbeatService(db: Db) {
           },
         });
         await releaseIssueExecutionAndPromote(finalizedRun);
+
+        // Auto-mark task done for agents without the paperclip skill.
+        // These agents can't update status themselves. When their run succeeds,
+        // mark the task done server-side and wake the parent task's assignee
+        // so the Coordinator advances the pipeline immediately.
+        if (outcome === "succeeded" && issueId) {
+          const desiredSkills = Array.isArray(config.desiredSkills) ? config.desiredSkills : [];
+          const agentHasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
+          if (!agentHasPaperclipSkill) {
+            const existingIssue = await issuesSvc.getById(issueId);
+            if (existingIssue && existingIssue.status !== "done" && existingIssue.status !== "cancelled") {
+              await issuesSvc.update(issueId, { status: "done" });
+              logger.info(
+                { issueId, agentId: agent.id, runId: run.id },
+                "auto-marked task done for agent without paperclip skill",
+              );
+              // Wake parent task's assignee (pipeline advancement)
+              if (existingIssue.parentId) {
+                const parentIssue = await issuesSvc.getById(existingIssue.parentId);
+                if (parentIssue?.assigneeAgentId) {
+                  await enqueueWakeup(parentIssue.assigneeAgentId, {
+                    source: "automation",
+                    triggerDetail: "callback",
+                    reason: "subtask_completed",
+                    payload: { issueId: parentIssue.id, completedSubtaskId: issueId },
+                    contextSnapshot: { issueId: parentIssue.id, completedSubtaskId: issueId, source: "subtask.completed" },
+                  }).catch((err: unknown) =>
+                    logger.warn({ err, issueId, parentId: existingIssue.parentId }, "failed to wake parent on auto-done"),
+                  );
+                }
+              }
+            }
+          }
+        }
       }
 
       if (finalizedRun) {
