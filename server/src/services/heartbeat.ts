@@ -1969,14 +1969,15 @@ export function heartbeatService(db: Db) {
     const context = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKey(context, null);
     const sessionCodec = getAdapterSessionCodec(agent.adapterType);
-    const issueId = readNonEmptyString(context.issueId);
-    const issueContext = issueId
+    let issueId = readNonEmptyString(context.issueId);
+    const issueContextRaw = issueId
       ? await db
           .select({
             id: issues.id,
             identifier: issues.identifier,
             title: issues.title,
             description: issues.description,
+            status: issues.status,
             projectId: issues.projectId,
             projectWorkspaceId: issues.projectWorkspaceId,
             executionWorkspaceId: issues.executionWorkspaceId,
@@ -1989,6 +1990,20 @@ export function heartbeatService(db: Db) {
           .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
           .then((rows) => rows[0] ?? null)
       : null;
+    // Clear stale context issueId if the task is already done/cancelled — allows auto-select to find a new task
+    const issueContext = (() => {
+      if (issueContextRaw && (issueContextRaw.status === "done" || issueContextRaw.status === "cancelled")) {
+        logger.info(
+          { agentId: agent.id, issueId, issueIdentifier: issueContextRaw.identifier, status: issueContextRaw.status },
+          "task-injection: clearing stale issueId (task already completed)",
+        );
+        issueId = null;
+        delete context.issueId;
+        delete context.taskId;
+        return null;
+      }
+      return issueContextRaw;
+    })();
     const issueAssigneeOverrides =
       issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAdapterOverrides(
@@ -2284,6 +2299,10 @@ export function heartbeatService(db: Db) {
     // If no issueContext (agent woken without a specific task), find their first todo task.
     const desiredSkills = Array.isArray(config.desiredSkills) ? config.desiredSkills : [];
     const agentHasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
+    logger.info(
+      { agentId: agent.id, agentName: agent.name, hasPaperclipSkill: agentHasPaperclipSkill, issueId, desiredSkills },
+      "task-injection: checking agent skill status",
+    );
     if (!agentHasPaperclipSkill) {
       let taskContext = issueContext;
       if (!taskContext) {
@@ -2306,12 +2325,22 @@ export function heartbeatService(db: Db) {
           .orderBy(asc(issues.createdAt))
           .limit(1)
           .then((rows) => rows[0] ?? null);
+        logger.info(
+          { agentId: agent.id, foundTask: !!firstTodo, taskId: firstTodo?.id, taskIdentifier: firstTodo?.identifier },
+          "task-injection: auto-select result",
+        );
         if (firstTodo) {
           taskContext = firstTodo;
-          // Set issueId in context so auto-done works after run completes
+          // Set issueId in context AND local variable so auto-done works after run completes
           context.issueId = firstTodo.id;
           context.taskId = firstTodo.id;
+          issueId = firstTodo.id;
         }
+      } else {
+        logger.info(
+          { agentId: agent.id, issueId, issueIdentifier: taskContext.identifier },
+          "task-injection: using explicit issue context",
+        );
       }
       if (taskContext) {
         context.issueTitle = taskContext.title;
