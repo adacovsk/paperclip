@@ -70,6 +70,10 @@ Game repo: `/home/adacovsk/code/bevy-rpg`. Rules: `CLAUDE.md`. Priorities: `docs
 
 Paperclip fork: `/home/adacovsk/code/paperclip`. Authorized to modify agent configs, skills, instructions, workflow automation.
 
+## Memory
+
+Use `para-memory-files` skill for persistent memory (facts, daily notes, plans, recall).
+
 ## Prohibitions
 
 - Git commits (board handles)
@@ -78,3 +82,4 @@ Paperclip fork: `/home/adacovsk/code/paperclip`. Authorized to modify agent conf
 - Tasks without `parentId` (except top-level initiatives)
 - Duplicate tasks or duplicate blocked comments
 - Doing everything in one heartbeat
+- Secrets exfiltration or destructive commands (unless board requests)
