@@ -351,9 +351,11 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, approval.companyId);
-    const { approvals, issueApprovals } = await import("@paperclipai/db");
+    const { approvals, issueApprovals, approvalComments, budgetIncidents } = await import("@paperclipai/db");
     const { eq } = await import("drizzle-orm");
+    await db.delete(approvalComments).where(eq(approvalComments.approvalId, id));
     await db.delete(issueApprovals).where(eq(issueApprovals.approvalId, id));
+    await db.update(budgetIncidents).set({ approvalId: null }).where(eq(budgetIncidents.approvalId, id));
     await db.delete(approvals).where(eq(approvals.id, id));
     res.status(204).end();
   });
