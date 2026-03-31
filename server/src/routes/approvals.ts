@@ -341,5 +341,22 @@ export function approvalRoutes(db: Db) {
     res.status(201).json(comment);
   });
 
+  // Board-only: hard delete an approval (for clearing stale inbox items)
+  router.delete("/approvals/:id", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const approval = await svc.getById(id);
+    if (!approval) {
+      res.status(404).json({ error: "Approval not found" });
+      return;
+    }
+    assertCompanyAccess(req, approval.companyId);
+    const { approvals, issueApprovals } = await import("@paperclipai/db");
+    const { eq } = await import("drizzle-orm");
+    await db.delete(issueApprovals).where(eq(issueApprovals.approvalId, id));
+    await db.delete(approvals).where(eq(approvals.id, id));
+    res.status(204).end();
+  });
+
   return router;
 }
