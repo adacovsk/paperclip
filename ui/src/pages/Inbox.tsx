@@ -510,7 +510,7 @@ export function Inbox() {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
   const [allCategoryFilter, setAllCategoryFilter] = useState<InboxCategoryFilter>("everything");
-  const [allApprovalFilter, setAllApprovalFilter] = useState<InboxApprovalFilter>("all");
+  const [allApprovalFilter, setAllApprovalFilter] = useState<InboxApprovalFilter>("actionable");
   const { dismissed, dismiss } = useDismissedInboxItems();
   const { readItems, markRead: markItemRead } = useReadInboxItems();
 
