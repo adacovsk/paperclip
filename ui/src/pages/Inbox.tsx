@@ -511,7 +511,7 @@ export function Inbox() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [allCategoryFilter, setAllCategoryFilter] = useState<InboxCategoryFilter>("everything");
   const [allApprovalFilter, setAllApprovalFilter] = useState<InboxApprovalFilter>("actionable");
-  const { dismissed, dismiss } = useDismissedInboxItems();
+  const { dismissed, dismiss, dismissAll } = useDismissedInboxItems();
   const { readItems, markRead: markItemRead } = useReadInboxItems();
 
   const pathSegment = location.pathname.split("/").pop() ?? "mine";
@@ -951,6 +951,19 @@ export function Inbox() {
     .map((issue) => issue.id);
   const canMarkAllRead = unreadIssueIds.length > 0;
 
+  const allDismissableKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const item of workItemsToRender) {
+      if (item.kind === "failed_run") keys.push(`run:${item.run.id}`);
+      else if (item.kind === "approval") keys.push(`approval:${item.approval.id}`);
+      else if (item.kind === "join_request") keys.push(`join:${item.joinRequest.id}`);
+    }
+    if (showAggregateAgentError) keys.push("alert:agent-errors");
+    if (showBudgetAlert) keys.push("alert:budget");
+    return keys;
+  }, [workItemsToRender, showAggregateAgentError, showBudgetAlert]);
+  const canDismissAll = allDismissableKeys.length > 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -982,6 +995,17 @@ export function Inbox() {
               disabled={markAllReadMutation.isPending}
             >
               {markAllReadMutation.isPending ? "Marking…" : "Mark all as read"}
+            </Button>
+          )}
+          {canDismissAll && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0"
+              onClick={() => dismissAll(allDismissableKeys)}
+            >
+              Dismiss all
             </Button>
           )}
         </div>

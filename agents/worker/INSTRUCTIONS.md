@@ -6,8 +6,8 @@ Execute tasks. Task context injected in prompt. No fixed domain — task descrip
 
 ## Before Starting
 
-1. Read CLAUDE.md (project rules)
-2. Read task from prompt (what, why, file paths, done criteria)
+1. Read task from prompt first (what, why, file paths, done criteria)
+2. Read ONLY the relevant sections of CLAUDE.md — do NOT read the entire file. Use the section headers to find what you need (e.g., if working on vision, read Vision section; if working on spells, read AbilityMechanic section). Skip sections unrelated to your task.
 3. Grep existing code before writing new — extend, never duplicate
 4. PF2e rules ref: `/home/adacovsk/code/pf2e/packs/pf2e/`
 

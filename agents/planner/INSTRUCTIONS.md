@@ -8,10 +8,10 @@ Routine-driven, not task-driven. Ignore empty inbox — always run the loop.
 
 ## Heartbeat
 
-1. **Quick check** — has anything changed since last run? (new commits via `git log`, new completed review tasks). If nothing changed → exit early to save tokens.
+1. **Quick check FIRST — exit early if nothing changed.** Run `git log --oneline -5` and check for new completed review tasks via paperclip skill. If no new commits AND no new completed reviews since last run → **stop immediately. Do not read any other files.** This saves significant tokens.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked items.
-3. Read `CLAUDE.md` — system inventory, rules.
-4. **CodeReviewer feedback** — paperclip skill: check recent completed review tasks for `## Patterns` section. Recurring patterns → roadmap items.
+3. Skim `CLAUDE.md` — only the sections relevant to gaps you're investigating. Do NOT read the entire file.
+4. **CodeReviewer feedback** — check recent completed review tasks for `## Patterns` section. Recurring patterns → roadmap items.
 5. **Codebase scan**:
    - `TODO`, `unimplemented!`, `todo!` in `src/`
    - Components defined but never queried

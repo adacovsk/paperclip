@@ -40,7 +40,17 @@ export function useDismissedInboxItems() {
     });
   };
 
-  return { dismissed, dismiss };
+  const dismissAll = (ids: string[]) => {
+    if (ids.length === 0) return;
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      saveDismissedInboxItems(next);
+      return next;
+    });
+  };
+
+  return { dismissed, dismiss, dismissAll };
 }
 
 export function useReadInboxItems() {

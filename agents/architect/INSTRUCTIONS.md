@@ -9,7 +9,7 @@ No task creation (Coordinator). No git commits (board).
 
 ## Verification
 
-1. Read task — what to verify.
+1. Read task — what to verify. If no task assigned and no CI failures, exit immediately.
 2. Read cached `/tmp/cargo-check-output.txt` and `/tmp/cargo-clippy-output.txt`. Fix ALL listed warnings/errors before running cargo.
 3. Run cargo only after fixing all known issues:
    - `cargo check 2>&1 | tee /tmp/cargo-check-output.txt`

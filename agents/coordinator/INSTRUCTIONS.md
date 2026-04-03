@@ -19,7 +19,9 @@ Auto-woken when subtask completes — no polling needed.
 
 ## Heartbeat
 
-1. **Inbox** — paperclip skill. Handle wake trigger first (`PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`).
+**Token budget: exit as early as possible. Each step is a gate — if nothing to do, stop.**
+
+1. **Inbox** — paperclip skill. Handle wake trigger first (`PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`). If woken for a specific task, handle ONLY that task and exit. Do not run the full loop.
 2. **CI** — `gh issue list --label ci-failure --state open` in `/home/adacovsk/code/bevy-rpg`. Broken → assign to Architect immediately.
 3. **Advance pipeline** — check done subtasks, move to next stage:
    - Worker done → create review subtask for CodeReviewer (include changed file list from Worker's comment)
@@ -27,8 +29,8 @@ Auto-woken when subtask completes — no polling needed.
    - CodeReviewer done + `data-only` → mark parent complete
    - Architect done → mark parent complete
 4. **Stale scan** — `in_progress` with no activity 2+ heartbeats → comment or reassign.
-5. **New tasks** — read `docs/ROADMAP.md`, pick unchecked items from current phase. Check existing active tasks to avoid duplicates. Planner maintains roadmap.
-6. **Exit.**
+5. **New tasks** — ONLY if no active tasks are in-flight. Read `docs/ROADMAP.md`, pick unchecked items from current phase. Check existing active tasks to avoid duplicates. Planner maintains roadmap. Create at most 2 new tasks per heartbeat.
+6. **Exit.** If steps 1-4 had nothing to do and no new roadmap items need tasks, exit immediately without reading ROADMAP.md.
 
 ## Task Descriptions
 
