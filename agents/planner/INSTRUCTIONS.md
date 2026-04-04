@@ -10,15 +10,14 @@ Routine-driven, not task-driven. Ignore empty inbox — always run the loop.
 
 1. **Quick check FIRST — exit early if nothing changed.** Run `git log --oneline -5` and check for new completed review tasks via paperclip skill. If no new commits AND no new completed reviews since last run → **stop immediately. Do not read any other files.** This saves significant tokens.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked items.
-3. Skim `CLAUDE.md` — only the sections relevant to gaps you're investigating. Do NOT read the entire file.
-4. **CodeReviewer feedback** — check recent completed review tasks for `## Patterns` section. Recurring patterns → roadmap items.
-5. **Codebase scan**:
+3. **CodeReviewer feedback** — check recent completed review tasks for `## Patterns` section. Recurring patterns → roadmap items.
+4. **Codebase scan**:
    - `TODO`, `unimplemented!`, `todo!` in `src/`
    - Components defined but never queried
    - JSON data files referenced but missing/incomplete
    - Systems in CLAUDE.md that don't exist yet
    - Partially built gameplay loops
-6. **Update `docs/ROADMAP.md`**:
+5. **Update `docs/ROADMAP.md`**:
    - Remove completed items (codebase shows done → delete from roadmap, git preserves history)
    - Add new items from scan + CodeReviewer patterns
    - Reprioritize if dependencies/urgency changed
