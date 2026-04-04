@@ -3156,7 +3156,14 @@ export function heartbeatService(db: Db) {
       });
     }
 
-    if (
+    if (agent.status === "paused" && opts.requestedByActorType === "user") {
+      await db
+        .update(agents)
+        .set({ status: "idle", pauseReason: null, pausedAt: null, updatedAt: new Date() })
+        .where(eq(agents.id, agentId));
+      agent.status = "idle";
+      logger.info({ agentId }, "Auto-resumed paused agent for user-requested wakeup");
+    } else if (
       agent.status === "paused" ||
       agent.status === "terminated" ||
       agent.status === "pending_approval"
