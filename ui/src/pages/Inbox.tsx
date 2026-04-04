@@ -48,6 +48,9 @@ import {
   getInboxWorkItems,
   getLatestFailedRunsByAgent,
   getRecentTouchedIssues,
+  INBOX_ALL_STATUSES,
+  INBOX_MINE_STATUSES,
+  sortIssuesByMostRecentActivity,
   InboxApprovalFilter,
   saveLastInboxTab,
   shouldShowInboxSection,
@@ -66,7 +69,6 @@ type SectionKey =
   | "work_items"
   | "alerts";
 
-const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
 
 function firstNonEmptyLine(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -591,7 +593,7 @@ export function Inbox() {
       issuesApi.list(selectedCompanyId!, {
         touchedByUserId: "me",
         inboxArchivedByUserId: "me",
-        status: INBOX_ISSUE_STATUSES,
+        status: INBOX_MINE_STATUSES,
       }),
     enabled: !!selectedCompanyId,
   });
@@ -603,7 +605,7 @@ export function Inbox() {
     queryFn: () =>
       issuesApi.list(selectedCompanyId!, {
         touchedByUserId: "me",
-        status: INBOX_ISSUE_STATUSES,
+        status: INBOX_ALL_STATUSES,
       }),
     enabled: !!selectedCompanyId,
   });
@@ -620,13 +622,18 @@ export function Inbox() {
     () => touchedIssues.filter((issue) => issue.isUnreadForMe),
     [touchedIssues],
   );
+  const allIssues = useMemo(
+    () => [...(issues ?? [])].sort(sortIssuesByMostRecentActivity),
+    [issues],
+  );
   const issuesToRender = useMemo(
     () => {
       if (tab === "mine") return mineIssues;
       if (tab === "unread") return unreadTouchedIssues;
+      if (tab === "all") return allIssues;
       return touchedIssues;
     },
-    [tab, mineIssues, touchedIssues, unreadTouchedIssues],
+    [tab, mineIssues, touchedIssues, unreadTouchedIssues, allIssues],
   );
 
   const agentById = useMemo(() => {

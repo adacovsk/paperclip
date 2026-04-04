@@ -10,14 +10,13 @@ import { queryKeys } from "../lib/queryKeys";
 import {
   computeInboxBadgeData,
   getRecentTouchedIssues,
+  INBOX_MINE_STATUSES,
   loadDismissedInboxItems,
   saveDismissedInboxItems,
   loadReadInboxItems,
   saveReadInboxItems,
   READ_ITEMS_KEY,
 } from "../lib/inbox";
-
-const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
 
 export function useDismissedInboxItems() {
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissedInboxItems);
@@ -114,7 +113,7 @@ export function useInboxBadge(companyId: string | null | undefined) {
       issuesApi.list(companyId!, {
         touchedByUserId: "me",
         inboxArchivedByUserId: "me",
-        status: INBOX_ISSUE_STATUSES,
+        status: INBOX_MINE_STATUSES,
       }),
     enabled: !!companyId,
   });

@@ -7,6 +7,8 @@ import type {
 } from "@paperclipai/shared";
 
 export const RECENT_ISSUES_LIMIT = 100;
+export const INBOX_MINE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
+export const INBOX_ALL_STATUSES = "backlog,todo,in_progress,in_review,blocked,done,cancelled";
 export const FAILED_RUN_STATUSES = new Set(["failed", "timed_out"]);
 export const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending", "revision_requested"]);
 export const DISMISSED_KEY = "paperclip:inbox:dismissed";
