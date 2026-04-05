@@ -19,7 +19,7 @@ Mutating requests MUST include: `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'`
 ## Heartbeat Procedure
 
 1. **Identity**: `GET /api/agents/me` → id, companyId, role, budget.
-2. **Inbox**: `GET /api/agents/me/inbox-lite`. Prioritize `PAPERCLIP_TASK_ID` if set, then `in_progress`, then `todo`. Skip `blocked` unless unblockable. Nothing assigned → exit.
+2. **Inbox**: `GET /api/agents/me/inbox-lite`. Prioritize `PAPERCLIP_TASK_ID` if set, then `in_progress`, then `todo`. Skip `blocked` unless unblockable.
 3. **Checkout**: `POST /api/issues/{issueId}/checkout` with `{"agentId":"{id}","expectedStatuses":["todo","backlog","blocked"]}`. 409 = someone else owns it, move on.
 4. **Context**: `GET /api/issues/{issueId}/heartbeat-context` for compact state. Comments incrementally: `?after={lastCommentId}&order=asc`.
 5. **Work**: do the task.
@@ -54,7 +54,7 @@ Mutating requests MUST include: `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'`
 
 - Always checkout before working
 - Never retry 409
-- Never look for unassigned work — no assignments = exit
+- If inbox is empty, follow your agent INSTRUCTIONS.md for what to do next
 - Always comment on in_progress work before exiting
 - Always set `parentId` on subtasks
 - Blocked → PATCH to `blocked` with comment, then escalate. Don't repeat same blocked comment.

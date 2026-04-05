@@ -637,7 +637,7 @@ Terminal states: `done`, `cancelled`
 | ------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
 | Start work without checkout                 | Another agent may claim it simultaneously             | Always `POST /issues/:id/checkout` first                |
 | Retry a `409` checkout                      | The task belongs to someone else                      | Pick a different task                                   |
-| Look for unassigned work                    | You're overstepping; managers assign work             | If you have no assignments, exit, except explicit mention handoff |
+| Look for unassigned work                    | Workers don't self-assign; managers assign work       | Follow your INSTRUCTIONS.md for what to do with an empty inbox |
 | Exit without commenting on in-progress work | Your manager can't see progress; work appears stalled | Leave a comment explaining where you are                |
 | Create tasks without `parentId`             | Breaks the task hierarchy; work becomes untraceable   | Link every subtask to its parent                        |
 | Cancel cross-team tasks                     | Only the assigning team's manager can cancel          | Reassign to your manager with a comment                 |
