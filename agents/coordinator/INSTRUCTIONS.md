@@ -19,18 +19,19 @@ Auto-woken when subtask completes — no polling needed.
 
 ## Heartbeat
 
-**Token budget: exit as early as possible. Each step is a gate — if nothing to do, stop.**
+**Always run all steps. Do NOT exit on empty inbox — the Coordinator creates work, not just processes it.**
 
-1. **Inbox** — paperclip skill. Handle wake trigger first (`PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`). If woken for a specific task, handle ONLY that task and exit. Do not run the full loop.
+1. **Inbox** — `GET /api/agents/me/inbox-lite`. If woken for a specific task (`PAPERCLIP_TASK_ID`), handle that task first. If inbox returns `[]`, that is normal — proceed to step 2. An empty inbox means there may be new roadmap work to create (step 5).
 2. **CI** — `gh issue list --label ci-failure --state open` in `/home/adacovsk/code/bevy-rpg`. Broken → assign to Architect immediately.
 3. **Advance pipeline** — check done subtasks, move to next stage:
    - Worker done → create review subtask for CodeReviewer (include changed file list from Worker's comment)
    - CodeReviewer done + `needs-build` → create verify subtask for Architect
    - CodeReviewer done + `data-only` → mark parent complete
    - Architect done → mark parent complete
-4. **Stale scan** — `in_progress` with no activity 2+ heartbeats → comment or reassign.
-5. **New tasks** — ONLY if no active tasks are in-flight. Read `docs/ROADMAP.md`, pick unchecked items from current phase. Check existing active tasks to avoid duplicates. Planner maintains roadmap. Create at most 2 new tasks per heartbeat.
-6. **Exit.** If steps 1-4 had nothing to do and no new roadmap items need tasks, exit immediately without reading ROADMAP.md.
+4. **Promote backlog** — if fewer than 2 tasks are currently `todo` or `in_progress` for Workers, move the next `backlog` task to `todo` (PATCH status). This controls concurrency — Workers only see `todo` tasks.
+5. **Stale scan** — `in_progress` with no activity 2+ heartbeats → comment or reassign.
+7. **New tasks** — read `docs/ROADMAP.md`, pick unchecked items from current phase. Check existing active tasks to avoid duplicates. Planner maintains roadmap. Create new tasks in `backlog` status (not `todo`). Step 4 promotes them when capacity is available.
+8. **Exit.**
 
 ## Task Descriptions
 

@@ -8,16 +8,17 @@ Routine-driven, not task-driven. Ignore empty inbox — always run the loop.
 
 ## Heartbeat
 
-1. **Quick check FIRST — exit early if nothing changed.** Run `git log --oneline -5` and check for new completed review tasks via paperclip skill. If no new commits AND no new completed reviews since last run → **stop immediately. Do not read any other files.** This saves significant tokens.
+1. **Context** — run `git log --oneline -10` and check for new completed review tasks via paperclip skill. Note what changed since last run.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked items.
 3. **CodeReviewer feedback** — check recent completed review tasks for `## Patterns` section. Recurring patterns → roadmap items.
-4. **Codebase scan**:
-   - `TODO`, `unimplemented!`, `todo!` in `src/`
+4. **Codebase scan** — sample 10 random files from `src/` (`find src -name '*.rs' | shuf | head -10`) and scan them for:
+   - `TODO`, `unimplemented!`, `todo!`
    - Components defined but never queried
-   - JSON data files referenced but missing/incomplete
-   - Systems in CLAUDE.md that don't exist yet
-   - Partially built gameplay loops
-5. **Update `docs/ROADMAP.md`**:
+   - Hardcoded strings violating data-driven rule
+   - Partially built systems or stub implementations
+   
+   Also check `assets/data/en/` for JSON files referenced but missing/incomplete. Random sampling avoids bias toward specific systems and keeps token cost bounded.
+5. **Update `docs/ROADMAP.md`** (at most 3 new items per run):
    - Remove completed items (codebase shows done → delete from roadmap, git preserves history)
    - Add new items from scan + CodeReviewer patterns
    - Reprioritize if dependencies/urgency changed
