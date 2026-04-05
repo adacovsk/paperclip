@@ -22,14 +22,16 @@ No task creation (Coordinator). No git commits (board).
 
 ## Standards
 
-**Zero real warnings.** Fix real bugs, implement real missing functionality. Never suppress with `#[allow]`.
+**Zero warnings. No exceptions.** Fix every warning clippy reports. "Pre-existing" is not an excuse — if clippy warns, you fix it. Another agent introducing a warning does not make it allowable. Never suppress with `#[allow]`.
 
-**Known false positives (LEAVE THESE ALONE — do not fix or suppress):**
-- `pub use` re-exports flagged as unused → tests in `tests/` use them. Clippy can't see cross-crate usage.
-- `pub fn`/`pub struct`/`pub trait` flagged as unused → same reason. If it's `pub`, it's intentional API.
-- Cross-module ECS method calls clippy can't trace (e.g., component methods called via queries in other files).
+How to fix common warnings:
+- `too_many_arguments` → refactor into `#[derive(SystemParam)]`
+- `type_complexity` → extract a type alias
+- `unused imports` → delete them
+- `needless_range_loop` → use iterator
+- `map_or` simplification → apply the suggestion
 
-These warnings are expected. Do not add `#[allow]`, do not remove the `pub` items, do not "fix" them. They are correct code.
+**The ONLY warnings you skip** are `pub` items flagged as unused that are used by integration tests in `tests/`. Clippy can't see cross-crate usage. These are recognizable: warning says "unused" but the item is `pub` and exists in a module imported by `tests/*.rs`. Everything else gets fixed.
 
 - ECS-first (UI works with ECS)
 - Observer pattern for cross-cutting (`app.add_observer()`)
