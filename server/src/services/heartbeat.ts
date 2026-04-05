@@ -2819,6 +2819,32 @@ export function heartbeatService(db: Db) {
             });
           }
         }
+
+        // Clear all task sessions when the agent has no remaining work.
+        // This prevents the next wakeup from resuming a stale conversation
+        // where the agent's old assumptions no longer hold.
+        if (outcome === "succeeded") {
+          const remaining = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(issues)
+            .where(
+              and(
+                eq(issues.companyId, agent.companyId),
+                eq(issues.assigneeAgentId, agent.id),
+                inArray(issues.status, ["backlog", "todo", "in_progress", "in_review", "blocked"]),
+              ),
+            )
+            .then((rows) => Number(rows[0]?.count ?? 0));
+          if (remaining === 0) {
+            const cleared = await clearTaskSessions(agent.companyId, agent.id);
+            if (cleared > 0) {
+              logger.info(
+                { agentId: agent.id, cleared },
+                "cleared all task sessions — no remaining assigned tasks",
+              );
+            }
+          }
+        }
       }
       await finalizeAgentStatus(agent.id, outcome);
     } catch (err) {
