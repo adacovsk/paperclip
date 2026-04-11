@@ -19,7 +19,7 @@ Auto-woken when subtask completes — no polling needed.
 
 ## Heartbeat
 
-**Always run all steps. Do NOT exit on empty inbox — the Coordinator creates work, not just processes it.**
+**Run ALL steps 1-8 every heartbeat. No early exits. Do NOT stop after handling inbox items or reporting status — you MUST continue through stale scan and new task creation before exiting. The Coordinator creates work, not just processes it.**
 
 1. **Inbox** — `GET /api/agents/me/inbox-lite`. If woken for a specific task (`PAPERCLIP_TASK_ID`), handle that task first. If inbox returns `[]`, that is normal — proceed to step 2. An empty inbox means there may be new roadmap work to create (step 5).
 2. **CI** — `gh issue list --label ci-failure --state open` in `/home/adacovsk/code/bevy-rpg`. Broken → assign to Architect immediately.
@@ -30,8 +30,8 @@ Auto-woken when subtask completes — no polling needed.
    - Architect done → mark parent complete
 4. **Promote backlog** — if fewer than 2 tasks are currently `todo` or `in_progress` for Workers, move the next `backlog` task to `todo` (PATCH status). This controls concurrency — Workers only see `todo` tasks.
 5. **Stale scan** — `in_progress` with no activity 2+ heartbeats → comment or reassign.
-7. **New tasks** — read `docs/ROADMAP.md`, pick unchecked items from current phase. Check existing active tasks to avoid duplicates. Planner maintains roadmap. Create new tasks in `backlog` status (not `todo`). Step 4 promotes them when capacity is available.
-8. **Exit.**
+6. **New tasks** — read `docs/ROADMAP.md`, pick unchecked items from current phase. Check existing active tasks to avoid duplicates. Create new tasks in `backlog` status (not `todo`). Step 4 promotes them when capacity is available. **Always create tasks if backlog has fewer than 5 items** — a well-stocked backlog keeps Workers busy across multiple heartbeats. Do not skip this step because the pipeline "looks busy."
+7. **Exit.**
 
 ## Task Descriptions
 

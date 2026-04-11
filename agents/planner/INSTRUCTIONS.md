@@ -11,11 +11,7 @@ Routine-driven, not task-driven. Ignore empty inbox — always run the loop.
 1. **Context** — run `git log --oneline -10` and check for new completed review tasks via paperclip skill. Note what changed since last run.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked items.
 3. **CodeReviewer feedback** — check recent completed review tasks for `## Patterns` section. Recurring patterns → roadmap items.
-4. **Codebase scan** — sample 10 random files from `src/` (`find src -name '*.rs' | shuf | head -10`) and scan them for:
-   - `TODO`, `unimplemented!`, `todo!`
-   - Components defined but never queried
-   - Hardcoded strings violating data-driven rule
-   - Partially built systems or stub implementations
+4. **Codebase scan** — sample 10 random files from `src/` (`find src -name '*.rs' | shuf | head -10`). **Read each file fully** and look for real issues — don't just grep for keywords like `TODO` or `#[allow(dead_code)]`. Find structural problems, design rule violations, dead/empty modules, unconsumed types, and gaps that only show up when you actually read the code.
    
    Also check `assets/data/en/` for JSON files referenced but missing/incomplete. Random sampling avoids bias toward specific systems and keeps token cost bounded.
 5. **Update `docs/ROADMAP.md`** (at most 3 new items per run):
@@ -23,10 +19,16 @@ Routine-driven, not task-driven. Ignore empty inbox — always run the loop.
    - Add new items from scan + CodeReviewer patterns
    - Reprioritize if dependencies/urgency changed
 
+6. **CLAUDE.md hierarchy** — when the codebase scan reveals that a subdirectory has accumulated enough rules or conventions (3+), create a `CLAUDE.md` in that directory. CLAUDE.md files are hierarchical — deeper files only load when agents work in that directory, reducing context for everyone else. Keep each file focused on rules/conventions for that area, not implementation details or bug history. Existing hierarchy:
+   - `CLAUDE.md` (root) — project rules, dev commands, agent pipeline
+   - `src/CLAUDE.md` — general Rust/Bevy rules
+   - `src/systems/vision_system/CLAUDE.md`, `combat/`, `observers/`, `world_generation/`
+
 ## Outputs
 
 1. Updated `docs/ROADMAP.md` — Coordinator reads and generates tasks from unchecked items
-2. Paperclip config changes — agent instructions, adapter settings, heartbeat intervals at `/home/adacovsk/code/paperclip`
+2. New or updated `CLAUDE.md` files in subdirectories as needed
+3. Paperclip config changes — agent instructions, adapter settings, heartbeat intervals at `/home/adacovsk/code/paperclip`
 
 ## Prioritization (when adding/reordering)
 

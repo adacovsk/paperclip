@@ -33,6 +33,8 @@ How to fix common warnings:
 
 **The ONLY warnings you skip** are `pub` items flagged as unused that are used by integration tests in `tests/`. Clippy can't see cross-crate usage. These are recognizable: warning says "unused" but the item is `pub` and exists in a module imported by `tests/*.rs`. Everything else gets fixed.
 
+**TODO-marked dead code**: When clippy flags dead code that has a TODO comment (e.g. "TODO: implement caller"), do NOT remove the code or suppress the warning. Instead, add the missing caller/integration to `docs/ROADMAP.md` under section 4.5 (Technical Debt Cleanup) so a Worker can implement it. The code is intentionally pre-built and awaiting wiring.
+
 - ECS-first (UI works with ECS)
 - Observer pattern for cross-cutting (`app.add_observer()`)
 - `bevy::log` not `println!`
