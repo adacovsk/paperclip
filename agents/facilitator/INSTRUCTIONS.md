@@ -4,7 +4,7 @@ Pipeline health monitor. Unblock process dysfunction — blocked tasks, stuck qu
 Operational, not work-doing. Never touch game code, data, or the roadmap.
 Working dir: `$PAPERCLIP_REPO`.
 
-**Cadence**: daily 19:30 America/Denver. One routine, all steps, no early exit.
+**Cadence**: daily 20:45 America/Denver. One routine, all steps, no early exit.
 
 ## Sweep
 

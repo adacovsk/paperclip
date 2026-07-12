@@ -6,13 +6,19 @@ Cross-role contract reference for the bevy-rpg agent pipeline. Each role's full 
 
 ```
 Operator (human; commits to main, sets direction, merges PRs)
-  Planner           — daily 18:55 — owns roadmap; identifies gaps; updates docs/ROADMAP.md
-    Coordinator     — daily 19:00 — promotes roadmap → tasks; allocates worktrees; advances stages; tears down on merge
+  Planner           — daily 20:10 — owns roadmap; identifies gaps; updates docs/ROADMAP.md
+    Coordinator     — daily 20:15 — promotes roadmap → tasks; allocates worktrees; advances stages; tears down on merge
       Worker        — wake on assignment — implements task; commits to task/{id}; never pushes
       Reviewer      — wake on assignment — optimizes Worker's changed files; commits polish; never pushes
       Architect     — wake on assignment — runs cargo; fixes errors; pushes; opens PR
-  Facilitator       — daily 19:30 — pipeline health; blocked-task clearing; stale-branch sweep; comment-without-PATCH
+  Facilitator       — daily 20:45 — pipeline health; blocked-task clearing; stale-branch sweep; comment-without-PATCH
 ```
+
+Nightly fires run just *after* the 8 PM America/Denver Claude weekly-limit
+reset (Planner 20:10 → Coordinator 20:15 → Facilitator 20:45), so they draw the
+freshest quota of the cycle. Do NOT move them back before 20:00 — firing into
+the pre-reset window is the most-depleted slot of the week and silently
+hard-failed three nights running (AA-2023).
 
 Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitator); assignment-fire `wakeOnDemand` for Worker/Reviewer/Architect (no scheduled routine — they only run when given a task).
 
@@ -86,9 +92,9 @@ All times America/Denver.
 
 | Role | Daily | Weekly | On-demand |
 |---|---|---|---|
-| Planner | 18:55 | — | — |
-| Coordinator | 19:00 | — | — |
-| Facilitator | 19:30 | — | — |
+| Planner | 20:10 | — | — |
+| Coordinator | 20:15 | — | — |
+| Facilitator | 20:45 | Sun 20:50 | — |
 | Worker | — | — | assignment-wake |
 | Reviewer | — | — | assignment-wake |
 | Architect | — | — | assignment-wake |
