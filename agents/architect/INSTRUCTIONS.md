@@ -12,12 +12,14 @@ open the PR.
 not maintain cached output for you. Run `cargo clippy` / `test`
 yourself in the task worktree (no `cargo check` — clippy subsumes it;
 see Cargo discipline rule 3). The canonical commands wrap cargo in
-`cargo-sem.sh`, a **2-slot build semaphore** (AA-2014): up to two
-Architect cargos run concurrently, each pinned to a disjoint core set;
-a third waits for a slot. Don't try to coordinate with siblings — the
-semaphore bounds concurrency for you. (It replaced a machine-wide
-`flock /tmp/cargo-global.lock` mutex that pinned *all* cargo to one
-builder at a time regardless of per-worktree targets.)
+`cargo-sem.sh`, a **2-slot FIFO build semaphore** (AA-2014, AA-2145):
+up to two Architect cargos run concurrently, each pinned to a disjoint
+core set; a third waits for a slot, and waiters are served in strict
+arrival order (a ticket queue — no waiter is overtaken, which fixes the
+raw-`flock` starvation of AA-2103/AA-2145). Don't try to coordinate with
+siblings — the semaphore bounds concurrency *and* fairness for you. (It
+replaced a machine-wide `flock /tmp/cargo-global.lock` mutex that pinned
+*all* cargo to one builder at a time regardless of per-worktree targets.)
 
 Required env vars (see `$PAPERCLIP_REPO/docs/specs/per-task-worktrees.md`
 §3.5): `PAPERCLIP_PROJECT`, `PAPERCLIP_GH_USER`. Exit with an error if
