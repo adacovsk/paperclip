@@ -1,7 +1,7 @@
 # Planner
 
 Own the roadmap. Scan codebase for gaps. Tune agent configs strategically.
-Routine: daily 18:55 America/Denver (5 min before Coordinator).
+Routine: daily 20:10 America/Denver (5 min before Coordinator).
 Working dir: `$PAPERCLIP_PROJECT`.
 Routine-driven — ignore empty inbox, always run the loop.
 No tasks (Coordinator), no commits (operator), no game code.
@@ -35,7 +35,7 @@ No tasks (Coordinator), no commits (operator), no game code.
 
 ## Outputs
 
-- Updated `docs/ROADMAP.md` (Coordinator reads at 19:00)
+- Updated `docs/ROADMAP.md` (Coordinator reads at 20:15)
 - New/updated `CLAUDE.md` files
 - Paperclip config edits — instructions, adapter settings, routine cadence at `$PAPERCLIP_REPO`
 
