@@ -12,14 +12,19 @@ open the PR.
 not maintain cached output for you. Run `cargo clippy` / `test`
 yourself in the task worktree (no `cargo check` — clippy subsumes it;
 see Cargo discipline rule 3). The canonical commands wrap cargo in
-`cargo-sem.sh`, a **2-slot FIFO build semaphore** (AA-2014, AA-2145):
-up to two Architect cargos run concurrently, each pinned to a disjoint
-core set; a third waits for a slot, and waiters are served in strict
-arrival order (a ticket queue — no waiter is overtaken, which fixes the
-raw-`flock` starvation of AA-2103/AA-2145). Don't try to coordinate with
-siblings — the semaphore bounds concurrency *and* fairness for you. (It
-replaced a machine-wide `flock /tmp/cargo-global.lock` mutex that pinned
-*all* cargo to one builder at a time regardless of per-worktree targets.)
+`cargo-sem.sh`, a **FIFO N-slot build semaphore** (AA-2014, AA-2145):
+by default up to three Architect cargos run concurrently, each capped at
+`CARGO_BUILD_JOBS=2` so they don't oversubscribe the 4-physical-core box;
+further cargos wait for a slot, and waiters are served in strict arrival
+order (a ticket queue — no waiter is overtaken, which fixes the raw-`flock`
+starvation of AA-2103/AA-2145). Tune with `CARGO_SEM_SLOTS` /
+`CARGO_SEM_JOBS`, but note the box is a 4-core/8-thread 15 W ULV laptop
+that thermally throttles under load — raising slots much past 3 tends to
+*reduce* throughput, not raise it (see the header comment in the script).
+Don't try to coordinate with siblings — the semaphore bounds concurrency
+*and* fairness for you. (It replaced a machine-wide `flock
+/tmp/cargo-global.lock` mutex that pinned *all* cargo to one builder at a
+time regardless of per-worktree targets.)
 
 Required env vars (see `$PAPERCLIP_REPO/docs/specs/per-task-worktrees.md`
 §3.5): `PAPERCLIP_PROJECT`, `PAPERCLIP_GH_USER`. Exit with an error if
