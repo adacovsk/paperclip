@@ -182,17 +182,26 @@ its Architect immediately:
 - Coordinator moves on. Cargo runtime is the Architect's problem.
 
 If multiple `needs-build` tasks queue up at once, dispatch all their
-Architects in the same fire — up to **two** will build concurrently and
-the rest queue. Each Architect builds in its **own per-worktree
-`target/`** (the runtime no longer exports a shared `CARGO_TARGET_DIR` —
-fixed via AA-1554, 2026-06-12), and cargo is wrapped in a **2-slot build
-semaphore** (`agents/architect/cargo-sem.sh`, AA-2014) that bounds live
-builds at 2 on this 8-core box, each pinned to a disjoint core set. So a
-third+ queued Architect waits on a slot rather than thrashing — you do
-not need to throttle dispatch yourself; dispatch them all and let the
-semaphore meter throughput. (Before AA-2014 this was a machine-wide
-`flock /tmp/cargo-global.lock` mutex = one builder at a time; do not
-re-introduce a single global cargo lock.)
+Architects in the same fire — the rest queue. Each Architect builds in
+its **own per-worktree `target/`** (the runtime no longer exports a
+shared `CARGO_TARGET_DIR` — fixed via AA-1554, 2026-06-12), so there is
+**no shared cargo build lock** to serialize them. Concurrency is instead
+bounded by a **FIFO N-slot build semaphore** (`agents/architect/cargo-sem.sh`,
+AA-2145 — supersedes the AA-2103 raw-flock pair and the AA-2014
+machine-wide mutex) that wraps the whole clippy+test chain. Its ceiling
+is `CARGO_SEM_SLOTS`, defaulting to **physical cores − 1** (= 3 on this
+4-physical-core / 8-thread ULV box; floor 2), with each build separately
+job-capped (`CARGO_BUILD_JOBS`, default logical/slots, floor 2 → 2 here)
+so N builds × their job cap stays under the real core count. Slots are
+**not** core-pinned (the old 2-slot design's `taskset` partitioning was
+dropped). So a queued Architect past the slot ceiling waits its turn
+(admission is a strict ticket queue — no overtakes, self-heals on a dead
+holder/waiter) rather than thrashing — you do not need to throttle
+dispatch yourself; dispatch them all and let the semaphore meter
+throughput. Do **not** re-introduce a single global cargo lock, and do
+**not** just crank `CARGO_SEM_SLOTS` — on this thermally-throttling ULV
+chip more whole-machine slots is measured-slower, not faster (see the
+tuning header in `cargo-sem.sh`).
 
 > History: until 2026-06-12 all Architects shared one
 > `CARGO_TARGET_DIR`, so cargo's single build lock serialized them.
@@ -377,7 +386,7 @@ by role. Caps:
 
 | Role | Max instances | Default `maxConcurrentRuns` |
 |---|---|---|
-| Architect | 1 | **8** — cargo's build lock serializes the cargo step; everything else (read errors, fix, commit, push, open PR) parallelizes |
+| Architect | 1 | **4** — the cargo *build* step is bounded independently by `cargo-sem.sh` (`CARGO_SEM_SLOTS`, default physical−1 = 3), not by run count, so a run past the slot ceiling just queues on the semaphore; the extra runs parallelize everything cheap (read errors, fix, commit, push, open PR). Bumping this does **not** add build parallelism — that lever is `CARGO_SEM_SLOTS`. |
 | Worker | 1 | 4 — independent task branches, no shared lock |
 | Reviewer | 1 | 4 — independent task branches |
 | Planner | 1 | 1 — single-writer on `docs/ROADMAP.md` |

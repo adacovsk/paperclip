@@ -82,7 +82,7 @@ States: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `cancelled`, `blo
 | Planner | `paperclip` | true | 1 |
 | Facilitator | `paperclip` | true | 1 |
 
-One agent instance per role; concurrency comes from `maxConcurrentRuns`. Architect's high cap is intentional — cargo's build lock serializes the cargo step, but everything else (analyzing output, applying fixes, committing, pushing, opening PR) parallelizes, which is exactly the bottleneck-around-cargo flow you want.
+One agent instance per role; concurrency comes from `maxConcurrentRuns`. Architect's cap above 1 is intentional — the cargo *build* step is bounded independently by the `cargo-sem.sh` FIFO slot semaphore (`CARGO_SEM_SLOTS`, default physical cores − 1), **not** by run count (per-worktree `target/`s share no build lock), so extra runs just queue on the semaphore for cargo while parallelizing everything cheap (analyzing output, applying fixes, committing, pushing, opening PR) — the bottleneck-around-cargo flow you want. To add *build* parallelism you raise `CARGO_SEM_SLOTS`, not `maxConcurrentRuns`.
 
 Workers have no skills because the adapter injects task context directly into their prompt; agents that hit the API need the `paperclip` skill (which uses `curl`, hence skip-permissions).
 
