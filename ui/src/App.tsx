@@ -1,3 +1,5 @@
+import type { ComponentType } from "react";
+import { lazy, Suspense } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -5,43 +7,69 @@ import { Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { authApi } from "./api/auth";
 import { healthApi } from "./api/health";
-import { Dashboard } from "./pages/Dashboard";
-import { Companies } from "./pages/Companies";
-import { Agents } from "./pages/Agents";
-import { AgentDetail } from "./pages/AgentDetail";
-import { Projects } from "./pages/Projects";
-import { ProjectDetail } from "./pages/ProjectDetail";
-import { Issues } from "./pages/Issues";
-import { IssueDetail } from "./pages/IssueDetail";
-import { Routines } from "./pages/Routines";
-import { RoutineDetail } from "./pages/RoutineDetail";
-import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
-import { Goals } from "./pages/Goals";
-import { GoalDetail } from "./pages/GoalDetail";
-import { Approvals } from "./pages/Approvals";
-import { ApprovalDetail } from "./pages/ApprovalDetail";
-import { Costs } from "./pages/Costs";
-import { Activity } from "./pages/Activity";
-import { Inbox } from "./pages/Inbox";
-import { CompanySettings } from "./pages/CompanySettings";
-import { CompanySkills } from "./pages/CompanySkills";
-import { CompanyExport } from "./pages/CompanyExport";
-import { CompanyImport } from "./pages/CompanyImport";
-import { DesignGuide } from "./pages/DesignGuide";
-import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
-import { InstanceSettings } from "./pages/InstanceSettings";
-import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
-import { PluginManager } from "./pages/PluginManager";
-import { PluginSettings } from "./pages/PluginSettings";
-import { PluginPage } from "./pages/PluginPage";
-import { RunTranscriptUxLab } from "./pages/RunTranscriptUxLab";
-import { OrgChart } from "./pages/OrgChart";
-import { NewAgent } from "./pages/NewAgent";
-import { AuthPage } from "./pages/Auth";
-import { OperatorClaimPage } from "./pages/OperatorClaim";
-import { CliAuthPage } from "./pages/CliAuth";
-import { InviteLandingPage } from "./pages/InviteLanding";
-import { NotFoundPage } from "./pages/NotFound";
+
+// Route components are code-split so a cold load fetches only the landed route
+// rather than the whole app. `React.lazy` wants a default export; these pages use
+// named exports, so unwrap the named member. The `import()` argument stays a string
+// literal so the bundler can still statically split each page into its own chunk.
+function lazyPage<M, K extends keyof M>(factory: () => Promise<M>, name: K) {
+  // Preserve the page's real prop type (e.g. NotFoundPage's `scope`) through the
+  // named-export unwrap; the ComponentType constraint is only a gate.
+  type Comp = M[K] extends ComponentType<infer P> ? ComponentType<P> : never;
+  return lazy(() =>
+    factory().then((module) => ({ default: module[name] as unknown as Comp })),
+  );
+}
+
+const Dashboard = lazyPage(() => import("./pages/Dashboard"), "Dashboard");
+const Companies = lazyPage(() => import("./pages/Companies"), "Companies");
+const Agents = lazyPage(() => import("./pages/Agents"), "Agents");
+const AgentDetail = lazyPage(() => import("./pages/AgentDetail"), "AgentDetail");
+const Projects = lazyPage(() => import("./pages/Projects"), "Projects");
+const ProjectDetail = lazyPage(() => import("./pages/ProjectDetail"), "ProjectDetail");
+const Issues = lazyPage(() => import("./pages/Issues"), "Issues");
+const IssueDetail = lazyPage(() => import("./pages/IssueDetail"), "IssueDetail");
+const Routines = lazyPage(() => import("./pages/Routines"), "Routines");
+const RoutineDetail = lazyPage(() => import("./pages/RoutineDetail"), "RoutineDetail");
+const ExecutionWorkspaceDetail = lazyPage(
+  () => import("./pages/ExecutionWorkspaceDetail"),
+  "ExecutionWorkspaceDetail",
+);
+const Goals = lazyPage(() => import("./pages/Goals"), "Goals");
+const GoalDetail = lazyPage(() => import("./pages/GoalDetail"), "GoalDetail");
+const Approvals = lazyPage(() => import("./pages/Approvals"), "Approvals");
+const ApprovalDetail = lazyPage(() => import("./pages/ApprovalDetail"), "ApprovalDetail");
+const Costs = lazyPage(() => import("./pages/Costs"), "Costs");
+const Activity = lazyPage(() => import("./pages/Activity"), "Activity");
+const Inbox = lazyPage(() => import("./pages/Inbox"), "Inbox");
+const CompanySettings = lazyPage(() => import("./pages/CompanySettings"), "CompanySettings");
+const CompanySkills = lazyPage(() => import("./pages/CompanySkills"), "CompanySkills");
+const CompanyExport = lazyPage(() => import("./pages/CompanyExport"), "CompanyExport");
+const CompanyImport = lazyPage(() => import("./pages/CompanyImport"), "CompanyImport");
+const DesignGuide = lazyPage(() => import("./pages/DesignGuide"), "DesignGuide");
+const InstanceGeneralSettings = lazyPage(
+  () => import("./pages/InstanceGeneralSettings"),
+  "InstanceGeneralSettings",
+);
+const InstanceSettings = lazyPage(() => import("./pages/InstanceSettings"), "InstanceSettings");
+const InstanceExperimentalSettings = lazyPage(
+  () => import("./pages/InstanceExperimentalSettings"),
+  "InstanceExperimentalSettings",
+);
+const PluginManager = lazyPage(() => import("./pages/PluginManager"), "PluginManager");
+const PluginSettings = lazyPage(() => import("./pages/PluginSettings"), "PluginSettings");
+const PluginPage = lazyPage(() => import("./pages/PluginPage"), "PluginPage");
+const RunTranscriptUxLab = lazyPage(
+  () => import("./pages/RunTranscriptUxLab"),
+  "RunTranscriptUxLab",
+);
+const OrgChart = lazyPage(() => import("./pages/OrgChart"), "OrgChart");
+const NewAgent = lazyPage(() => import("./pages/NewAgent"), "NewAgent");
+const AuthPage = lazyPage(() => import("./pages/Auth"), "AuthPage");
+const OperatorClaimPage = lazyPage(() => import("./pages/OperatorClaim"), "OperatorClaimPage");
+const CliAuthPage = lazyPage(() => import("./pages/CliAuth"), "CliAuthPage");
+const InviteLandingPage = lazyPage(() => import("./pages/InviteLanding"), "InviteLandingPage");
+const NotFoundPage = lazyPage(() => import("./pages/NotFound"), "NotFoundPage");
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -298,9 +326,16 @@ function NoCompaniesStartPage() {
   );
 }
 
+function RouteFallback() {
+  return (
+    <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>
+  );
+}
+
 export function App() {
   return (
     <>
+      <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="auth" element={<AuthPage />} />
         <Route path="operator-claim/:token" element={<OperatorClaimPage />} />
@@ -345,6 +380,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
       </Routes>
+      </Suspense>
       <OnboardingWizard />
     </>
   );

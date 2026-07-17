@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, Moon, Settings, Sun } from "lucide-react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "@/lib/router";
@@ -422,7 +422,12 @@ export function Layout() {
                   requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
                 />
               ) : (
-                <Outlet />
+                // Content routes are lazy-loaded; this boundary keeps the sidebar and
+                // chrome mounted while a route chunk loads, so only the main area
+                // shows the fallback.
+                <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading...</div>}>
+                  <Outlet />
+                </Suspense>
               )}
             </main>
             <PropertiesPanel />
