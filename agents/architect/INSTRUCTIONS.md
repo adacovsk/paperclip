@@ -120,11 +120,25 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    > **CRITICAL — do NOT fire-and-forget the build.** A background build does **not** reliably wake a finished run, and even when the runtime *does* re-invoke your session on a callback wake, that re-wake is **not** a notification you can wait for — it drops you back in with the build still mid-flight and no output in hand. So if you emit a final assistant message while the build is still running (e.g. *"monitors armed, waiting…"*, *"the build is compiling, I'll be notified…"*, *"waiter re-armed, awaiting clippy…"*), **the run ENDS right there**, the build result is lost, the PR step never executes, and the task silently holds at `in_review` with **no PR**. The server then chain-wakes you straight back onto this same `in_review` task in a **reused session**, you repeat the same "waiter re-armed / I'll be notified" line, exit again, and loop forever — ~30s runs that never run cargo to completion, burning budget (the AA-1480/1482/**1582** incident class, observed repeatedly).
    > **Therefore: while cargo is still running, your *next action is always another poll in the SAME run* — never a closing summary, never "awaiting notification", never a status line + exit.** You have up to `maxTurnsPerRun` (100) poll-turns; a cold build finishes in a handful of them. Do not stop, do not "hand off", do not say you are waiting. Block on the poll until the process has exited and you hold its full output, then continue to fix / Land **in the same run**. Ending the run with a build in flight is the single worst failure mode in this pipeline.
    > **If you are re-woken onto a task you believe you already finished:** do NOT re-emit "complete / redundant / stopping". The reused-session loop is exactly the model citing a phantom completion. **Verify it for real first:** `gh pr view --json headRefName,state` and confirm the head is `task/{task-id}` (your task's branch) — an unrelated PR number is NOT proof. If no PR with that head exists, your prior run did **not** land — run cargo to completion and execute the §Landing block now, this turn.
-3. **Use the canonical command verbatim — do not invent variants.** Copy these lines, substituting `{task-id}`. Prefix every cargo command with `CARGO_INCREMENTAL=0` so the shared sccache cache (configured in `~/.cargo/config.toml`) actually gets hits — sccache cannot cache incremental builds, and a clean verify gains nothing from incremental anyway:
+3. **Use the canonical command verbatim — do not invent variants.** Copy these lines, substituting `{task-id}`. Every cargo command goes through `cargo-sem.sh` (the slot semaphore — see above) and is prefixed with `CARGO_INCREMENTAL=0` so the shared sccache cache (configured in `~/.cargo/config.toml`) actually gets hits — sccache cannot cache incremental builds, and a clean verify gains nothing from incremental anyway:
    ```sh
-   CARGO_INCREMENTAL=0 cargo clippy   2>&1 | tee /tmp/cargo-clippy-{task-id}.txt
-   CARGO_INCREMENTAL=0 cargo test --lib 2>&1 | tee /tmp/cargo-test-{task-id}.txt
+   $PAPERCLIP_REPO/agents/architect/cargo-sem.sh env CARGO_INCREMENTAL=0 cargo clippy   2>&1 | tee /tmp/cargo-clippy-{task-id}.txt
+   $PAPERCLIP_REPO/agents/architect/cargo-sem.sh env CARGO_INCREMENTAL=0 cargo test --lib 2>&1 | tee /tmp/cargo-test-{task-id}.txt
    ```
+   **One cargo per `cargo-sem.sh` call — never chain.** A slot is held for the
+   whole lifetime of the wrapped command, so
+   `cargo-sem.sh bash -c 'cargo clippy && cargo test --lib'` holds ONE slot for
+   the entire verify. That is the single worst thing you can do to this queue:
+   measured, one such chain held a slot 3-7 hours while the front waiter sat
+   9h50m — and it is why the AA-2103 / AA-2145 starvation kept recurring *after*
+   the ticket queue made admission provably fair. Fairness was never the
+   problem; hold time is. Two separate calls each wait their own turn and yield
+   the slot in between, which is what lets the queue drain. `cargo-sem.sh` now
+   hard-errors (exit 64) on a multi-cargo chain rather than let you wedge the
+   box, so a chain costs you a failed run, not a fixed queue. This is also why
+   rule 1 (one cargo alive at a time) and the staged gate below are compatible
+   with the semaphore rather than in tension with it: you were always meant to
+   run clippy, let go, then run test.
    **No `cargo check` — `cargo clippy` subsumes it.** clippy runs the full
    rustc front-end (parse / typecheck / borrowck) via `clippy-driver`, so
    every compile error `check` would report surfaces under clippy too, plus
@@ -163,7 +177,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
     - **`cargo` is not on `PATH`.** The daemon's `PATH` is pnpm's `node_modules/.bin` entries plus the system default. `/usr/bin` tools (`flock`/`nice`/`taskset`) resolve and `~/.local/bin` happens to be present, but `~/.cargo/bin` is **absent**. Without `. "$HOME/.cargo/env"` the wrapper dies instantly with `cargo: command not found` and writes **127** into the sentinel, which the old state machine read as "cargo failed" — sending the run into a 3-cycle fix loop editing Rust to chase a `PATH` bug (AA-1986/AA-2010: verify never once ran cargo, across every fire).
     - **`~/.local/bin` is prepended defensively.** `sccache` lives there, and `~/.cargo/config.toml` sets `rustc-wrapper = "sccache"`, so a build that finds `cargo` but not `sccache` fails one step later. It is on the daemon's `PATH` *today*, but that is incidental (pnpm put it there), so do not rely on it. The preflight guard asserts both tools and writes the distinct **96** sentinel rather than a build-failure code.
     - **`CARGO_TARGET_DIR` is unset explicitly.** A daemon started before the `~/.profile` change still exports `CARGO_TARGET_DIR=~/.cargo-shared-target` — observed live, four days stale. That silently reverts the per-worktree `target/` design and forces every concurrent Architect to serialize on one `target/.cargo-lock`. `unset` makes the worktree isolation hold regardless of when the daemon last restarted.
-    - **Do not "fix" any of this with `bash -lc`.** A login shell does source `~/.profile` and would supply the `PATH`, but `~/.profile` *unconditionally exports* `PAPERCLIP_PROJECT`/`PAPERCLIP_REPO`/`RUSTC_WRAPPER`, so `-l` silently **overrides** any env the adapter injects — a footgun the moment a second project or a per-agent `adapterConfig.env` exists. `PAPERCLIP_PROJECT` already arrives in the runner env (in the AA-1986 failure the `cd` succeeded and only `cargo` was missing), so `-l` would be solving a problem we don't have while creating one we don't want. Bootstrap explicitly and leave env precedence alone.
+    - **Do not "fix" any of this with `bash -lc`.** A login shell does source `~/.profile` and would supply the `PATH`, but `~/.profile` *unconditionally exports* `PAPERCLIP_PROJECT`/`PAPERCLIP_REPO`/`PAPERCLIP_PF2E_REF`/`PAPERCLIP_GH_USER`, so `-l` silently **overrides** any env the adapter injects — a footgun the moment a second project or a per-agent `adapterConfig.env` exists. `PAPERCLIP_PROJECT` already arrives in the runner env (in the AA-1986 failure the `cd` succeeded and only `cargo` was missing), so `-l` would be solving a problem we don't have while creating one we don't want. Bootstrap explicitly and leave env precedence alone.
 
 ### Procedure
 

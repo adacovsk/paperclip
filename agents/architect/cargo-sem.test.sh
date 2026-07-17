@@ -63,9 +63,15 @@ for _, d in sorted(evts):
 print(f"peak concurrency = {peak} (limit {slots})")
 
 # (2) FIFO: admissions ordered by time must have ascending ticket numbers
+# Match only the two fields this assertion needs (ticket, t) and tolerate any
+# others in between. An earlier version pinned the exact sequence
+# `ticket=.. slot=.. jobs=.. t=..`; adding `cgu=` to the trace then matched
+# nothing, and the suite reported "0/N waiters admitted" — a parser failure
+# wearing a fairness failure's clothes. Keep this loose so trace fields stay
+# additive. (`\st=` cannot mis-fire on `ticket=`: that has no `=` after its `t`.)
 admits = []
 for line in open(dbglog):
-    m = re.match(r'admit ticket=(\d+) slot=\d+ jobs=\d+ t=([\d.]+)', line)
+    m = re.match(r'admit ticket=(\d+)\b.*\st=([\d.]+)', line)
     if m: admits.append((float(m[2]), int(m[1])))
 order = [tk for _t, tk in sorted(admits)]
 print(f"admission order by ticket = {order}")
