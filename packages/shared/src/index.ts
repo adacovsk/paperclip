@@ -132,6 +132,10 @@ export {
   type PluginWebhookDeliveryStatus,
   type PluginEventType,
   type PluginBridgeErrorCode,
+  HEARTBEAT_RUN_LIST_DEFAULT_LIMIT,
+  HEARTBEAT_RUN_LIST_MAX_LIMIT,
+  ACTIVITY_LIST_DEFAULT_LIMIT,
+  ACTIVITY_LIST_MAX_LIMIT,
 } from "./constants.js";
 
 export type {

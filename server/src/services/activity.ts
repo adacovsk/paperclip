@@ -1,12 +1,14 @@
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, heartbeatRuns, issues } from "@paperclipai/db";
+import { ACTIVITY_LIST_DEFAULT_LIMIT } from "@paperclipai/shared";
 
 export interface ActivityFilters {
   companyId: string;
   agentId?: string;
   entityType?: string;
   entityId?: string;
+  limit?: number;
 }
 
 export function activityService(db: Db) {
@@ -45,6 +47,7 @@ export function activityService(db: Db) {
           ),
         )
         .orderBy(desc(activityLog.createdAt))
+        .limit(filters.limit ?? ACTIVITY_LIST_DEFAULT_LIMIT)
         .then((rows) => rows.map((r) => r.activityLog));
     },
 

@@ -21,6 +21,8 @@ import {
   updateAgentInstructionsPathSchema,
   wakeAgentSchema,
   updateAgentSchema,
+  HEARTBEAT_RUN_LIST_DEFAULT_LIMIT,
+  HEARTBEAT_RUN_LIST_MAX_LIMIT,
 } from "@paperclipai/shared";
 import {
   readPaperclipSkillSyncPreference,
@@ -2073,8 +2075,24 @@ export function agentRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;
-    const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 200)) : undefined;
+    // An omitted limit must still be bounded; the service applies the default.
+    const limit = limitParam
+      ? Math.max(
+          1,
+          Math.min(
+            HEARTBEAT_RUN_LIST_MAX_LIMIT,
+            parseInt(limitParam, 10) || HEARTBEAT_RUN_LIST_DEFAULT_LIMIT,
+          ),
+        )
+      : HEARTBEAT_RUN_LIST_DEFAULT_LIMIT;
     const runs = await heartbeat.list(companyId, agentId, limit);
+    res.json(runs);
+  });
+
+  router.get("/companies/:companyId/heartbeat-runs/latest-by-agent", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const runs = await heartbeat.latestRunsByAgent(companyId);
     res.json(runs);
   });
 

@@ -121,6 +121,8 @@ export const queryKeys = {
     ["usage-quota-windows", companyId] as const,
   heartbeats: (companyId: string, agentId?: string) =>
     ["heartbeats", companyId, agentId] as const,
+  heartbeatsLatestByAgent: (companyId: string) =>
+    ["heartbeats", companyId, "latest-by-agent"] as const,
   runDetail: (runId: string) => ["heartbeat-run", runId] as const,
   runWorkspaceOperations: (runId: string) => ["heartbeat-run", runId, "workspace-operations"] as const,
   liveRuns: (companyId: string) => ["live-runs", companyId] as const,

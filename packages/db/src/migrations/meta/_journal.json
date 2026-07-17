@@ -337,6 +337,13 @@
       "when": 1783345117412,
       "tag": "0047_serious_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1784296259596,
+      "tag": "0048_third_spiral",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
+import { ACTIVITY_LIST_DEFAULT_LIMIT, ACTIVITY_LIST_MAX_LIMIT } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { activityService } from "../services/activity.js";
 import { assertOperator, assertCompanyAccess } from "./authz.js";
@@ -34,11 +35,18 @@ export function activityRoutes(db: Db) {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
 
+    const limitParam = req.query.limit as string | undefined;
     const filters = {
       companyId,
       agentId: req.query.agentId as string | undefined,
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
+      limit: limitParam
+        ? Math.max(
+            1,
+            Math.min(ACTIVITY_LIST_MAX_LIMIT, parseInt(limitParam, 10) || ACTIVITY_LIST_DEFAULT_LIMIT),
+          )
+        : ACTIVITY_LIST_DEFAULT_LIMIT,
     };
     const result = await svc.list(filters);
     res.json(result);

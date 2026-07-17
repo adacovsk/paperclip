@@ -691,3 +691,16 @@ export const PLUGIN_BRIDGE_ERROR_CODES = [
   "UNKNOWN",
 ] as const;
 export type PluginBridgeErrorCode = (typeof PLUGIN_BRIDGE_ERROR_CODES)[number];
+
+/**
+ * Row caps for the run and activity list endpoints.
+ *
+ * These lists grow with every agent run and never shrink, so a caller that omits an
+ * explicit limit must still get a bounded response. The default is applied in the
+ * service rather than the route: an omitted `?limit=` reached the query as
+ * `undefined`, which Drizzle read as "no limit" and returned every row ever recorded.
+ */
+export const HEARTBEAT_RUN_LIST_DEFAULT_LIMIT = 200;
+export const HEARTBEAT_RUN_LIST_MAX_LIMIT = 1000;
+export const ACTIVITY_LIST_DEFAULT_LIMIT = 200;
+export const ACTIVITY_LIST_MAX_LIMIT = 1000;
