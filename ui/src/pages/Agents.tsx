@@ -90,9 +90,12 @@ export function Agents() {
     enabled: !!selectedCompanyId && effectiveView === "org",
   });
 
+  // This polls every 15s, so it fetches the live-runs endpoint (already filtered to
+  // queued/running server-side) rather than the full run history the page only
+  // reduced down to live runs anyway.
   const { data: runs } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!),
+    queryKey: queryKeys.liveRuns(selectedCompanyId!),
+    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
     enabled: !!selectedCompanyId,
     refetchInterval: 15_000,
   });
@@ -101,7 +104,6 @@ export function Agents() {
   const liveRunByAgent = useMemo(() => {
     const map = new Map<string, { runId: string; liveCount: number }>();
     for (const r of runs ?? []) {
-      if (r.status !== "running" && r.status !== "queued") continue;
       const existing = map.get(r.agentId);
       if (existing) {
         existing.liveCount += 1;
