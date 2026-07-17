@@ -47,5 +47,18 @@ export const heartbeatRuns = pgTable(
       table.agentId,
       table.startedAt,
     ),
+    // Run lists order by created_at DESC, not started_at, so the index above cannot
+    // serve them. Without these the company-wide list is a full scan + sort.
+    companyCreatedIdx: index("heartbeat_runs_company_created_idx").on(
+      table.companyId,
+      table.createdAt.desc(),
+    ),
+    // Serves the DISTINCT ON (agent_id) latest-run-per-agent probe and the
+    // agentId-filtered list.
+    companyAgentCreatedIdx: index("heartbeat_runs_company_agent_created_idx").on(
+      table.companyId,
+      table.agentId,
+      table.createdAt.desc(),
+    ),
   }),
 );

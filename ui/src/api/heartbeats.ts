@@ -34,6 +34,9 @@ export const heartbeatsApi = {
     const qs = searchParams.toString();
     return api.get<HeartbeatRun[]>(`/companies/${companyId}/heartbeat-runs${qs ? `?${qs}` : ""}`);
   },
+  /** Most recent run per agent — bounded by agent count, not run history. */
+  latestByAgent: (companyId: string) =>
+    api.get<HeartbeatRun[]>(`/companies/${companyId}/heartbeat-runs/latest-by-agent`),
   get: (runId: string) => api.get<HeartbeatRun>(`/heartbeat-runs/${runId}`),
   events: (runId: string, afterSeq = 0, limit = 200) =>
     api.get<HeartbeatRunEvent[]>(

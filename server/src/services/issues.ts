@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -368,6 +368,20 @@ export function deriveIssueUserContext(
   };
 }
 
+/**
+ * Column projection for issue *lists*.
+ *
+ * `description` holds the full task body and dominated the list payload (~82% of it)
+ * even though no list view renders it — the detail page reads the real column via
+ * `getById`. Nulling it here keeps the row shape intact for consumers while leaving
+ * the body out of the wire. Search still matches against the real column: only the
+ * SELECT projection is narrowed, not the WHERE clause.
+ */
+const issueListColumns = {
+  ...getTableColumns(issues),
+  description: sql<string | null>`NULL`.as("description"),
+} as const;
+
 async function labelMapForIssues(dbOrTx: any, issueIds: string[]): Promise<Map<string, IssueLabelRow[]>> {
   const map = new Map<string, IssueLabelRow[]>();
   if (issueIds.length === 0) return map;
@@ -700,7 +714,7 @@ export function issueService(db: Db) {
         END
       `;
       const rows = await db
-        .select()
+        .select(issueListColumns)
         .from(issues)
         .where(and(...conditions))
         .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt));

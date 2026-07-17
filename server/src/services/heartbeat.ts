@@ -4,7 +4,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { and, asc, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import type { BillingType } from "@paperclipai/shared";
+import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, type BillingType } from "@paperclipai/shared";
 import {
   agents,
   agentRuntimeState,
@@ -4210,8 +4210,8 @@ export function heartbeatService(db: Db) {
   }
 
   return {
-    list: async (companyId: string, agentId?: string, limit?: number) => {
-      const query = db
+    list: async (companyId: string, agentId?: string, limit = HEARTBEAT_RUN_LIST_DEFAULT_LIMIT) => {
+      const rows = await db
         .select(heartbeatRunListColumns)
         .from(heartbeatRuns)
         .where(
@@ -4219,13 +4219,35 @@ export function heartbeatService(db: Db) {
             ? and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId))
             : eq(heartbeatRuns.companyId, companyId),
         )
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .orderBy(desc(heartbeatRuns.createdAt))
+        .limit(limit);
 
-      const rows = limit ? await query.limit(limit) : await query;
       return rows.map((row) => ({
         ...row,
         resultJson: summarizeHeartbeatRunResultJson(row.resultJson),
       }));
+    },
+
+    /**
+     * Latest run per agent — one row per agent rather than the full history.
+     *
+     * The inbox badge only needs each agent's most recent run to decide whether it
+     * failed. Fetching the whole run list to reduce it client-side meant every page
+     * load carrying the company's entire run history.
+     */
+    latestRunsByAgent: async (companyId: string) => {
+      const rows = await db
+        .selectDistinctOn([heartbeatRuns.agentId], heartbeatRunListColumns)
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.companyId, companyId))
+        .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));
+
+      return rows
+        .map((row) => ({
+          ...row,
+          resultJson: summarizeHeartbeatRunResultJson(row.resultJson),
+        }))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     },
 
     getRun,

@@ -120,9 +120,12 @@ export function useInboxBadge(companyId: string | null | undefined) {
 
   const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
 
+  // The badge only needs each agent's most recent run. This hook renders in the
+  // Sidebar on every route, so fetching the full run list here made every page load
+  // carry the company's entire run history.
   const { data: heartbeatRuns = [] } = useQuery({
-    queryKey: queryKeys.heartbeats(companyId!),
-    queryFn: () => heartbeatsApi.list(companyId!),
+    queryKey: queryKeys.heartbeatsLatestByAgent(companyId!),
+    queryFn: () => heartbeatsApi.latestByAgent(companyId!),
     enabled: !!companyId,
   });
 
