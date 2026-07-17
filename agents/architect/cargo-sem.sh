@@ -19,15 +19,40 @@
 # oversubscribe the 4 real cores. Piling on more *whole-machine* slots past ~3
 # does not add throughput — it adds context-switch churn, cache thrash, and heat
 # (=> deeper throttle), and aggregate wall-clock can regress. The effective lever
-# is therefore two-dimensional: SLOTS (how many builds run) AND per-build job cap
-# (how many threads each build gets). Both defaults are derived from the CPU, not
-# hardcoded: SLOTS = physical cores - 1 (reserve one for OS/sccache/orchestration),
-# JOBS = logical cores / SLOTS, each floored at 2. On this 4-core/8-thread box
-# that is 3 slots x CARGO_BUILD_JOBS=2 ~= 6 threads — more builds in flight than
-# the old fixed 2, but far LESS total oversubscription than the old 2 x 8 = 16
-# threads. Override either via CARGO_SEM_SLOTS / CARGO_SEM_JOBS; raising SLOTS
+# is THREE-dimensional: SLOTS (how many builds run) x JOBS (how many rustc each
+# build spawns) x CGU (how many codegen threads live inside each rustc).
+#
+# The third dimension is the one that bites, because CARGO_BUILD_JOBS does not
+# reach it. A job cap bounds how many rustc processes cargo starts; it says
+# nothing about the threads *inside* one. With codegen-units > 1 and opt-level
+# > 0 rustc runs local ThinLTO across its codegen units, one thread per unit,
+# and cargo's default unit count is 256 incremental / 16 non-incremental. Since
+# every command here runs CARGO_INCREMENTAL=0, that is 16 threads per rustc.
+#
+# An earlier revision of this header claimed "3 slots x CARGO_BUILD_JOBS=2 ~= 6
+# threads". That was wrong by 6x: measured on this box, 3 admitted builds ran 4
+# rustc totalling 37 threads (14/7/12/4) at load 17-25 on 4 physical cores,
+# which is what made the desktop unusable. SLOTS x JOBS was never the whole
+# product — SLOTS x JOBS x CGU is.
+#
+# All three defaults derive from the CPU, none are hardcoded:
+#   SLOTS = physical cores - 1  (reserve one for OS/sccache/orchestration)
+#   JOBS  = logical cores / SLOTS
+#   CGU   = physical cores      (a 4x cut from cargo's 16; floor of 1)
+# each floored as noted. On this 4-core/8-thread box: 3 slots x 2 jobs x 4 units.
+# Override via CARGO_SEM_SLOTS / CARGO_SEM_JOBS / CARGO_SEM_CGU; raising SLOTS
 # toward the logical-core count on this chip is expected to be slower, not faster
-# (measure before trusting a bigger number).
+# (measure before trusting a bigger number). If the box still thrashes, CGU is
+# the cheapest lever to drop next (2, then 1) — it costs single-build codegen
+# parallelism, which concurrent slots already supply at the machine level.
+#
+# CGU is exported as CARGO_PROFILE_DEV_CODEGEN_UNITS rather than committed to
+# bevy-rpg's Cargo.toml on purpose. It must NOT apply to a human's dev build:
+# workspace crates compile incrementally at 256 units, and lowering that
+# coarsens rebuilds and slows the edit-compile-run loop. Fleet builds are
+# non-incremental, so they lose nothing. (Dependencies are a different case and
+# are capped in bevy-rpg's [profile.dev.package."*"] — cargo never builds them
+# incrementally, so the cap is free for everyone.)
 #
 # HOW FAIRNESS IS ENFORCED. Admission is a strict ticket queue, decoupled from
 # capacity:
@@ -81,15 +106,26 @@ PHYS="$(lscpu -p=core 2>/dev/null | grep -v '^#' | sort -u | grep -c '' 2>/dev/n
 # Default slots: one build per physical core, minus one reserved for the OS,
 # sccache, and the Paperclip orchestration that share this box; floor of 2.
 # Default per-build job cap: logical cores spread across the slots, floor of 2 so
-# a build always makes reasonable progress. Explicit CARGO_SEM_* override either.
+# a build always makes reasonable progress. Default codegen units: one per
+# physical core, floor of 1 (1 is legal — it serializes codegen within a rustc,
+# it does not disable it). Explicit CARGO_SEM_* overrides any of the three.
 SLOTS="${CARGO_SEM_SLOTS:-$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))}"
 JOBS="${CARGO_SEM_JOBS:-$(( NPROC / SLOTS < 2 ? 2 : NPROC / SLOTS ))}"
+CGU="${CARGO_SEM_CGU:-$(( PHYS < 1 ? 1 : PHYS ))}"
 CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
 WAIT="$D/cargo-sem.wait"
 
-run() { nice -n19 ionice -c3 env CARGO_BUILD_JOBS="$JOBS" "$@"; }
+# CARGO_PROFILE_DEV_CODEGEN_UNITS bounds the codegen threads inside each rustc —
+# the dimension CARGO_BUILD_JOBS cannot see (see header). Env, not config, so it
+# scopes to fleet builds only and never reaches a human's incremental dev loop.
+run() {
+  nice -n19 ionice -c3 env \
+    CARGO_BUILD_JOBS="$JOBS" \
+    CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
+    "$@"
+}
 
 rd() { local v=0; [ -f "$1" ] && v=$(<"$1"); printf '%s' "${v:-0}"; }
 wr() { printf '%s' "$2" > "$1"; }
@@ -137,7 +173,7 @@ while true; do
     [ "$(rd "$SERV")" = "$T" ] && wr "$SERV" $((T + 1))    # let the next ticket contend
     flock -u 6; exec 6>&-
     exec 7>&-; rm -f "$WAIT.$T"                            # release presence; slot now held
-    [ -n "$DBG" ] && printf 'admit ticket=%s slot=%s jobs=%s t=%s\n' "$T" "$SLOT_IDX" "$JOBS" "$(date +%s.%N)" >> "$DBG"
+    [ -n "$DBG" ] && printf 'admit ticket=%s slot=%s jobs=%s cgu=%s t=%s\n' "$T" "$SLOT_IDX" "$JOBS" "$CGU" "$(date +%s.%N)" >> "$DBG"
     break
   fi
   sleep "$POLL"                                            # front, but capacity full
