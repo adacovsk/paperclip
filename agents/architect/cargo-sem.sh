@@ -117,6 +117,55 @@ NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
 WAIT="$D/cargo-sem.wait"
 
+# --- ONE cargo per acquisition (guard runs before any lock is touched) ---
+# A slot is held for the whole lifetime of the wrapped command, so wrapping a
+# `a && b && c` chain in a single call holds one slot for the whole chain. That
+# is not a fairness bug — the ticket queue below is strictly FIFO — it is a HOLD
+# DURATION bug, and it is what actually starves the queue: measured, a single
+# `clippy && test --lib && test --test ...` acquisition held a slot 3-7 hours
+# while the front waiter sat 9h50m. Chains are why AA-2103 (8.5h) and AA-2145
+# (11h+) recurred *after* fairness was fixed; the queue drains only if slots
+# turn over. Call this script once per cargo invocation instead:
+#
+#     cargo-sem.sh env CARGO_INCREMENTAL=0 cargo clippy
+#     cargo-sem.sh env CARGO_INCREMENTAL=0 cargo test --lib
+#
+# Each waits its own turn, so a long verify yields the slot between steps. This
+# is a hard error, not a warning: it costs seconds now, versus hours of a wedged
+# queue. Escape hatch CARGO_SEM_ALLOW_CHAIN=1 if a genuine single-slot chain is
+# ever needed. The regex counts `cargo` only as a command word — `/tmp/cargo-x`,
+# `~/.cargo/bin`, and `CARGO_INCREMENTAL=0` do not match.
+if [ "${CARGO_SEM_ALLOW_CHAIN:-0}" != "1" ]; then
+  _ncargo=$(printf '%s' "$*" | grep -oE '(^|[;&|[:space:]])cargo[[:space:]]' | grep -c '' || true)
+  if [ "${_ncargo:-0}" -gt 1 ]; then
+    printf 'cargo-sem.sh: refusing a %s-cargo chain in one slot acquisition.\n' "$_ncargo" >&2
+    printf '  Hold time, not fairness, is what starves this queue: one slot would be\n' >&2
+    printf '  held for the whole chain (measured: 3-7h holds, 9h50m front-of-queue wait).\n' >&2
+    printf '  Split it — invoke this script once per cargo command:\n' >&2
+    printf '      cargo-sem.sh env CARGO_INCREMENTAL=0 cargo clippy\n' >&2
+    printf '      cargo-sem.sh env CARGO_INCREMENTAL=0 cargo test --lib\n' >&2
+    printf '  Override with CARGO_SEM_ALLOW_CHAIN=1 only if you truly need one slot.\n' >&2
+    printf '  Got: %s\n' "$*" >&2
+    exit 64
+  fi
+fi
+
+# --- sccache must already be up BEFORE we hold a lock (AA-2014) ---
+# If a cargo cold-starts the sccache server from *under* a slot lock, the
+# daemon inherits fd 9 and never exits — and flock releases only when every fd
+# on the open file description closes, so that slot is lost for the life of the
+# daemon. Capacity silently drops by one, permanently.
+#
+# ~/.profile pre-starts the server for exactly this reason, but that only fires
+# for *login* shells, and agent runs deliberately avoid `bash -lc` (see
+# architect/INSTRUCTIONS.md — ~/.profile unconditionally exports PAPERCLIP_*,
+# which would clobber adapter-injected env). Worse, sccache self-exits after its
+# idle timeout (default 600s) and this pipeline is idle most of the day, so the
+# daemon reliably dies overnight and the next morning's first build is the one
+# that cold-starts it — under a slot. The guarantee therefore has to live here,
+# at the point of use, outside every flock. Idempotent; no-op if already up.
+command -v sccache >/dev/null 2>&1 && sccache --start-server >/dev/null 2>&1 || true
+
 # CARGO_PROFILE_DEV_CODEGEN_UNITS bounds the codegen threads inside each rustc —
 # the dimension CARGO_BUILD_JOBS cannot see (see header). Env, not config, so it
 # scopes to fleet builds only and never reaches a human's incremental dev loop.
