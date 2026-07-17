@@ -13,14 +13,27 @@
 # TUNING FOR THE HARDWARE (do not just crank CARGO_SEM_SLOTS). The build box is a
 # 4-physical-core / 8-thread 15 W i7-8650U ULV laptop — `nproc` reports 8 but
 # that is hyperthreads over 4 cores, and under sustained all-core load the chip
-# thermally throttles toward its base clock. Memory is NOT the limit (peak build
-# RSS ~2 GB; 24 GB free). CORES are. Each cargo already defaults to
-# `--jobs nproc`, so ONE build alone saturates every thread; two already
-# oversubscribe the 4 real cores. Piling on more *whole-machine* slots past ~3
-# does not add throughput — it adds context-switch churn, cache thrash, and heat
-# (=> deeper throttle), and aggregate wall-clock can regress. The effective lever
-# is THREE-dimensional: SLOTS (how many builds run) x JOBS (how many rustc each
-# build spawns) x CGU (how many codegen threads live inside each rustc).
+# thermally throttles toward its base clock. CORES are the primary limit. Each
+# cargo already defaults to `--jobs nproc`, so ONE build alone saturates every
+# thread; two already oversubscribe the 4 real cores. Piling on more
+# *whole-machine* slots past ~3 does not add throughput — it adds context-switch
+# churn, cache thrash, and heat (=> deeper throttle), and aggregate wall-clock
+# can regress. The effective lever is THREE-dimensional: SLOTS (how many builds
+# run) x JOBS (how many rustc each build spawns) x CGU (how many codegen threads
+# live inside each rustc).
+#
+# MEMORY IS A SECOND CEILING, and it binds sooner than SLOTS suggests. An earlier
+# revision of this header claimed "peak build RSS ~2 GB; 24 GB free" and
+# concluded memory was a non-issue. That is stale by ~4x: measured with 3 slots
+# held, the two workspace-crate rustc alone were 7.8 GB (`--crate-name
+# rust_bevy_rpg src/main.rs`, 47 min in) and 4.1 GB (`src/lib.rs`) — 12 GB live,
+# 642 MB free of 31 GB, and into swap. The big linking rustc for this crate is
+# the outlier, not the dependency rustc (~0.2-0.3 GB each), so worst case scales
+# with SLOTS: 3 slots x ~8 GB is ~24 GB on a 31 GB box that also holds ~12 GB of
+# page cache. Do NOT raise SLOTS on the assumption that only cores are scarce —
+# swapping a build box is worse than serializing it. CGU also moves this: fewer
+# codegen units means fewer LLVM modules live at once, so dropping CGU relieves
+# memory pressure as well as thread pressure.
 #
 # The third dimension is the one that bites, because CARGO_BUILD_JOBS does not
 # reach it. A job cap bounds how many rustc processes cargo starts; it says
