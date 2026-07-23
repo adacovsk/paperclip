@@ -38,10 +38,9 @@ import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
-import { ClaudeSubscriptionPanel } from "../components/ClaudeSubscriptionPanel";
 import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
-import { formatCents, formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -87,7 +86,6 @@ import {
   type BudgetPolicySummary,
   type HeartbeatRun,
   type HeartbeatRunEvent,
-  type AgentRuntimeState,
   type LiveEvent,
   type WorkspaceOperation,
 } from "@paperclipai/shared";
@@ -562,12 +560,6 @@ export function AgentDetail() {
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
 
-  const { data: runtimeState } = useQuery({
-    queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
-    queryFn: () => agentsApi.runtimeState(resolvedAgentId!, resolvedCompanyId ?? undefined),
-    enabled: Boolean(resolvedAgentId) && needsDashboardData,
-  });
-
   const { data: heartbeats } = useQuery({
     queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
@@ -992,7 +984,6 @@ export function AgentDetail() {
           agent={agent}
           runs={heartbeats ?? []}
           assignedIssues={assignedIssues}
-          runtimeState={runtimeState}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
         />
@@ -1158,14 +1149,12 @@ function AgentOverview({
   agent,
   runs,
   assignedIssues,
-  runtimeState,
   agentId,
   agentRouteId,
 }: {
   agent: AgentDetailRecord;
   runs: HeartbeatRun[];
   assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
-  runtimeState?: AgentRuntimeState;
   agentId: string;
   agentRouteId: string;
 }) {
@@ -1226,7 +1215,7 @@ function AgentOverview({
       {/* Costs */}
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Costs</h3>
-        <CostsSection runtimeState={runtimeState} runs={runs} companyId={agent.companyId} />
+        <CostsSection runs={runs} companyId={agent.companyId} />
       </div>
     </div>
   );
@@ -1235,11 +1224,9 @@ function AgentOverview({
 /* ---- Costs Section (inline) ---- */
 
 function CostsSection({
-  runtimeState,
   runs,
   companyId,
 }: {
-  runtimeState?: AgentRuntimeState;
   runs: HeartbeatRun[];
   companyId?: string;
 }) {
@@ -1250,11 +1237,9 @@ function CostsSection({
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // Subscription quota is the shared, provider-reported session/weekly limit — the metric
-  // that actually constrains this agent's runs. Unlike the cumulative token counters below
-  // (which only ever grow and, on a subscription plan, report $0 cost), it shows real
-  // remaining headroom. It is provider-wide, not per-agent — every agent draws on the same
-  // subscription — hence the "shared" tag.
+  // The provider-reported weekly subscription quota — the one figure here tied to a real,
+  // actionable limit (remaining headroom before runs start failing). Provider-wide, not
+  // per-agent: every agent draws on the same subscription, hence "shared".
   const { data: quotaData, isLoading: quotaLoading } = useQuery({
     queryKey: companyId ? queryKeys.usageQuotaWindows(companyId) : ["usage-quota-windows", "none"],
     queryFn: () => costsApi.quotaWindows(companyId as string),
@@ -1262,57 +1247,55 @@ function CostsSection({
     refetchInterval: 300_000,
     staleTime: 60_000,
   });
-  const anthropicQuota = useMemo(
-    () => (quotaData ?? []).find((r) => r.provider === "anthropic"),
-    [quotaData],
-  );
+  const weekWindow = useMemo(() => {
+    const anthropic = (quotaData ?? []).find((r) => r.provider === "anthropic");
+    if (!anthropic?.ok) return null;
+    return (
+      anthropic.windows.find((w) => /week/i.test(w.label) && /all\s*models/i.test(w.label)) ??
+      anthropic.windows.find((w) => /week/i.test(w.label)) ??
+      null
+    );
+  }, [quotaData]);
+  const weekPct = weekWindow?.usedPercent ?? null;
+  const weekFill =
+    weekPct == null
+      ? "bg-primary/60"
+      : weekPct >= 90
+        ? "bg-red-400"
+        : weekPct >= 70
+          ? "bg-yellow-400"
+          : "bg-green-400";
 
   return (
     <div className="space-y-4">
-      {companyId && (quotaLoading || anthropicQuota) && (
+      {companyId && (quotaLoading || weekWindow) && (
         <div className="border border-border rounded-lg p-4 space-y-2">
           <div className="flex items-center justify-between gap-3">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Subscription quota
+              Weekly quota
             </span>
             <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
               shared · all agents
             </span>
           </div>
-          {quotaLoading && !anthropicQuota ? (
+          {quotaLoading && !weekWindow ? (
             <p className="text-xs text-muted-foreground">Loading quota…</p>
-          ) : (
-            <ClaudeSubscriptionPanel
-              windows={anthropicQuota?.ok ? anthropicQuota.windows : []}
-              source={anthropicQuota?.source ?? null}
-              error={anthropicQuota && !anthropicQuota.ok ? (anthropicQuota.error ?? null) : null}
-            />
-          )}
-        </div>
-      )}
-      {runtimeState && (
-        <div className="border border-border rounded-lg p-4 space-y-3">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Lifetime totals
-          </span>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 tabular-nums">
-            <div>
-              <span className="text-xs text-muted-foreground block">Input tokens</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalInputTokens)}</span>
+          ) : weekWindow ? (
+            <div className="space-y-1.5">
+              <div className="h-2 w-full border border-border overflow-hidden">
+                <div
+                  className={`h-full transition-[width] duration-150 ${weekFill}`}
+                  style={{ width: `${Math.min(100, weekPct ?? 0)}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {weekPct != null ? `${weekPct}% used` : "usage unavailable"}
+                {weekWindow.resetsAt
+                  ? ` · resets ${new Date(weekWindow.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                  : ""}
+              </p>
             </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Output tokens</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalOutputTokens)}</span>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Cached tokens</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalCachedInputTokens)}</span>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Total cost</span>
-              <span className="text-lg font-semibold">{formatCents(runtimeState.totalCostCents)}</span>
-            </div>
-          </div>
+          ) : null}
         </div>
       )}
       {runsWithCost.length > 0 && (
