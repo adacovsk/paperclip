@@ -2,17 +2,7 @@ export { execute, ensureCodexSkillsInjected } from "./execute.js";
 export { listCodexSkills, syncCodexSkills } from "./skills.js";
 export { testEnvironment } from "./test.js";
 export { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
-export {
-  getQuotaWindows,
-  readCodexAuthInfo,
-  readCodexToken,
-  fetchCodexQuota,
-  fetchCodexRpcQuota,
-  mapCodexRpcQuota,
-  secondsToWindowLabel,
-  fetchWithTimeout,
-  codexHomeDir,
-} from "./quota.js";
+export { readCodexAuthInfo, codexHomeDir } from "./auth.js";
 import type { AdapterSessionCodec } from "@paperclipai/adapter-utils";
 
 function readNonEmptyString(value: unknown): string | null {

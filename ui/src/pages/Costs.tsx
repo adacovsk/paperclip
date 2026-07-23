@@ -7,7 +7,6 @@ import type {
   CostByProviderModel,
   CostWindowSpendRow,
   FinanceEvent,
-  QuotaWindow,
 } from "@paperclipai/shared";
 import { ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Coins, DollarSign, ReceiptText } from "lucide-react";
 import { budgetsApi } from "../api/budgets";
@@ -329,14 +328,6 @@ export function Costs() {
     staleTime: 10_000,
   });
 
-  const { data: quotaData, isLoading: quotaLoading } = useQuery({
-    queryKey: queryKeys.usageQuotaWindows(companyId),
-    queryFn: () => costsApi.quotaWindows(companyId),
-    enabled: !!selectedCompanyId && mainTab === "providers",
-    refetchInterval: 300_000,
-    staleTime: 60_000,
-  });
-
   const byProvider = useMemo(() => {
     const map = new Map<string, CostByProviderModel[]>();
     for (const row of providerData ?? []) {
@@ -382,34 +373,6 @@ export function Costs() {
     }
     return map;
   }, [windowData]);
-
-  const quotaWindowsByProvider = useMemo(() => {
-    const map = new Map<string, QuotaWindow[]>();
-    for (const result of quotaData ?? []) {
-      if (result.ok && result.windows.length > 0) {
-        map.set(result.provider, result.windows);
-      }
-    }
-    return map;
-  }, [quotaData]);
-
-  const quotaErrorsByProvider = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const result of quotaData ?? []) {
-      if (!result.ok && result.error) map.set(result.provider, result.error);
-    }
-    return map;
-  }, [quotaData]);
-
-  const quotaSourcesByProvider = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const result of quotaData ?? []) {
-      if (typeof result.source === "string" && result.source.length > 0) {
-        map.set(result.provider, result.source);
-      }
-    }
-    return map;
-  }, [quotaData]);
 
   const deficitNotchByProvider = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -971,10 +934,6 @@ export function Costs() {
                           weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                           windowRows={windowSpendByProvider.get(provider) ?? []}
                           showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
-                          quotaWindows={quotaWindowsByProvider.get(provider) ?? []}
-                          quotaError={quotaErrorsByProvider.get(provider) ?? null}
-                          quotaSource={quotaSourcesByProvider.get(provider) ?? null}
-                          quotaLoading={quotaLoading}
                         />
                       ))}
                     </div>
@@ -991,10 +950,6 @@ export function Costs() {
                       weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                       windowRows={windowSpendByProvider.get(provider) ?? []}
                       showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
-                      quotaWindows={quotaWindowsByProvider.get(provider) ?? []}
-                      quotaError={quotaErrorsByProvider.get(provider) ?? null}
-                      quotaSource={quotaSourcesByProvider.get(provider) ?? null}
-                      quotaLoading={quotaLoading}
                     />
                   </TabsContent>
                 ))}

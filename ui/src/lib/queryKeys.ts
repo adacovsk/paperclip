@@ -117,8 +117,6 @@ export const queryKeys = {
     ["finance-events", companyId, from, to, limit] as const,
   usageWindowSpend: (companyId: string) =>
     ["usage-window-spend", companyId] as const,
-  usageQuotaWindows: (companyId: string) =>
-    ["usage-quota-windows", companyId] as const,
   heartbeats: (companyId: string, agentId?: string) =>
     ["heartbeats", companyId, agentId] as const,
   heartbeatsLatestByAgent: (companyId: string) =>

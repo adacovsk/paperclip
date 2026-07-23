@@ -15,7 +15,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 import path from "node:path";
 import { parseCodexJsonl } from "./parse.js";
-import { codexHomeDir, readCodexAuthInfo } from "./quota.js";
+import { codexHomeDir, readCodexAuthInfo } from "./auth.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";

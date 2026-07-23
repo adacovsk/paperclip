@@ -75,16 +75,6 @@ export function billingTypeDisplayName(billingType: BillingType): string {
   return map[billingType];
 }
 
-export function quotaSourceDisplayName(source: string): string {
-  const map: Record<string, string> = {
-    "anthropic-oauth": "Anthropic OAuth",
-    "claude-cli": "Claude CLI",
-    "codex-rpc": "Codex app server",
-    "codex-wham": "ChatGPT WHAM",
-  };
-  return map[source] ?? source;
-}
-
 function coerceBillingType(value: unknown): BillingType | null {
   if (
     value === "metered_api" ||

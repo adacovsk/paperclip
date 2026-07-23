@@ -15,7 +15,6 @@ import { ApiError } from "../api/client";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
-import { costsApi } from "../api/costs";
 import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useCompany } from "../context/CompanyContext";
@@ -1215,7 +1214,7 @@ function AgentOverview({
       {/* Costs */}
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Costs</h3>
-        <CostsSection runs={runs} companyId={agent.companyId} />
+        <CostsSection runs={runs} />
       </div>
     </div>
   );
@@ -1225,10 +1224,8 @@ function AgentOverview({
 
 function CostsSection({
   runs,
-  companyId,
 }: {
   runs: HeartbeatRun[];
-  companyId?: string;
 }) {
   const runsWithCost = runs
     .filter((r) => {
@@ -1237,67 +1234,8 @@ function CostsSection({
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // The provider-reported weekly subscription quota — the one figure here tied to a real,
-  // actionable limit (remaining headroom before runs start failing). Provider-wide, not
-  // per-agent: every agent draws on the same subscription, hence "shared".
-  const { data: quotaData, isLoading: quotaLoading } = useQuery({
-    queryKey: companyId ? queryKeys.usageQuotaWindows(companyId) : ["usage-quota-windows", "none"],
-    queryFn: () => costsApi.quotaWindows(companyId as string),
-    enabled: !!companyId,
-    refetchInterval: 300_000,
-    staleTime: 60_000,
-  });
-  const weekWindow = useMemo(() => {
-    const anthropic = (quotaData ?? []).find((r) => r.provider === "anthropic");
-    if (!anthropic?.ok) return null;
-    return (
-      anthropic.windows.find((w) => /week/i.test(w.label) && /all\s*models/i.test(w.label)) ??
-      anthropic.windows.find((w) => /week/i.test(w.label)) ??
-      null
-    );
-  }, [quotaData]);
-  const weekPct = weekWindow?.usedPercent ?? null;
-  const weekFill =
-    weekPct == null
-      ? "bg-primary/60"
-      : weekPct >= 90
-        ? "bg-red-400"
-        : weekPct >= 70
-          ? "bg-yellow-400"
-          : "bg-green-400";
-
   return (
     <div className="space-y-4">
-      {companyId && (quotaLoading || weekWindow) && (
-        <div className="border border-border rounded-lg p-4 space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Weekly quota
-            </span>
-            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-              shared · all agents
-            </span>
-          </div>
-          {quotaLoading && !weekWindow ? (
-            <p className="text-xs text-muted-foreground">Loading quota…</p>
-          ) : weekWindow ? (
-            <div className="space-y-1.5">
-              <div className="h-2 w-full border border-border overflow-hidden">
-                <div
-                  className={`h-full transition-[width] duration-150 ${weekFill}`}
-                  style={{ width: `${Math.min(100, weekPct ?? 0)}%` }}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {weekPct != null ? `${weekPct}% used` : "usage unavailable"}
-                {weekWindow.resetsAt
-                  ? ` · resets ${new Date(weekWindow.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-                  : ""}
-              </p>
-            </div>
-          ) : null}
-        </div>
-      )}
       {runsWithCost.length > 0 && (
         <div className="border border-border rounded-lg overflow-hidden">
           <table className="w-full text-xs">

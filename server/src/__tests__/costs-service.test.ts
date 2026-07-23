@@ -42,7 +42,6 @@ const mockHeartbeatService = vi.hoisted(() => ({
   cancelBudgetScopeWork: vi.fn().mockResolvedValue(undefined),
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockFetchAllQuotaWindows = vi.hoisted(() => vi.fn());
 const mockCostService = vi.hoisted(() => ({
   createEvent: vi.fn(),
   summary: vi.fn().mockResolvedValue({ spendCents: 0 }),
@@ -81,10 +80,6 @@ vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
   heartbeatService: () => mockHeartbeatService,
   logActivity: mockLogActivity,
-}));
-
-vi.mock("../services/quota-windows.js", () => ({
-  fetchAllQuotaWindows: mockFetchAllQuotaWindows,
 }));
 
 function createApp() {

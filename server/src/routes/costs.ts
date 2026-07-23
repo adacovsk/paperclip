@@ -18,7 +18,6 @@ import {
   logActivity,
 } from "../services/index.js";
 import { assertOperator, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { fetchAllQuotaWindows } from "../services/quota-windows.js";
 import { badRequest } from "../errors.js";
 
 export function costRoutes(db: Db) {
@@ -190,21 +189,6 @@ export function costRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     const rows = await costs.windowSpend(companyId);
     res.json(rows);
-  });
-
-  router.get("/companies/:companyId/costs/quota-windows", async (req, res) => {
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
-    assertOperator(req);
-    // validate companyId resolves to a real company so the "__none__" sentinel
-    // and any forged ids are rejected before we touch provider credentials
-    const company = await companies.getById(companyId);
-    if (!company) {
-      res.status(404).json({ error: "Company not found" });
-      return;
-    }
-    const results = await fetchAllQuotaWindows();
-    res.json(results);
   });
 
   router.get("/companies/:companyId/budgets/overview", async (req, res) => {

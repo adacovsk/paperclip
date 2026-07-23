@@ -1,16 +1,12 @@
 import { useMemo } from "react";
-import type { CostByProviderModel, CostWindowSpendRow, QuotaWindow } from "@paperclipai/shared";
+import type { CostByProviderModel, CostWindowSpendRow } from "@paperclipai/shared";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { QuotaBar } from "./QuotaBar";
-import { ClaudeSubscriptionPanel } from "./ClaudeSubscriptionPanel";
-import { CodexSubscriptionPanel } from "./CodexSubscriptionPanel";
 import {
   billingTypeDisplayName,
   formatCents,
   formatTokens,
   providerDisplayName,
-  quotaSourceDisplayName,
 } from "@/lib/utils";
 
 // ordered display labels for rolling-window rows
@@ -28,11 +24,6 @@ interface ProviderQuotaCardProps {
   /** rolling window rows for this provider: 5h, 24h, 7d */
   windowRows: CostWindowSpendRow[];
   showDeficitNotch: boolean;
-  /** live subscription quota windows from the provider's own api */
-  quotaWindows?: QuotaWindow[];
-  quotaError?: string | null;
-  quotaSource?: string | null;
-  quotaLoading?: boolean;
 }
 
 export function ProviderQuotaCard({
@@ -43,10 +34,6 @@ export function ProviderQuotaCard({
   weekSpendCents,
   windowRows,
   showDeficitNotch,
-  quotaWindows = [],
-  quotaError = null,
-  quotaSource = null,
-  quotaLoading = false,
 }: ProviderQuotaCardProps) {
   // single-pass aggregation over rows — memoized so the 8 derived values are not
   // recomputed on every parent render tick (providers tab polls every 30s, and each
@@ -123,12 +110,6 @@ export function ProviderQuotaCard({
     () => Math.max(...windowRows.map((r) => r.costCents), 0),
     [windowRows],
   );
-  const isClaudeQuotaPanel = provider === "anthropic";
-  const isCodexQuotaPanel = provider === "openai" && quotaSource?.startsWith("codex-");
-  const supportsSubscriptionQuota = provider === "anthropic" || provider === "openai";
-  const showSubscriptionQuotaSection =
-    supportsSubscriptionQuota && (quotaLoading || quotaWindows.length > 0 || quotaError != null);
-
   return (
     <Card>
       <CardHeader className="px-4 pt-4 pb-0 gap-1">
@@ -304,113 +285,7 @@ export function ProviderQuotaCard({
           </>
         )}
 
-        {/* subscription quota windows from provider api — shown when data is available */}
-        {showSubscriptionQuotaSection && (
-          <>
-            <div className="border-t border-border" />
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Subscription quota
-                </p>
-                {quotaSource && !isClaudeQuotaPanel && !isCodexQuotaPanel ? (
-                  <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                    {quotaSourceDisplayName(quotaSource)}
-                  </span>
-                ) : null}
-              </div>
-              {quotaLoading ? (
-                <QuotaPanelSkeleton />
-              ) : isClaudeQuotaPanel ? (
-                <ClaudeSubscriptionPanel windows={quotaWindows} source={quotaSource} error={quotaError} />
-              ) : isCodexQuotaPanel ? (
-                <CodexSubscriptionPanel windows={quotaWindows} source={quotaSource} error={quotaError} />
-              ) : (
-                <>
-                  {quotaError ? (
-                    <p className="text-xs text-destructive">
-                      {quotaError}
-                    </p>
-                  ) : null}
-                  <div className="space-y-2.5">
-                    {quotaWindows.map((qw) => {
-                      const fillColor =
-                        qw.usedPercent == null
-                          ? null
-                          : qw.usedPercent >= 90
-                            ? "bg-red-400"
-                            : qw.usedPercent >= 70
-                              ? "bg-yellow-400"
-                              : "bg-green-400";
-                      return (
-                        <div key={qw.label} className="space-y-1">
-                          <div className="flex items-center justify-between gap-2 text-xs">
-                            <span className="font-mono text-muted-foreground shrink-0">{qw.label}</span>
-                            <span className="flex-1" />
-                            {qw.valueLabel != null ? (
-                              <span className="font-medium tabular-nums">{qw.valueLabel}</span>
-                            ) : qw.usedPercent != null ? (
-                              <span className="font-medium tabular-nums">{qw.usedPercent}% used</span>
-                            ) : null}
-                          </div>
-                          {qw.usedPercent != null && fillColor != null && (
-                            <div className="h-2 w-full border border-border overflow-hidden">
-                              <div
-                                className={`h-full transition-[width] duration-150 ${fillColor}`}
-                                style={{ width: `${qw.usedPercent}%` }}
-                              />
-                            </div>
-                          )}
-                          {qw.detail ? (
-                            <p className="text-xs text-muted-foreground">
-                              {qw.detail}
-                            </p>
-                          ) : qw.resetsAt ? (
-                            <p className="text-xs text-muted-foreground">
-                              resets {new Date(qw.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                            </p>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
-          </>
-        )}
       </CardContent>
     </Card>
-  );
-}
-
-function QuotaPanelSkeleton() {
-  return (
-    <div className="border border-border px-4 py-4">
-      <div className="flex items-start justify-between gap-3 border-b border-border pb-3">
-        <div className="min-w-0 space-y-2">
-          <Skeleton className="h-3 w-36" />
-          <Skeleton className="h-4 w-64 max-w-full" />
-        </div>
-        <Skeleton className="h-7 w-28" />
-      </div>
-      <div className="mt-4 space-y-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <div
-            key={index}
-            className="border border-border px-3.5 py-3"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 space-y-2">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-3 w-44 max-w-full" />
-              </div>
-              <Skeleton className="h-4 w-20" />
-            </div>
-            <Skeleton className="mt-3 h-2 w-full" />
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
