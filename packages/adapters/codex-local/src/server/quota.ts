@@ -417,6 +417,7 @@ class CodexRpcClient {
   private buffer = "";
   private pending = new Map<number, PendingRequest>();
   private stderr = "";
+  private failure: Error | null = null;
 
   constructor() {
     this.proc.stdout.setEncoding("utf8");
@@ -426,12 +427,24 @@ class CodexRpcClient {
       this.stderr += chunk;
     });
     this.proc.on("exit", () => {
-      for (const request of this.pending.values()) {
-        clearTimeout(request.timer);
-        request.reject(new Error(this.stderr.trim() || "codex app-server closed unexpectedly"));
-      }
-      this.pending.clear();
+      this.fail(new Error(this.stderr.trim() || "codex app-server closed unexpectedly"));
     });
+    // A spawn failure (e.g. `codex` not on PATH → ENOENT) emits 'error' asynchronously.
+    // With no listener Node re-throws it as an unhandled 'error' event, crashing the whole
+    // process — not just this quota probe. Funnel it into pending-request rejections so
+    // getQuotaWindows()'s try/catch turns it into an ok:false result instead.
+    this.proc.on("error", (error: Error) => this.fail(error));
+    // Writing to a child that failed to spawn breaks the pipe; guard stdin's own 'error'.
+    this.proc.stdin.on("error", (error: Error) => this.fail(error));
+  }
+
+  private fail(error: Error) {
+    if (!this.failure) this.failure = error;
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(error);
+    }
+    this.pending.clear();
   }
 
   private onStdout(chunk: string) {
@@ -459,6 +472,7 @@ class CodexRpcClient {
   }
 
   private request(method: string, params: Record<string, unknown> = {}, timeoutMs = 6_000): Promise<Record<string, unknown>> {
+    if (this.failure) return Promise.reject(this.failure);
     const id = this.nextId++;
     const payload = JSON.stringify({ id, method, params }) + "\n";
     return new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -467,12 +481,23 @@ class CodexRpcClient {
         reject(new Error(`codex app-server timed out on ${method}`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.proc.stdin.write(payload);
+      try {
+        this.proc.stdin.write(payload);
+      } catch (error) {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
   private notify(method: string, params: Record<string, unknown> = {}) {
-    this.proc.stdin.write(JSON.stringify({ method, params }) + "\n");
+    if (this.failure) return;
+    try {
+      this.proc.stdin.write(JSON.stringify({ method, params }) + "\n");
+    } catch {
+      // Pipe already broken; the failure has been surfaced via pending rejections.
+    }
   }
 
   async initialize() {
@@ -500,7 +525,11 @@ class CodexRpcClient {
   }
 
   async shutdown() {
-    this.proc.kill("SIGTERM");
+    try {
+      this.proc.kill("SIGTERM");
+    } catch {
+      // Process never spawned (or already gone); nothing to signal.
+    }
   }
 }
 

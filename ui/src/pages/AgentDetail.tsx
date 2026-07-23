@@ -15,6 +15,7 @@ import { ApiError } from "../api/client";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
+import { costsApi } from "../api/costs";
 import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useCompany } from "../context/CompanyContext";
@@ -37,6 +38,7 @@ import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
+import { ClaudeSubscriptionPanel } from "../components/ClaudeSubscriptionPanel";
 import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { formatCents, formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
@@ -1224,7 +1226,7 @@ function AgentOverview({
       {/* Costs */}
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Costs</h3>
-        <CostsSection runtimeState={runtimeState} runs={runs} />
+        <CostsSection runtimeState={runtimeState} runs={runs} companyId={agent.companyId} />
       </div>
     </div>
   );
@@ -1235,9 +1237,11 @@ function AgentOverview({
 function CostsSection({
   runtimeState,
   runs,
+  companyId,
 }: {
   runtimeState?: AgentRuntimeState;
   runs: HeartbeatRun[];
+  companyId?: string;
 }) {
   const runsWithCost = runs
     .filter((r) => {
@@ -1246,10 +1250,51 @@ function CostsSection({
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  // Subscription quota is the shared, provider-reported session/weekly limit — the metric
+  // that actually constrains this agent's runs. Unlike the cumulative token counters below
+  // (which only ever grow and, on a subscription plan, report $0 cost), it shows real
+  // remaining headroom. It is provider-wide, not per-agent — every agent draws on the same
+  // subscription — hence the "shared" tag.
+  const { data: quotaData, isLoading: quotaLoading } = useQuery({
+    queryKey: companyId ? queryKeys.usageQuotaWindows(companyId) : ["usage-quota-windows", "none"],
+    queryFn: () => costsApi.quotaWindows(companyId as string),
+    enabled: !!companyId,
+    refetchInterval: 300_000,
+    staleTime: 60_000,
+  });
+  const anthropicQuota = useMemo(
+    () => (quotaData ?? []).find((r) => r.provider === "anthropic"),
+    [quotaData],
+  );
+
   return (
     <div className="space-y-4">
+      {companyId && (quotaLoading || anthropicQuota) && (
+        <div className="border border-border rounded-lg p-4 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Subscription quota
+            </span>
+            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              shared · all agents
+            </span>
+          </div>
+          {quotaLoading && !anthropicQuota ? (
+            <p className="text-xs text-muted-foreground">Loading quota…</p>
+          ) : (
+            <ClaudeSubscriptionPanel
+              windows={anthropicQuota?.ok ? anthropicQuota.windows : []}
+              source={anthropicQuota?.source ?? null}
+              error={anthropicQuota && !anthropicQuota.ok ? (anthropicQuota.error ?? null) : null}
+            />
+          )}
+        </div>
+      )}
       {runtimeState && (
-        <div className="border border-border rounded-lg p-4">
+        <div className="border border-border rounded-lg p-4 space-y-3">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Lifetime totals
+          </span>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 tabular-nums">
             <div>
               <span className="text-xs text-muted-foreground block">Input tokens</span>
