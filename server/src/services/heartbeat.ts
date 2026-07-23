@@ -30,6 +30,7 @@ import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
+import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import {
   buildWorkspaceReadyComment,
   cleanupExecutionWorkspaceArtifacts,
@@ -3049,21 +3050,27 @@ export function heartbeatService(db: Db) {
                 );
               }
 
-              if (branchOnOrigin) {
-                await issuesSvc.update(issueId, { status: "done" });
+              // Surface committed-but-unlanded work as in_review so the
+              // Coordinator advances the pipeline (or re-dispatches). Never
+              // leave it `in_progress` (looks hung) or flip it `done` (silent
+              // strand) — and never promote a deliberate `blocked`. See
+              // resolveNoSkillCompletionStatus for the full policy.
+              const nextStatus = resolveNoSkillCompletionStatus({
+                currentStatus: existingIssue.status,
+                branchOnOrigin,
+              });
+              if (nextStatus) {
+                await issuesSvc.update(issueId, { status: nextStatus });
                 logger.info(
-                  { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck },
-                  "auto-marked task done for agent without paperclip skill (branch confirmed on origin)",
+                  { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, nextStatus },
+                  nextStatus === "done"
+                    ? "auto-marked task done for agent without paperclip skill (branch confirmed on origin)"
+                    : "held task at in_review for agent without paperclip skill (branch not on origin — awaiting next stage / re-dispatch)",
                 );
-              } else if (existingIssue.status !== "in_review") {
-                // Surface committed-but-unlanded work as in_review so the
-                // Coordinator advances the pipeline (or re-dispatches). Never
-                // leave it `in_progress` (looks hung) or flip it `done`
-                // (silent strand).
-                await issuesSvc.update(issueId, { status: "in_review" });
+              } else if (existingIssue.status === "blocked") {
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck },
-                  "held task at in_review for agent without paperclip skill (branch not on origin — awaiting next stage / re-dispatch)",
+                  "left task blocked for agent without paperclip skill (deliberate block — a no-skill exit 0 is not evidence it cleared)",
                 );
               }
 

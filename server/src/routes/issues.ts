@@ -35,7 +35,10 @@ import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import {
+  isDispatchableIssueStatus,
+  queueIssueAssignmentWakeup,
+} from "../services/issue-assignment-wakeup.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 
@@ -1027,14 +1030,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const assigneeChanged = assigneeWillChange;
     const statusChangedFromBacklog =
       existing.status === "backlog" &&
-      issue.status !== "backlog" &&
+      isDispatchableIssueStatus(issue.status) &&
       req.body.status !== undefined;
 
     // Merge all wakeups from this update into one enqueue per agent to avoid duplicate runs.
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
-      if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
+      if (assigneeChanged && issue.assigneeAgentId && isDispatchableIssueStatus(issue.status)) {
         wakeups.set(issue.assigneeAgentId, {
           source: "assignment",
           triggerDetail: "system",
