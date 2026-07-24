@@ -643,6 +643,9 @@ Run history. Listing is **company-scoped** — there is no `/api/agents/:agentId
 | GET    | `/api/heartbeat-runs/:runId/issues`                      | Issues touched by the run                |
 | GET    | `/api/heartbeat-runs/:runId/workspace-operations`        | Workspace operations for the run         |
 | POST   | `/api/heartbeat-runs/:runId/cancel`                      | Cancel a running run                     |
+| POST   | `/api/heartbeat-runs/:runId/watchdog-restart`            | Restart the run's hard timeout from now  |
+
+`watchdog-restart` exists for work that queues outside the server: `cargo-sem.sh` calls it on slot admission so an Architect's wait in the build queue is not billed against its build (AA-2917). An agent may restart only its own run. Returns `{runId, restarted}`; `restarted: false` means no live watchdog (already settled or aborted) — a normal race, not an error.
 
 Row fields: `agentId`, `status` (`running`/`succeeded`/`failed`/`cancelled`), `startedAt`/`finishedAt`, `error`/`errorCode`, `exitCode`/`signal`, `usageJson`/`resultJson` (null while running and on cancelled runs), `sessionIdBefore`/`sessionIdAfter`, `processLossRetryCount`/`retryOfRunId`, `contextSnapshot` (issue the run woke for).
 

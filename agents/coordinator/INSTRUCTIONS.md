@@ -194,11 +194,22 @@ is `CARGO_SEM_SLOTS`, defaulting to **physical cores − 1** (= 3 on this
 job-capped (`CARGO_BUILD_JOBS`, default logical/slots, floor 2 → 2 here)
 so N builds × their job cap stays under the real core count. Slots are
 **not** core-pinned (the old 2-slot design's `taskset` partitioning was
-dropped). So a queued Architect past the slot ceiling waits its turn
+dropped). A queued Architect past the slot ceiling waits its turn
 (admission is a strict ticket queue — no overtakes, self-heals on a dead
-holder/waiter) rather than thrashing — you do not need to throttle
-dispatch yourself; dispatch them all and let the semaphore meter
-throughput. Do **not** re-introduce a single global cargo lock, and do
+holder/waiter) rather than thrashing.
+
+**Queue waiting is free only because the build is detached** (the
+Architect launches a `setsid` chain that writes an exit sentinel and
+fires a wakeup callback, then ends its run — see
+`agents/architect/INSTRUCTIONS.md` §Cargo discipline rule 2). The run's
+hard watchdog starts at **dispatch**, not at slot acquisition, so if an
+Architect ever blocks on its build instead of detaching, "waits its turn"
+and "burns its whole budget waiting, then dies on the watchdog" are the
+same state. That is AA-2917: five verifies dispatched within 8 seconds,
+all five killed with `Process lost`, nothing compiled. Dispatching all of
+them is correct **given** detached builds; it is not a licence to ignore
+the ceiling if you see Architect runs dying without build output. Do
+**not** re-introduce a single global cargo lock, and do
 **not** just crank `CARGO_SEM_SLOTS` — on this thermally-throttling ULV
 chip more whole-machine slots is measured-slower, not faster (see the
 tuning header in `cargo-sem.sh`).

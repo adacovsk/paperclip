@@ -59,6 +59,49 @@ describe("createRunWatchdog", () => {
     }
   });
 
+  it("restart() defers a timeout that would otherwise have fired — the slot-admission path", async () => {
+    // AA-2917: the timer is armed at dispatch, but the build only starts when
+    // cargo-sem.sh wins a slot. Without restart(), the queue wait is billed
+    // against the build and a saturated semaphore kills every waiter.
+    const reasons: string[] = [];
+    const watchdog = createRunWatchdog({ timeoutMs: 60, onAbort: (r) => reasons.push(r) });
+    try {
+      watchdog.promise.catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 40));
+      expect(watchdog.restart()).toBe(true);
+      // Past the ORIGINAL deadline; only the restart keeps it alive here.
+      await new Promise((r) => setTimeout(r, 40));
+      expect(reasons).toEqual([]);
+    } finally {
+      watchdog.cleanup();
+    }
+  });
+
+  it("restart() returns false once the watchdog has already fired", async () => {
+    // The wrapper announces admission blind, so it can race a run that just
+    // died. That must report false, not resurrect a settled race.
+    const watchdog = createRunWatchdog({ timeoutMs: 60_000 });
+    watchdog.promise.catch(() => undefined);
+    watchdog.abort("process_lost");
+    expect(watchdog.restart()).toBe(false);
+    watchdog.cleanup();
+  });
+
+  it("restart() fires onRestart only while the watchdog is live", async () => {
+    const restarts: number[] = [];
+    const watchdog = createRunWatchdog({
+      timeoutMs: 60_000,
+      onRestart: () => restarts.push(1),
+    });
+    watchdog.promise.catch(() => undefined);
+    watchdog.restart();
+    watchdog.restart();
+    watchdog.abort("done");
+    watchdog.restart();
+    expect(restarts).toEqual([1, 1]);
+    watchdog.cleanup();
+  });
+
   it("cleanup() prevents the timer from firing after the race already settled", async () => {
     const reasons: string[] = [];
     const watchdog = createRunWatchdog({
