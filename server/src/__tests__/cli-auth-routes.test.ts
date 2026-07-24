@@ -34,6 +34,12 @@ vi.mock("../services/index.js", () => ({
   deduplicateAgentName: vi.fn((name: string) => name),
 }));
 
+// Resolved at module scope rather than inside createApp: transforming these
+// modules costs seconds on a cold cache, which otherwise burns the per-test
+// timeout and leaves in-flight requests bleeding mock calls into the next test.
+const { accessRoutes } = await import("../routes/access.js");
+const { errorHandler } = await import("../middleware/index.js");
+
 function createApp(actor: any) {
   const app = express();
   app.use(express.json());
@@ -41,21 +47,17 @@ function createApp(actor: any) {
     req.actor = actor;
     next();
   });
-  return import("../routes/access.js").then(({ accessRoutes }) =>
-    import("../middleware/index.js").then(({ errorHandler }) => {
-      app.use(
-        "/api",
-        accessRoutes({} as any, {
-          deploymentMode: "authenticated",
-          deploymentExposure: "private",
-          bindHost: "127.0.0.1",
-          allowedHostnames: [],
-        }),
-      );
-      app.use(errorHandler);
-      return app;
-    })
+  app.use(
+    "/api",
+    accessRoutes({} as any, {
+      deploymentMode: "authenticated",
+      deploymentExposure: "private",
+      bindHost: "127.0.0.1",
+      allowedHostnames: [],
+    }),
   );
+  app.use(errorHandler);
+  return app;
 }
 
 describe("cli auth routes", () => {

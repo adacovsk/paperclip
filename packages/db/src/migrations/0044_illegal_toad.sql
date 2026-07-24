@@ -1,4 +1,10 @@
-CREATE TABLE IF NOT EXISTS "board_api_keys" (
+-- 0046 renames board_api_keys -> operator_api_keys. Every statement in this file
+-- that names the "board" spelling must therefore no-op once that rename has
+-- happened, or a replay of 0044 resurrects a dropped table / targets a column
+-- that no longer exists.
+DO $$ BEGIN
+ IF to_regclass('public.operator_api_keys') IS NULL THEN
+  CREATE TABLE IF NOT EXISTS "board_api_keys" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" text NOT NULL,
 	"name" text NOT NULL,
@@ -7,7 +13,9 @@ CREATE TABLE IF NOT EXISTS "board_api_keys" (
 	"revoked_at" timestamp with time zone,
 	"expires_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
+  );
+ END IF;
+END $$;
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "cli_auth_challenges" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -29,7 +37,8 @@ CREATE TABLE IF NOT EXISTS "cli_auth_challenges" (
 --> statement-breakpoint
 ALTER TABLE "instance_settings" ADD COLUMN IF NOT EXISTS "general" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
 DO $$ BEGIN
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'board_api_keys_user_id_user_id_fk') THEN
+ IF to_regclass('public.operator_api_keys') IS NULL
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'board_api_keys_user_id_user_id_fk') THEN
   ALTER TABLE "board_api_keys" ADD CONSTRAINT "board_api_keys_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;
  END IF;
 END $$;--> statement-breakpoint
@@ -44,13 +53,18 @@ DO $$ BEGIN
  END IF;
 END $$;--> statement-breakpoint
 DO $$ BEGIN
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'cli_auth_challenges_board_api_key_id_board_api_keys_id_fk') THEN
+ IF to_regclass('public.operator_api_keys') IS NULL
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'cli_auth_challenges_board_api_key_id_board_api_keys_id_fk') THEN
   ALTER TABLE "cli_auth_challenges" ADD CONSTRAINT "cli_auth_challenges_board_api_key_id_board_api_keys_id_fk" FOREIGN KEY ("board_api_key_id") REFERENCES "public"."board_api_keys"("id") ON DELETE set null ON UPDATE no action;
  END IF;
 END $$;--> statement-breakpoint
-DROP INDEX IF EXISTS "board_api_keys_key_hash_idx";--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "board_api_keys_key_hash_idx" ON "board_api_keys" USING btree ("key_hash");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "board_api_keys_user_idx" ON "board_api_keys" USING btree ("user_id");--> statement-breakpoint
+DO $$ BEGIN
+ IF to_regclass('public.operator_api_keys') IS NULL THEN
+  DROP INDEX IF EXISTS "board_api_keys_key_hash_idx";
+  CREATE UNIQUE INDEX IF NOT EXISTS "board_api_keys_key_hash_idx" ON "board_api_keys" USING btree ("key_hash");
+  CREATE INDEX IF NOT EXISTS "board_api_keys_user_idx" ON "board_api_keys" USING btree ("user_id");
+ END IF;
+END $$;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cli_auth_challenges_secret_hash_idx" ON "cli_auth_challenges" USING btree ("secret_hash");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cli_auth_challenges_approved_by_idx" ON "cli_auth_challenges" USING btree ("approved_by_user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cli_auth_challenges_requested_company_idx" ON "cli_auth_challenges" USING btree ("requested_company_id");

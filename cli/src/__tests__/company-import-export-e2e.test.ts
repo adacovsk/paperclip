@@ -126,6 +126,9 @@ function createServerEnv(configPath: string, port: number, connectionString: str
   env.HEARTBEAT_SCHEDULER_ENABLED = "false";
   env.PAPERCLIP_MIGRATION_AUTO_APPLY = "true";
   env.PAPERCLIP_UI_DEV_MIDDLEWARE = "false";
+  // The PAPERCLIP_* strip above clears the agent JWT secret, which the server
+  // preflight requires; supply a throwaway one for the ephemeral instance.
+  env.PAPERCLIP_AGENT_JWT_SECRET = "company-import-export-e2e-secret";
 
   return env;
 }
