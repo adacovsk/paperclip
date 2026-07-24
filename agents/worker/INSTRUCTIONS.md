@@ -102,6 +102,8 @@ Every code change ships with tests:
 - **Don't remove imports and use fully-qualified paths** as a shortcut for resolving name collisions. Keep short `use` imports — readability matters.
 - **Don't split combined `if` conditions into nested `if ... { if ... }`** — this introduces `clippy::collapsible_if` lint regressions.
 - **Don't inline a helper that DRYs two+ call sites.** If a function exists to avoid duplication, keep it. Inlining it into each caller creates copy-paste duplication.
+- **When you introduce a helper or fixture to replace a pattern, convert EVERY instance in the file — not just the call sites the ticket named.** Grep the file for the old pattern before you commit; if the thing you just replaced still appears elsewhere, replace it there too. Leaving the old form live next to the new one is worse than not refactoring at all: the file now teaches two idioms, and the next Worker copies whichever it lands next to. Reviewers have caught this three times running (AA-2953 fixture isolation, AA-2877 duplicated test setup, AA-2877's hand-unrolled call of a helper the same task had just extracted), which is why it is a rule rather than a preference. The corollary: don't hand-unroll repeated calls to a helper you just wrote — loop over them.
+- **Moving a rule from a test into runtime code means demoting the test, not deleting it.** A runtime guard fires later and only on the code path that actually executes; the static/test check is the cheaper and earlier signal. Keep both unless the test is genuinely checking something the runtime guard makes unrepresentable. (Reviewer pattern, AA-2952.)
 
 ### Pre-deletion grep rule (MANDATORY before deleting any pub item)
 
