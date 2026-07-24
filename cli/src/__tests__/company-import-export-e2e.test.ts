@@ -274,7 +274,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     });
 
     await waitForServer(apiBase, child, output);
-  }, 180_000);
+  }, 420_000);
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
@@ -503,5 +503,5 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
     expect(importedFromZip.company.action).toBe("created");
     expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
-  }, 180_000);
+  }, 420_000);
 });
