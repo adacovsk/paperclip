@@ -2221,6 +2221,39 @@ export function agentRoutes(db: Db) {
     res.json(run);
   });
 
+  // Restart a run's hard timeout because its real work is only now starting.
+  //
+  // The caller is `cargo-sem.sh` at the moment it wins a build slot. The
+  // watchdog is armed at dispatch, but an Architect's build can sit in that
+  // FIFO ticket queue for a long time when the semaphore is saturated — and
+  // billing the queue wait against the build killed every waiter before it
+  // compiled anything (AA-2917). Announcing admission moves the clock to where
+  // the work actually begins.
+  //
+  // Idempotent and best-effort by design: the wrapper fires this once per
+  // acquisition and ignores the outcome, so a miss costs a run its extension,
+  // never its correctness.
+  router.post("/heartbeat-runs/:runId/watchdog-restart", async (req, res) => {
+    const runId = req.params.runId as string;
+    const existing = await heartbeat.getRun(runId);
+    if (!existing) {
+      res.status(404).json({ error: "Run not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+
+    // An agent may only extend its own run; the operator may extend any.
+    if (req.actor.type === "agent" && req.actor.agentId !== existing.agentId) {
+      res.status(403).json({ error: "Agent can only restart its own run watchdog" });
+      return;
+    }
+
+    // False = no live watchdog (already settled, aborted, or owned by another
+    // process). A normal race — report it rather than failing the caller.
+    const restarted = heartbeat.restartRunWatchdog(runId);
+    res.json({ runId, restarted });
+  });
+
   router.get("/heartbeat-runs/:runId/events", async (req, res) => {
     const runId = req.params.runId as string;
     const run = await heartbeat.getRun(runId);

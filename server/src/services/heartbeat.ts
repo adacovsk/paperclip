@@ -75,6 +75,15 @@ const HEARTBEAT_RUN_HARD_TIMEOUT_MS = Math.max(
 export interface RunWatchdog {
   promise: Promise<never>;
   abort: (reason: string) => void;
+  /**
+   * Restart the timeout from now. Returns false if the watchdog has already
+   * fired or been aborted (the race is over; there is nothing left to extend).
+   *
+   * Exists for work that queues outside this process: an Architect's cargo
+   * build waits on a FIFO slot semaphore, and the timer would otherwise bill
+   * that queue wait against the build itself (AA-2917).
+   */
+  restart: () => boolean;
   cleanup: () => void;
 }
 
@@ -107,6 +116,7 @@ export function formatDurationMs(ms: number): string {
 export function createRunWatchdog(opts: {
   timeoutMs: number;
   onAbort?: (reason: string) => void;
+  onRestart?: () => void;
 }): RunWatchdog {
   let watchdogReject: ((err: Error) => void) | null = null;
   const promise = new Promise<never>((_resolve, reject) => {
@@ -119,13 +129,21 @@ export function createRunWatchdog(opts: {
     opts.onAbort?.(reason);
     reject(Object.assign(new Error(reason), { code: "watchdog_aborted" }));
   };
-  const timer = setTimeout(
-    () => abort(`adapter execute exceeded hard timeout (${formatDurationMs(opts.timeoutMs)})`),
-    opts.timeoutMs,
-  );
+  const fire = () =>
+    abort(`adapter execute exceeded hard timeout (${formatDurationMs(opts.timeoutMs)})`);
+  let timer = setTimeout(fire, opts.timeoutMs);
+  const restart = () => {
+    // watchdogReject is nulled by abort(), so this also encodes "already fired".
+    if (!watchdogReject) return false;
+    clearTimeout(timer);
+    timer = setTimeout(fire, opts.timeoutMs);
+    opts.onRestart?.();
+    return true;
+  };
   return {
     promise,
     abort,
+    restart,
     cleanup: () => clearTimeout(timer),
   };
 }
@@ -847,7 +865,10 @@ export function heartbeatService(db: Db) {
   // Per-run abort hooks. When the reaper detects a child process is gone, or the hard
   // timeout fires, we call the hook to reject the `adapter.execute` race in `executeRun`,
   // unblocking the awaiter even if the adapter doesn't observe cancellation itself.
-  const runWatchdogs = new Map<string, (reason: string) => void>();
+  // Keyed by run id. Holds the whole watchdog, not just `abort`, so an
+  // out-of-process waiter (cargo-sem.sh, on slot admission) can restart the
+  // clock via the API rather than only kill the run.
+  const runWatchdogs = new Map<string, RunWatchdog>();
   const budgetHooks = {
     cancelWorkForScope: cancelBudgetScopeWork,
   };
@@ -1952,7 +1973,7 @@ export function heartbeatService(db: Db) {
       // already resolved on its own this is a no-op (watchdog already cleared in finally);
       // if it wedged, rejecting the race lets executeRun's catch fire and the agent's
       // queue drain instead of stalling forever.
-      runWatchdogs.get(run.id)?.(`process_lost: ${baseMessage}`);
+      runWatchdogs.get(run.id)?.abort(`process_lost: ${baseMessage}`);
       reaped.push(run.id);
     }
 
@@ -2803,7 +2824,7 @@ export function heartbeatService(db: Db) {
           );
         },
       });
-      runWatchdogs.set(run.id, watchdog.abort);
+      runWatchdogs.set(run.id, watchdog);
       let adapterResult: AdapterExecutionResult;
       try {
         adapterResult = await Promise.race([
@@ -4265,6 +4286,22 @@ export function heartbeatService(db: Db) {
     },
 
     getRun,
+
+    /**
+     * Restart an in-flight run's hard timeout from now.
+     *
+     * Called when a run's real work finally *starts* after queueing on
+     * something this process cannot see — specifically `cargo-sem.sh`, whose
+     * FIFO slot semaphore lives in the agent's shell. The timer is armed at
+     * dispatch, so without this the queue wait is billed against the build and
+     * a saturated semaphore kills every waiter before it compiles anything
+     * (AA-2917).
+     *
+     * Returns false when there is no live watchdog for the run — it already
+     * finished, was never started here, or has already been aborted. That is a
+     * normal race, not an error: report it, do not throw.
+     */
+    restartRunWatchdog: (runId: string) => runWatchdogs.get(runId)?.restart() ?? false,
 
     getRuntimeState: async (agentId: string) => {
       const state = await getRuntimeState(agentId);

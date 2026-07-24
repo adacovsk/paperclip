@@ -189,6 +189,28 @@ run() {
     "$@"
 }
 
+# --- tell the server the clock should start NOW (AA-2917) ---
+# The dispatching run's hard watchdog is armed when the run starts, not when
+# this script wins a slot. On a saturated semaphore that difference is the whole
+# budget: waiters were killed with `Process lost` having compiled nothing. On
+# admission we ask the server to restart the timeout, so the queue wait is not
+# billed against the build.
+#
+# STRICTLY BEST-EFFORT — it must never affect the build. Fires only when the
+# adapter supplied the env (a hand-run `cargo-sem.sh` in an operator shell has
+# none and silently skips), is capped at 5s, and swallows every outcome. A
+# failed announce costs this run its extension, nothing more; do not make it
+# fatal, and do not move it before the slot is held — announcing while still
+# queued restarts the clock for a build that has not started.
+announce_admission() {
+  [ -n "${PAPERCLIP_API_URL:-}" ] && [ -n "${PAPERCLIP_API_KEY:-}" ] &&
+    [ -n "${PAPERCLIP_RUN_ID:-}" ] || return 0
+  curl -fsS --max-time 5 -X POST \
+    "$PAPERCLIP_API_URL/api/heartbeat-runs/$PAPERCLIP_RUN_ID/watchdog-restart" \
+    -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+    -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
+}
+
 rd() { local v=0; [ -f "$1" ] && v=$(<"$1"); printf '%s' "${v:-0}"; }
 wr() { printf '%s' "$2" > "$1"; }
 
@@ -236,6 +258,7 @@ while true; do
     flock -u 6; exec 6>&-
     exec 7>&-; rm -f "$WAIT.$T"                            # release presence; slot now held
     [ -n "$DBG" ] && printf 'admit ticket=%s slot=%s jobs=%s cgu=%s t=%s\n' "$T" "$SLOT_IDX" "$JOBS" "$CGU" "$(date +%s.%N)" >> "$DBG"
+    announce_admission
     break
   fi
   sleep "$POLL"                                            # front, but capacity full
