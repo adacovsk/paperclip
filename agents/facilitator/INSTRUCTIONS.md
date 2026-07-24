@@ -40,11 +40,17 @@ Steps 1 & 2 scan `todo`/`in_progress`/`blocked`; nothing else scans `in_review`.
 
 The parent Worker task that spawned a stalled Review/Verify child is usually itself `in_review` waiting on that child — re-dispatching the child is enough; it advances on its own once the child completes. Toggle the child, not the parent.
 
-### 3. Run productivity — descoped (no run-data API surface exists)
+### 3. Run productivity
 
-**Do not probe `heartbeat-runs` — there is no such route in this API build.** Every plausible spelling 404s (`/api/agents/{id}/heartbeat-runs`, `/api/agent-runs`, `/api/companies/{companyId}/runs`, …), and `skills/paperclip/references/api-reference.md` documents no run/execution endpoint at all. The only run surface reachable from the API is the `activeRun` object embedded on issue rows (`GET /issues?status=…`) — it carries `status`/`startedAt`/`invocationSource`/`triggerDetail` (which is what powers §2a's live-run check) but **not** `toolCallCount`, `sessionReused`, or `error`. So the three checks this step was written for — zero-tool-call short-circuits, `sessionReused` rotation bugs, and `error` runs — **cannot** be evaluated against any surface that exists today.
+`GET /api/companies/{companyId}/heartbeat-runs?limit=50` — the run history for the whole company, newest first. The route is **company-scoped**; there is no per-agent spelling (`/api/agents/{id}/heartbeat-runs` 404s, which is what previously led this step to be wrongly descoped as "no such route"). Companion routes: `/api/heartbeat-runs/{runId}` (single run), `…/{runId}/log`, `…/{runId}/events`, `…/{runId}/issues`.
 
-A prescribed check that silently 404s is worse than an absent one: it manufactures the appearance of coverage while finding nothing, in exactly the direction that reads as `Pipeline healthy`. This step is therefore **descoped until a runs endpoint exists**. If one is added (returning `toolCallCount`/`sessionReused`/`error` per agent), restore the three flags above and document the route in `api-reference.md` so it is discoverable rather than folklore — and treat a 404 from it as a **sweep error**, not an empty result set. Until then, do not spend a step slot pretending to check.
+Each row carries `agentId`, `status` (`running`/`succeeded`/`failed`/`cancelled`), `startedAt`/`finishedAt`, `error`/`errorCode`, `exitCode`/`signal`, `usageJson`/`resultJson`, `sessionIdBefore`/`sessionIdAfter`, `processLossRetryCount`/`retryOfRunId`, and a `contextSnapshot` naming the issue the run woke for. Flag:
+
+- **Error runs** — `status: failed`, or non-null `error`/`errorCode`. Group by `agentId`; a repeat across runs is a config bug, file it.
+- **Short-circuit runs** — `succeeded` with a very short `finishedAt - startedAt` and a `usageJson`/`resultJson` showing no real work, especially when the `contextSnapshot` issue did not advance. That is the wake firing into a no-op.
+- **Session rotation** — `sessionIdBefore` set but `sessionIdAfter` null on a non-crashed run, or `processLossRetryCount` climbing.
+
+Note `usageJson`/`resultJson` are null while a run is `running` and on `cancelled` runs — judge productivity only on terminal `succeeded`/`failed` rows. Treat a **404 from any of these routes as a sweep error, not an empty result set**: report it rather than recording `Pipeline healthy`.
 
 ### 4. Comment-without-PATCH
 

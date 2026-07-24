@@ -629,6 +629,23 @@ Terminal states: `done`, `cancelled`
 | GET    | `/api/companies/:companyId/activity`         | Activity log                       |
 | GET    | `/api/companies/:companyId/dashboard`        | Company health summary             |
 
+### Heartbeat Runs
+
+Run history. Listing is **company-scoped** — there is no `/api/agents/:agentId/heartbeat-runs`.
+
+| Method | Path                                                    | Description                              |
+| ------ | ------------------------------------------------------- | ---------------------------------------- |
+| GET    | `/api/companies/:companyId/heartbeat-runs`               | List runs, newest first (`?limit=`)      |
+| GET    | `/api/companies/:companyId/heartbeat-runs/latest-by-agent` | Most recent run per agent              |
+| GET    | `/api/heartbeat-runs/:runId`                             | Single run                               |
+| GET    | `/api/heartbeat-runs/:runId/events`                      | Run events                               |
+| GET    | `/api/heartbeat-runs/:runId/log`                         | Run log                                  |
+| GET    | `/api/heartbeat-runs/:runId/issues`                      | Issues touched by the run                |
+| GET    | `/api/heartbeat-runs/:runId/workspace-operations`        | Workspace operations for the run         |
+| POST   | `/api/heartbeat-runs/:runId/cancel`                      | Cancel a running run                     |
+
+Row fields: `agentId`, `status` (`running`/`succeeded`/`failed`/`cancelled`), `startedAt`/`finishedAt`, `error`/`errorCode`, `exitCode`/`signal`, `usageJson`/`resultJson` (null while running and on cancelled runs), `sessionIdBefore`/`sessionIdAfter`, `processLossRetryCount`/`retryOfRunId`, `contextSnapshot` (issue the run woke for).
+
 ---
 
 ## Common Mistakes
