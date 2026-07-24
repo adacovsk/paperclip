@@ -210,8 +210,10 @@ async function waitForServer(
   child: ServerProcess,
   output: { stdout: string[]; stderr: string[] },
 ) {
+  // The child runs the server through tsx, so a cold transform cache can take
+  // well over 30s to reach a listening state before any request can succeed.
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 30_000) {
+  while (Date.now() - startedAt < 120_000) {
     if (child.exitCode !== null) {
       throw new Error(
         `paperclipai run exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
@@ -272,7 +274,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     });
 
     await waitForServer(apiBase, child, output);
-  }, 60_000);
+  }, 180_000);
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
@@ -501,5 +503,5 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
     expect(importedFromZip.company.action).toBe("created");
     expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
-  }, 60_000);
+  }, 180_000);
 });
