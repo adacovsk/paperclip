@@ -3053,8 +3053,9 @@ export function heartbeatService(db: Db) {
               // Surface committed-but-unlanded work as in_review so the
               // Coordinator advances the pipeline (or re-dispatches). Never
               // leave it `in_progress` (looks hung) or flip it `done` (silent
-              // strand) — and never promote a deliberate `blocked`. See
-              // resolveNoSkillCompletionStatus for the full policy.
+              // strand) — and never promote a task whose status says someone
+              // deliberately stopped it (`blocked`, `backlog`, `cancelled`).
+              // Promotion is an allowlist; see resolveNoSkillCompletionStatus.
               const nextStatus = resolveNoSkillCompletionStatus({
                 currentStatus: existingIssue.status,
                 branchOnOrigin,
@@ -3067,10 +3068,16 @@ export function heartbeatService(db: Db) {
                     ? "auto-marked task done for agent without paperclip skill (branch confirmed on origin)"
                     : "held task at in_review for agent without paperclip skill (branch not on origin — awaiting next stage / re-dispatch)",
                 );
-              } else if (existingIssue.status === "blocked") {
+              } else if (existingIssue.status !== "in_review") {
                 logger.info(
-                  { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck },
-                  "left task blocked for agent without paperclip skill (deliberate block — a no-skill exit 0 is not evidence it cleared)",
+                  {
+                    issueId,
+                    agentId: agent.id,
+                    runId: run.id,
+                    branch: branchToCheck,
+                    heldStatus: existingIssue.status,
+                  },
+                  "left task at its current status for agent without paperclip skill (status is outside the promotion allowlist — a no-skill exit 0 is not evidence it should advance)",
                 );
               }
 
