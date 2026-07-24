@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# FIFO N-slot cargo build semaphore (AA-2145 — supersedes the AA-2103 raw-flock
-# semaphore and the AA-2014 machine-wide `flock /tmp/cargo-global.lock` mutex).
+# FIFO N-slot cargo build semaphore. Supersedes an earlier raw-flock slot pair
+# and, before that, a machine-wide `flock /tmp/cargo-global.lock` mutex.
 #
 # WHY THIS EXISTS. Concurrent Bevy debug builds must be bounded or they thrash
-# the box. AA-2014 bounded ALL Architect cargo at concurrency 1. AA-2103 raised
+# the box. The mutex bounded ALL Architect cargo at concurrency 1. The next revision raised
 # it to 2 with two bare `flock` slots — but `flock` grants are NOT FIFO, so under
 # many concurrent waiters the oldest one is repeatedly overtaken. That recurred
-# as 8.5h (AA-2103) and then 11h+ (AA-2145) starvation of a single waiter while
+# as 8.5h and then 11h+ starvation of a single waiter while
 # newer arrivals sailed past. This script fixes the *fairness* defect and makes
 # the concurrency ceiling tunable.
 #
@@ -80,7 +80,7 @@
 #     The front spins (staying front, blocking no one behind it out of turn)
 #     until a slot frees.
 #
-# WHY IT SELF-HEALS (this is the property AA-2103's raw flock had and a naive
+# WHY IT SELF-HEALS (this is the property the raw flock had and a naive
 # ticket counter would lose): every lock that gates progress is an flock the
 # kernel releases automatically when its owner dies —
 #   * a dead *holder* drops its slot lock, freeing capacity;
@@ -136,8 +136,8 @@ WAIT="$D/cargo-sem.wait"
 # is not a fairness bug — the ticket queue below is strictly FIFO — it is a HOLD
 # DURATION bug, and it is what actually starves the queue: measured, a single
 # `clippy && test --lib && test --test ...` acquisition held a slot 3-7 hours
-# while the front waiter sat 9h50m. Chains are why AA-2103 (8.5h) and AA-2145
-# (11h+) recurred *after* fairness was fixed; the queue drains only if slots
+# while the front waiter sat 9h50m. Chains are why 8.5h and then 11h+
+# starvations recurred *after* fairness was fixed; the queue drains only if slots
 # turn over. Call this script once per cargo invocation instead:
 #
 #     cargo-sem.sh env CARGO_INCREMENTAL=0 cargo clippy
@@ -163,7 +163,7 @@ if [ "${CARGO_SEM_ALLOW_CHAIN:-0}" != "1" ]; then
   fi
 fi
 
-# --- sccache must already be up BEFORE we hold a lock (AA-2014) ---
+# --- sccache must already be up BEFORE we hold a lock ---
 # If a cargo cold-starts the sccache server from *under* a slot lock, the
 # daemon inherits fd 9 and never exits — and flock releases only when every fd
 # on the open file description closes, so that slot is lost for the life of the
@@ -189,7 +189,7 @@ run() {
     "$@"
 }
 
-# --- tell the server the clock should start NOW (AA-2917) ---
+# --- tell the server the clock should start NOW ---
 # The dispatching run's hard watchdog is armed when the run starts, not when
 # this script wins a slot. On a saturated semaphore that difference is the whole
 # budget: waiters were killed with `Process lost` having compiled nothing. On
@@ -237,7 +237,7 @@ T=$(rd "$NEXT"); wr "$NEXT" $((T + 1))
 exec 7>"$WAIT.$T"; flock -n 7   # own presence — self-flock always succeeds
 flock -u 6; exec 6>&-
 
-# Optional trace for starvation debugging (AA-2145): records ticket order and,
+# Optional trace for starvation debugging: records ticket order and,
 # on admission, the wait. Off unless CARGO_SEM_DEBUG is set.
 DBG="${CARGO_SEM_DEBUG:+$D/cargo-sem.debug.log}"
 [ -n "$DBG" ] && printf 'draw ticket=%s t=%s args=%s\n' "$T" "$(date +%s.%N)" "$*" >> "$DBG"

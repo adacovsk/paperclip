@@ -48,15 +48,15 @@ Human merges. You GC the worktree + branch.
      empty) → a Worker run died mid-work. This is **not** an exit-gate violation and **not** a
      done-without-PR case: do NOT create a Reviewer subtask (its Step 0 rebase fails on unstaged
      changes) and do NOT mark done. Re-dispatch the Worker once — its Step 0 recovery exception
-     (worker INSTRUCTIONS, AA-2054) commits the debris with a `Stage: worker (recovered)` trailer and
+     (worker INSTRUCTIONS) commits the debris with a `Stage: worker (recovered)` trailer and
      continues. Track a `Worker recovery: N` trailer; if the same dirty/0-commit state survives 2
      re-dispatches, `escalate to operator` (the recovery exception is not firing — likely a manual
-     hand-commit is needed, as was done for AA-2015).
+     hand-commit is needed).
    - Reviewer done, `needs-build` → assign Architect on the same task branch (Architect runs cargo)
    - Reviewer done, `data-only` → Architect opens PR (no cargo), then mark parent done after merge
    - Architect `done` (branch confirmed on origin → PR exists) → mark parent done after PR merges
    - Architect `in_review` (assignee = Architect, **branch NOT on origin** → gate withheld auto-done):
-     the verify run did cargo but never landed (the recurring AA-1654 Landing bug). **FIRST run the
+     the verify run did cargo but never landed (the recurring Landing bug). **FIRST run the
      §Landing sweep** — if cargo is green (sentinel `/tmp/verify-{task-id}.exit` == 0) and the branch
      merges cleanly into current `origin/main`, Coordinator itself pushes + opens the PR (landing is
      decoupled from the flaky Architect run — that is the structural fix). Only re-dispatch the
@@ -75,8 +75,8 @@ Human merges. You GC the worktree + branch.
 9. **Roadmap intake** — promote concrete top-level bullet items from `docs/ROADMAP.md` into the backlog. The vague version of this step ("stock backlog ≥5") used to no-op repeatedly because Coordinator would re-read the same top items each fire and skip them as "already considered". Be concrete:
    a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status in todo, in_progress, backlog)` and `inflight = count(status = in_review)`.
       - If `ready ≥ 5` → skip roadmap intake entirely; the un-started queue is already deep.
-      - Else if `ready + inflight ≥ 8` → scan and promote **`data-only` items only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. `in_review` parents serialize on Architect's cargo lock (AA-2014), so promoting more `needs-build` work lengthens that queue without adding throughput, while `data-only` work skips Architect entirely and still flows.
-      - **Do not "simplify" this by folding `inflight` into the first gate.** An Architect-bound pipeline routinely sits at 9+ `in_review` parents; a single combined `≥ 5` gate would then skip intake on *every* fire and starve supply precisely when the Planner has restocked it. `inflight` throttles `needs-build`; it never blocks intake outright. (AA-2040 reported the under-count that motivates counting `in_review` at all — but the literal fix it suggested is this trap.)
+      - Else if `ready + inflight ≥ 8` → scan and promote **`data-only` items only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. `in_review` parents serialize on Architect's cargo lock, so promoting more `needs-build` work lengthens that queue without adding throughput, while `data-only` work skips Architect entirely and still flows.
+      - **Do not "simplify" this by folding `inflight` into the first gate.** An Architect-bound pipeline routinely sits at 9+ `in_review` parents; a single combined `≥ 5` gate would then skip intake on *every* fire and starve supply precisely when the Planner has restocked it. `inflight` throttles `needs-build`; it never blocks intake outright. (An under-count report motivates counting `in_review` at all — but the literal fix it suggests is this trap.)
    b. **Cursor.** Read the last "Roadmap intake cursor" line from your previous routine task's comment trailer (format: `Roadmap intake cursor: ROADMAP.md:<line-number>`). If absent, start at the first `## Phase` header marked "Active" in the project's roadmap.
    c. **Scan forward** from the cursor. Match top-level Markdown bullets: lines beginning in column 0 with `- ` followed by content. Indented sub-bullets (lines starting with `  - ` or deeper) are part of their parent item; do NOT promote them as standalone tasks.
       For each candidate top-level bullet:
@@ -89,7 +89,7 @@ Human merges. You GC the worktree + branch.
    d. **Cap.** Stop after **3 new promotions per fire**. Burst-promoting 50 items floods the queue and starves urgent work.
    e. **Update cursor.** Write `Roadmap intake cursor: ROADMAP.md:<last-line-promoted>` in your routine task comment so the next fire continues forward instead of re-reading the same top items.
    f. **Wrap-around + starvation escalation.** If you reach the end of the active phase with no promotions, reset the cursor to the top of the active phase, and track a wrap counter in your routine comment trailer (`Roadmap intake wraps: N`). If you wrap **2+ consecutive fires with zero promotions** while the promotable backlog is empty, do NOT silently reset — that means the roadmap has no promotable top-level items even though work clearly remains (everything left is skip-worded, nested-only, or positioned below its blockers). File a followup to Planner: `"Roadmap intake starved — N consecutive wraps, 0 promotions, backlog empty. Highest-value items are unpromotable (skip-word lead / nested-only / below their dependents). Reframe per Planner Output-quality > intake filter."` Reset the wrap counter to 0 on any fire that promotes.
-   g. **"Out of supply" is a correct outcome — promoting nothing is always allowed.** An empty promotable backlog is a *supply* problem for the Planner to solve, never a licence to lower the bar. Specifically: do not descend into indented sub-bullets, prose, classification notes, or any list an item marks as rejected/borderline/"do not migrate" in order to find something to promote. Those are reference material, not a queue. This has bitten once — a starved fire mined a roadmap catalogue of *rejected* candidates and created three tasks from it ([AA-1985](/AA/issues/AA-1985)/[AA-1986](/AA/issues/AA-1986)/[AA-1987](/AA/issues/AA-1987)); one duplicated already-merged work and one was cancelled as forbidden by its own done-when. If a fire finds zero promotable top-level bullets, promote zero, say so in the routine comment, and let step (f) escalate to Planner.
+   g. **"Out of supply" is a correct outcome — promoting nothing is always allowed.** An empty promotable backlog is a *supply* problem for the Planner to solve, never a licence to lower the bar. Specifically: do not descend into indented sub-bullets, prose, classification notes, or any list an item marks as rejected/borderline/"do not migrate" in order to find something to promote. Those are reference material, not a queue. This has bitten once — a starved fire mined a roadmap catalogue of *rejected* candidates and created three tasks from it (//); one duplicated already-merged work and one was cancelled as forbidden by its own done-when. If a fire finds zero promotable top-level bullets, promote zero, say so in the routine comment, and let step (f) escalate to Planner.
    h. **Re-validate a `backlog` task before promoting it to `todo`.** Tasks created on an earlier fire can outlive the roadmap text that seeded them — the roadmap changes, the task graph doesn't. Before moving a `backlog` task to `todo`, re-read the `Source: docs/ROADMAP.md:<line>` anchor in its body. If that item no longer exists, moved sections, or now reads as rejected/gated, do not promote it: cancel it with a comment citing the anchor, or bounce it to Planner if the item merely moved. A promotion is a fresh decision, not a replay of an old one.
 10. Exit.
 
@@ -184,10 +184,10 @@ its Architect immediately:
 If multiple `needs-build` tasks queue up at once, dispatch all their
 Architects in the same fire — the rest queue. Each Architect builds in
 its **own per-worktree `target/`** (the runtime no longer exports a
-shared `CARGO_TARGET_DIR` — fixed via AA-1554, 2026-06-12), so there is
+shared `CARGO_TARGET_DIR`, since fixed), so there is
 **no shared cargo build lock** to serialize them. Concurrency is instead
 bounded by a **FIFO N-slot build semaphore** (`agents/architect/cargo-sem.sh`,
-AA-2145 — supersedes the AA-2103 raw-flock pair and the AA-2014
+supersedes an earlier raw-flock pair and, before that, a
 machine-wide mutex) that wraps the whole clippy+test chain. Its ceiling
 is `CARGO_SEM_SLOTS`, defaulting to **physical cores − 1** (= 3 on this
 4-physical-core / 8-thread ULV box; floor 2), with each build separately
@@ -205,7 +205,7 @@ fires a wakeup callback, then ends its run — see
 hard watchdog starts at **dispatch**, not at slot acquisition, so if an
 Architect ever blocks on its build instead of detaching, "waits its turn"
 and "burns its whole budget waiting, then dies on the watchdog" are the
-same state. That is AA-2917: five verifies dispatched within 8 seconds,
+same state: five verifies dispatched within 8 seconds,
 all five killed with `Process lost`, nothing compiled. Dispatching all of
 them is correct **given** detached builds; it is not a licence to ignore
 the ceiling if you see Architect runs dying without build output. Do
@@ -214,11 +214,11 @@ the ceiling if you see Architect runs dying without build output. Do
 chip more whole-machine slots is measured-slower, not faster (see the
 tuning header in `cargo-sem.sh`).
 
-> History: until 2026-06-12 all Architects shared one
+> Background: all Architects once shared one
 > `CARGO_TARGET_DIR`, so cargo's single build lock serialized them.
 > Under heavy queue depth the tail runs blocked past their wall-clock
 > budget, got killed mid-write, and corrupted the shared target — a
-> multi-day death-spiral (AA-1553/AA-1554). The fix: unset the stale
+> multi-day death-spiral. The fix: unset the stale
 > `CARGO_TARGET_DIR` from the systemd `--user` environment so each
 > worktree gets an isolated `target/`. Do not re-introduce a shared
 > target dir.
@@ -238,9 +238,9 @@ tree to amortize cargo across them. Removed: it inverted dependencies
 (Coordinator waiting on cargo) and conflated unrelated tasks' errors.
 Each Architect verifies its own task branch in isolation now.
 
-## Landing sweep (Coordinator owns the LAND step — AA-1654 structural fix)
+## Landing sweep (Coordinator owns the LAND step)
 
-The Architect "detached-verify-never-LANDs" bug recurred 7× (AA-1582,
+The Architect "detached-verify-never-LANDs" bug recurred 7× (
 1606, 1607, 1609, 1610, 1628, 1637) because every point-fix kept the
 LAND step (push + open PR) *inside* the same flaky Architect run: cargo
 runs green, then the run is starved by turn/wall-clock/session budget
@@ -270,13 +270,13 @@ branch handler). For each `{task-id}`:
    The Architect aborts on rebase conflict and cannot resolve it, so
    re-dispatching only burns cycles. Set BOTH the Verify subtask and its
    parent to `blocked`, with a comment naming the conflicting path(s) and
-   "needs operator merge (AA-1654 conflict class)". This parks it visibly in
+   "needs operator merge (conflict class)". This parks it visibly in
    one cadence instead of bouncing for hours or burying an `escalate`
-   comment. (AA-1674 was exactly this: a real `transitions.rs` conflict that
-   sat ~10h before a human hand-merged it as PR #367.)
+   comment. (Seen exactly this way: a real `transitions.rs` conflict that
+   sat ~10h before a human hand-merged it.)
 4. **LAND.** `git push origin task/{task-id}` then `gh pr create --head
    task/{task-id} --base main` with a body noting cargo result + base SHA +
-   "Landed by Coordinator decoupled-land step (AA-1654)". Idempotent: if the
+   "Landed by Coordinator decoupled-land step". Idempotent: if the
    branch is already on origin / a PR already exists, skip that part.
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
    landed, now met). Comment the PR link on the parent; leave the parent
@@ -306,10 +306,10 @@ Architect run exit code. Any silent-exit path (Step 0 abort, missing
 manifest, comment write fail, agent ran with wrong cwd) produced a
 `done` task with no PR opened and no work merged. The parent task could
 then also flip to `done` while the actual code changes remained stranded
-in a worktree or the main checkout. Concrete failure observed on AA-757: agent ran from
+in a worktree or the main checkout. Concrete failure observed: agent ran from
 the main checkout (Step 0 cwd violation), dropped 10 files of edits in
 the wrong tree, exited cleanly, server marked task done. Six other
-tasks (AA-700, AA-725, AA-730, AA-731, AA-734, AA-735) hit a different
+tasks hit a different
 flavor of the same failure mode and stranded their work for ~36h
 before the operator manually pushed and PR'd.
 
@@ -320,7 +320,7 @@ fire (look at `updatedAt > {your_last_fire_timestamp}` filtered to
 `status=done` parents — verify subtasks are skipped here, only their
 parents):
 
-1. Look up the task's expected branch: `task/{identifier}` (e.g. `task/AA-700`).
+1. Look up the task's expected branch: `task/{identifier}`.
 2. Check for a PR via `gh pr list --head task/{identifier} --state all --limit 1 --json number,state,mergedAt`.
 3. Three valid outcomes:
    - PR exists and `MERGED` → leave task `done`.
