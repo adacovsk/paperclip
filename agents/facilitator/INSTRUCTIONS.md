@@ -80,7 +80,7 @@ Auto-delete only cases 1 & 2. Never force-push.
 
 ### 7b. Stranded local-commit sweep
 
-§7 sweeps `gh api /branches` — **remote only** — so a commit that was made locally and never pushed is invisible to it. That is the commit-without-push class (third occurrence: `task/AA-1821`, `task/AA-1856`, `task/AA-2019`). Add a **local** pass:
+§7 sweeps `gh api /branches` — **remote only** — so a commit that was made locally and never pushed is invisible to it. That is the commit-without-push class, and it recurs. Add a **local** pass:
 
 ```sh
 git -C "$BEVY_RPG" fetch origin --prune

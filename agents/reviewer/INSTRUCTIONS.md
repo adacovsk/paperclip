@@ -70,7 +70,7 @@ Review tasks live in `in_review` status (not `todo`). Coordinator creates them w
 - **WHY comments** — anything that would force a future reader to re-derive the reasoning if removed:
   - Invariants and ordering constraints (`// must run after wall spawn`)
   - PF2e rule citations (`// PF2e: Acrobatics DC 15 to balance on narrow surface`)
-  - Bug workarounds (`// AA-595: stop ray at concealment blocker`)
+  - Bug workarounds (`// stop ray at concealment blocker`)
   - Non-obvious choices that look arbitrary without context (`// .iter().next() is fine — all party members share a position`, `// early-return: wait for smooth movement to finish before next step`, `// distinguishes off-map (None) vs unwalkable terrain`)
   - Load-bearing parentheticals — even a 3-word "(all party members share a position)" can be the only reason a line makes sense
 
