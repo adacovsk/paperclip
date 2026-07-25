@@ -33,7 +33,9 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-service-");
     db = createDb(tempDb.connectionString);
     svc = issueService(db);
-  }, 20_000);
+    // Starting embedded Postgres does not fit in 20s when the machine is busy —
+    // this hook was timing out under a parallel run, not failing.
+  }, 120_000);
 
   afterEach(async () => {
     await db.delete(issueComments);
