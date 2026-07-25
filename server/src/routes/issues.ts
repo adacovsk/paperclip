@@ -37,6 +37,7 @@ import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
   isDispatchableIssueStatus,
+  isSelfAssignmentWake,
   queueIssueAssignmentWakeup,
 } from "../services/issue-assignment-wakeup.js";
 
@@ -1037,7 +1038,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
-      if (assigneeChanged && issue.assigneeAgentId && isDispatchableIssueStatus(issue.status)) {
+      // Self-assignment does not wake — see isSelfAssignmentWake. This is the
+      // call site that produced the Facilitator loop: its sweep reassigned
+      // blocked platform tasks to itself, and each reassignment minted a run
+      // that re-ran the sweep.
+      const selfAssigned = isSelfAssignmentWake(issue.assigneeAgentId, {
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+      });
+
+      if (assigneeChanged && issue.assigneeAgentId && !selfAssigned && isDispatchableIssueStatus(issue.status)) {
         wakeups.set(issue.assigneeAgentId, {
           source: "assignment",
           triggerDetail: "system",
