@@ -376,10 +376,24 @@ export function deriveIssueUserContext(
  * `getById`. Nulling it here keeps the row shape intact for consumers while leaving
  * the body out of the wire. Search still matches against the real column: only the
  * SELECT projection is narrowed, not the WHERE clause.
+ *
+ * The nulled `description` must never be read as "this issue has no body": a bare
+ * `NULL` is indistinguishable from a genuinely empty one, and reading it that way
+ * has already produced a confidently wrong diagnosis ("every backlog item is an
+ * empty title-only ticket" — they all had 700-3700 character bodies). So every
+ * list row carries the two fields needed to tell the cases apart without
+ * refetching:
+ *
+ * - `descriptionOmitted` marks the projection as narrowed. It is absent from
+ *   `getById`, so `if (row.descriptionOmitted)` is a correct guard on both shapes.
+ * - `descriptionChars` is the real body length, straight from the database, so
+ *   "does this have a body?" is answerable from a list call alone.
  */
 const issueListColumns = {
   ...getTableColumns(issues),
   description: sql<string | null>`NULL`.as("description"),
+  descriptionOmitted: sql<boolean>`TRUE`.as("description_omitted"),
+  descriptionChars: sql<number>`COALESCE(LENGTH(${issues.description}), 0)`.as("description_chars"),
 } as const;
 
 async function labelMapForIssues(dbOrTx: any, issueIds: string[]): Promise<Map<string, IssueLabelRow[]>> {
