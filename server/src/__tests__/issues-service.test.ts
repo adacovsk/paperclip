@@ -313,4 +313,39 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       resurfacedIssueId,
     ]));
   });
+
+  // The list projection nulls `description` to keep the body off the wire. A bare
+  // NULL is indistinguishable from a genuinely empty body, so list rows must also
+  // say that the column was withheld and how long the real one is — otherwise
+  // "description is null" gets read as "this ticket has no body".
+  it("marks the withheld description on list rows instead of returning a bare null", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireOperatorApprovalForNewAgents: false,
+    });
+
+    const body = "Full task body that no list view renders.";
+    const withBody = await svc.create(companyId, { title: "Has a body", description: body } as any);
+    const withoutBody = await svc.create(companyId, { title: "Has no body" } as any);
+
+    const rows = await svc.list(companyId, {});
+    const bodyRow = rows.find((row) => row.id === withBody.id)! as any;
+    const emptyRow = rows.find((row) => row.id === withoutBody.id)! as any;
+
+    // Withheld, and self-describing about it.
+    expect(bodyRow.description).toBeNull();
+    expect(bodyRow.descriptionOmitted).toBe(true);
+    expect(bodyRow.descriptionChars).toBe(body.length);
+
+    // The genuinely empty one is now distinguishable from the withheld one.
+    expect(emptyRow.descriptionChars).toBe(0);
+
+    // getById still serves the real body, and does not claim to have withheld it.
+    const detail = (await svc.getById(withBody.id)) as any;
+    expect(detail?.description).toBe(body);
+    expect(detail?.descriptionOmitted).toBeUndefined();
+  });
 });
