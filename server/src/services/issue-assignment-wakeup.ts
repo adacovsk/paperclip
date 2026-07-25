@@ -38,6 +38,36 @@ export function isDispatchableIssueStatus(status: string): boolean {
   return !NON_DISPATCHABLE_ISSUE_STATUSES.has(status);
 }
 
+/**
+ * True when the agent being woken is the same agent that requested the mutation.
+ *
+ * An agent that assigns a task to *itself* needs no wake: it is already running,
+ * and it sees its own mutation without one. Waking it instead mints a brand-new
+ * run per mutation — so a sweep procedure that reassigns several tasks to itself
+ * to "revive" them mints one run each, and each of those runs re-runs the sweep.
+ * That is a self-sustaining loop, not a slow drip: it fired a once-daily
+ * Facilitator routine 9 times in 100 minutes, with three runs created inside a
+ * single 6-second window.
+ *
+ * Same shape as the `blocked` guard above — the wake that "corrects" state is
+ * itself what re-fires the correction.
+ *
+ * Keyed on the *actor*, not the assignee: an operator or a routine assigning an
+ * idle agent its own task must still wake it, or nothing would ever dispatch.
+ * Callers that build wakeup payloads inline must consult this too — the check
+ * lives here so there is one copy of the rule rather than one per call site.
+ */
+export function isSelfAssignmentWake(
+  assigneeAgentId: string | null,
+  actor: { requestedByActorType?: "user" | "agent" | "system"; requestedByActorId?: string | null },
+): boolean {
+  return (
+    actor.requestedByActorType === "agent"
+    && !!actor.requestedByActorId
+    && actor.requestedByActorId === assigneeAgentId
+  );
+}
+
 export function queueIssueAssignmentWakeup(input: {
   heartbeat: IssueAssignmentWakeupDeps;
   issue: { id: string; assigneeAgentId: string | null; status: string };
@@ -57,6 +87,7 @@ export function queueIssueAssignmentWakeup(input: {
   forceFreshSession?: boolean;
 }) {
   if (!input.issue.assigneeAgentId || !isDispatchableIssueStatus(input.issue.status)) return;
+  if (isSelfAssignmentWake(input.issue.assigneeAgentId, input)) return;
 
   const contextSnapshot: Record<string, unknown> = {
     issueId: input.issue.id,

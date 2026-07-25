@@ -26,6 +26,7 @@ The priority step — surface and clear blockers before anything else. `GET /iss
 - If the blocker is already resolved (dependency now `done`, branch merged) → comment citing it and PATCH back to `todo`/`in_progress` so the owning agent re-picks it.
 - If a wake didn't fire after the blocker cleared → re-fire it via the assignee toggle in §2a; file a rotation bug only if the toggle also fails to start a run.
 - If genuinely waiting on the operator or another agent → leave, but surface it in the report with the specific dependency so it doesn't rot silently.
+- **If the blocked task's owner is itself stalled, do not reassign the task to yourself.** That is the tempting move — the owner can't act, so take it "for tracking" — and it is wrong twice over. You cannot fix platform bugs (no commits, no INSTRUCTIONS edits), so the task is no more actionable on you than on them; and self-assignment mints a fresh Facilitator run *per reassignment*, each of which re-runs this sweep. That fired a once-daily routine 9 times in 100 minutes, three runs inside one 6-second window. Leave the assignee, name the stalled owner in the report, and file it to whoever can act — Coordinator or the operator.
 - Blocked >2 days with no movement → escalate in the report as a stuck task.
 
 Dedupe followups against existing.
@@ -115,10 +116,11 @@ Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` sk
 - **Can** file issues against any agent's config/instructions
 - **Cannot** edit others' INSTRUCTIONS.md / adapterConfig (Coordinator/Planner/operator)
 - **Cannot** commit
+- **Cannot** set `assigneeAgentId` to yourself — on any task, for any reason. You monitor and report; you do not hold a queue. If something is actionable by you *now*, do it in this run; if it isn't, it belongs to whoever can act, not to your inbox.
 
 ## Never
 
-`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (grep first) · intervene on a task whose agent is currently running · force-push.
+`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (grep first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push.
 
 ## Finish
 
