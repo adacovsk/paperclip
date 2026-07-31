@@ -25,6 +25,7 @@ Human merges. You GC the worktree + branch.
 ## Run (do all steps every fire)
 
 0. Resolve agent IDs (`GET /agents`). Cache Worker/Reviewer/Architect. Every task/subtask MUST set `assigneeAgentId` — unassigned = invisible.
+0a. **Close superseded routine fires.** Your own routine tasks (`Coordinator routine <date> fire <n>`) never close themselves. Observed: three sat `in_progress` for 2-3 hours with **zero comments**, no `activeRun` and no `executionRunId`, each already superseded by a later fire — a fire that waits hours behind a deep callback queue can time out before it ever runs, stranding the task it checked out. You are the current fire by definition, so any *older* routine task still `in_progress` is dead. PATCH each to `cancelled`. One short comment naming the superseding fire, or none at all when the run queue is deep — the status is the load-bearing part, and each comment costs another wake into the queue you are trying to drain.
 1. Inbox (`GET /agents/me/inbox-lite`). If `PAPERCLIP_TASK_ID` set, handle first. Empty is normal.
 2. CI: `gh issue list --label ci-failure --state open --json number,title,body` in bevy-rpg. For each issue not already mapped to an active AA task (search existing task titles for the commit SHA mentioned in the issue body):
    a. Create AA-<n> titled `ci-fix: <commit-sha>`, label `ci-failure`, status `todo`.
