@@ -125,6 +125,15 @@ PHYS="$(lscpu -p=core 2>/dev/null | grep -v '^#' | sort -u | grep -c '' 2>/dev/n
 SLOTS="${CARGO_SEM_SLOTS:-$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))}"
 JOBS="${CARGO_SEM_JOBS:-$(( NPROC / SLOTS < 2 ? 2 : NPROC / SLOTS ))}"
 CGU="${CARGO_SEM_CGU:-$(( PHYS < 1 ? 1 : PHYS ))}"
+# Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
+# floored at 1, so a caller can say "this stage is the heavy one, give it less"
+# without embedding a number tuned to one machine. The test stage passes 2 (see
+# the Architect INSTRUCTIONS launch block): on this 4-core box that is 4 -> 2,
+# and on a 16-core box 16 -> 8 — the same *proportional* relief rather than a
+# crippling absolute. Divides an explicit CARGO_SEM_CGU too, so "half whatever
+# this box decided" holds however CGU was arrived at.
+CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
+[ "$CGU" -ge 1 ] || CGU=1
 CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
