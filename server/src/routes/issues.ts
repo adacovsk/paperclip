@@ -31,7 +31,7 @@ import {
   workProductService,
 } from "../services/index.js";
 import { logger } from "../middleware/logger.js";
-import { forbidden, HttpError, unauthorized } from "../errors.js";
+import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
@@ -860,6 +860,34 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
 
     const actor = getActorInfo(req);
+
+    // An agent filing a follow-up must carry the context with it. Agents have
+    // repeatedly filed title-only issues while the full What/Why/Where/Done-when
+    // sat in a *comment* on the task they were reviewing (AA-2695, AA-2696,
+    // AA-2453, AA-2721, AA-2927). Coordinator then rebuilds the body by hand from
+    // that comment — which only works when the filing agent happened to leave
+    // one, and is backfilling rather than fixing.
+    //
+    // `description` stays optional in the schema, which is right for the UI and
+    // for server-side callers: routine fire logs are created through
+    // `issueService.create` in routines.ts and never reach this route, so they
+    // keep their empty bodies. This gate is scoped to the agent HTTP path.
+    //
+    // The floor is deliberately low. It is not a quality bar — it is the
+    // difference between a filing and a bare title. A task nobody can act on
+    // without hunting down a comment on a different issue is not a filed task.
+    if (actor.actorType === "agent") {
+      const description = typeof req.body.description === "string" ? req.body.description.trim() : "";
+      if (description.length < 40) {
+        throw unprocessable(
+          "An agent-filed issue needs a description, not just a title. Put the What / Why / Where / "
+            + "Done-when in `description` on this call — a body left in a comment on another issue does "
+            + "not travel with the task, and whoever picks it up cannot act on a title alone.",
+          { field: "description", received: description.length, minimum: 40 },
+        );
+      }
+    }
+
     const issue = await svc.create(companyId, {
       ...req.body,
       createdByAgentId: actor.agentId,
