@@ -53,6 +53,14 @@
 #   JOBS  = logical cores / SLOTS
 #   CGU   = physical cores      (a 4x cut from cargo's 16; floor of 1)
 # each floored as noted. On this 4-core/8-thread box: 3 slots x 2 jobs x 4 units.
+# MEMORY IS ALSO A DERIVED CEILING, not just a warning in this header. SLOTS is
+# additionally capped by MemTotal divided by the worst build RSS this box has
+# actually recorded (run() measures every build with /usr/bin/time and keeps a
+# monotonic high-water mark). Nothing here is a guessed constant: an unmeasured
+# machine keeps the CPU-derived slots, and the cap only ever *lowers* them. That
+# is what makes these settings portable to a box with the same cores and a third
+# of the RAM, which the CPU-only derivation above would happily thrash.
+#
 # Override via CARGO_SEM_SLOTS / CARGO_SEM_JOBS / CARGO_SEM_CGU; raising SLOTS
 # toward the logical-core count on this chip is expected to be slower, not faster
 # (measure before trusting a bigger number). If the box still thrashes, CGU is
@@ -125,6 +133,50 @@ PHYS="$(lscpu -p=core 2>/dev/null | grep -v '^#' | sort -u | grep -c '' 2>/dev/n
 SLOTS="${CARGO_SEM_SLOTS:-$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))}"
 JOBS="${CARGO_SEM_JOBS:-$(( NPROC / SLOTS < 2 ? 2 : NPROC / SLOTS ))}"
 CGU="${CARGO_SEM_CGU:-$(( PHYS < 1 ? 1 : PHYS ))}"
+# Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
+# floored at 1, so a caller can say "this stage is the heavy one, give it less"
+# without embedding a number tuned to one machine. The test stage passes 2 (see
+# the Architect INSTRUCTIONS launch block): on this 4-core box that is 4 -> 2,
+# and on a 16-core box 16 -> 8 — the same *proportional* relief rather than a
+# crippling absolute. Divides an explicit CARGO_SEM_CGU too, so "half whatever
+# this box decided" holds however CGU was arrived at.
+CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
+[ "$CGU" -ge 1 ] || CGU=1
+
+# MEMORY CEILING — derived from measurement, never from a constant.
+#
+# Every default above comes from core counts, but the header is explicit that
+# memory binds first ("3 slots x ~8 GB is ~24 GB on a 31 GB box"). A box with
+# these 4 cores and 8 GB would thrash on settings that are fine here; one with
+# 128 GB would never OOM at all. So slots are additionally capped by what this
+# machine can actually hold.
+#
+# The per-build figure is NOT hardcoded: `run()` records peak RSS of each build
+# via /usr/bin/time and keeps a monotonic high-water mark in $RSSF, so the
+# estimate is this box's own worst observed build. Until a build has been
+# measured the cap is simply inactive — an unmeasured machine keeps the
+# CPU-derived slots rather than accepting an invented number.
+#
+# MemTotal, not MemAvailable: every caller must agree on capacity or they would
+# disagree about how many slot locks exist. MemTotal is stable; MemAvailable
+# moves as builds start, so deriving from it would let two concurrent callers
+# compute different SLOTS. The mark only ever rises, so the cap only ever
+# *lowers* slots — capacity shrinks, never grows, which is the safe direction
+# (a slot already held above the new ceiling drains and is simply not reused).
+#
+# An explicit CARGO_SEM_SLOTS still wins: if the operator has said how many,
+# that is a decision, not an estimate.
+RSSF="$D/cargo-sem.peak-rss"
+RSSL="$D/cargo-sem.rss.lock"
+if [ -z "${CARGO_SEM_SLOTS:-}" ]; then
+  _memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+  _peak=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); _peak="${_peak:-0}"
+  if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
+    _memslots=$(( _memkb / _peak ))
+    [ "$_memslots" -ge 1 ] || _memslots=1
+    [ "$_memslots" -lt "$SLOTS" ] && SLOTS="$_memslots"
+  fi
+fi
 CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
@@ -182,7 +234,33 @@ command -v sccache >/dev/null 2>&1 && sccache --start-server >/dev/null 2>&1 || 
 # CARGO_PROFILE_DEV_CODEGEN_UNITS bounds the codegen threads inside each rustc —
 # the dimension CARGO_BUILD_JOBS cannot see (see header). Env, not config, so it
 # scopes to fleet builds only and never reaches a human's incremental dev loop.
+#
+# It also records what the build actually cost in memory. `/usr/bin/time -f %M`
+# reports peak RSS of the largest single child, which is exactly the figure that
+# matters here: the outlier linking rustc, not the ~0.2-0.3 GB dependency ones.
+# The value feeds the memory slot cap above as a monotonic high-water mark, so
+# the ceiling is derived from this machine's own builds rather than a constant
+# guessed for one box. Strictly best-effort: no `/usr/bin/time`, no measurement,
+# and the cap simply stays off. Never allowed to affect the build's exit status.
 run() {
+  local rss="$D/.rss.$$" rc=0
+  if [ -x /usr/bin/time ]; then
+    /usr/bin/time -f '%M' -o "$rss" \
+      nice -n19 ionice -c3 env \
+      CARGO_BUILD_JOBS="$JOBS" \
+      CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
+      "$@"
+    rc=$?
+    local m; m=$(tail -n1 "$rss" 2>/dev/null | tr -dc '0-9')
+    rm -f "$rss"
+    if [ -n "$m" ] && [ "$m" -gt 0 ] 2>/dev/null; then
+      exec 8>"$RSSL"; flock 8
+      local prev; prev=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); prev="${prev:-0}"
+      [ "$m" -gt "$prev" ] && printf '%s' "$m" > "$RSSF"
+      flock -u 8; exec 8>&-
+    fi
+    return $rc
+  fi
   nice -n19 ionice -c3 env \
     CARGO_BUILD_JOBS="$JOBS" \
     CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
