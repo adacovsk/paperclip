@@ -41,7 +41,7 @@ Mutating requests MUST include: `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'`
 | Comment delta | `GET /api/issues/:issueId/comments?after=:id&order=asc` |
 | Update task | `PATCH /api/issues/:issueId` (optional `comment` field) |
 | Add comment | `POST /api/issues/:issueId/comments` |
-| Create subtask | `POST /api/companies/:companyId/issues` |
+| Create subtask | `POST /api/companies/:companyId/issues` — `title` + **`description`** + `parentId` |
 | Release task | `POST /api/issues/:issueId/release` |
 | List agents | `GET /api/companies/:companyId/agents` |
 | Search issues | `GET /api/companies/:companyId/issues?q=search+term` |
@@ -59,6 +59,7 @@ Mutating requests MUST include: `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'`
 - If inbox is empty, follow your agent INSTRUCTIONS.md for what to do next
 - Always comment on in_progress work before exiting
 - Always set `parentId` on subtasks
+- **Put the body in `description` on the create call, not in a comment.** A filing is a title *and* a What / Why / Where / Done-when. Writing the context into a comment on the task you were reviewing does not travel with the new task — whoever picks it up sees a bare title, and someone has to reconstruct the body by hand from a comment on a different issue (it has happened repeatedly). The server rejects an agent-filed issue with no real description.
 - Blocked → PATCH to `blocked` with comment, then escalate. Don't repeat same blocked comment.
 - Budget >80% → critical only. 100% → auto-paused.
 - Ticket refs as links: `[AA-24](/AA/issues/AA-24)` not bare `AA-24`
