@@ -72,6 +72,31 @@ const HEARTBEAT_RUN_HARD_TIMEOUT_MS = Math.max(
   Number(process.env.HEARTBEAT_RUN_HARD_TIMEOUT_MS) || 60 * 60 * 1000,
 );
 
+// Minimum gap between chain-wakes that target the SAME task.
+//
+// The AA-1611 guard below already suppresses a chain-wake after a run that made
+// zero tool calls. It does not catch the expensive case: a run that legitimately
+// works — checks its build sentinel, finds the build still compiling, and exits
+// exactly as its state machine says — is indistinguishable from progress by turn
+// count, so the chain wakes it straight back. With two such tasks the chain
+// ping-pongs between them. Measured: 47 runs in 16 minutes, every one 15-27s,
+// every one `succeeded`, every one doing nothing, at ~$86/hour.
+//
+// Cost per poll *grows* while it spins: the session is reused, so each no-op run
+// appends to the context the next one must re-read (cachedInputTokens climbing,
+// +40% per-run cost across one episode). Both observed loops ended only when the
+// tasks reached terminal states — the loop itself was unbounded.
+//
+// A cooldown, not a counter: the legitimate signal that a detached build has
+// finished is the sentinel callback, which is unaffected by this. This only
+// bounds the *speculative* re-ask. The default is a policy choice, not a
+// measurement — 5 minutes turns ~170 polls/hour/task into ~12 while staying far
+// below the 20-70 minute build times that make the re-ask pointless.
+const CHAIN_WAKE_MIN_INTERVAL_MS = Math.max(
+  0,
+  Number(process.env.CHAIN_WAKE_MIN_INTERVAL_MS) || 5 * 60 * 1000,
+);
+
 export interface RunWatchdog {
   promise: Promise<never>;
   abort: (reason: string) => void;
@@ -3200,7 +3225,35 @@ export function heartbeatService(db: Db) {
                 )
                 .limit(1)
                 .then((rows) => rows[0] ?? null);
-              if (nextTask) {
+              // Has this exact task already been chain-woken very recently? If so
+              // the previous poll's answer is still current — re-asking burns a
+              // full run to re-read a sentinel that has not changed. See
+              // CHAIN_WAKE_MIN_INTERVAL_MS.
+              let chainWakeSuppressed = false;
+              if (nextTask && CHAIN_WAKE_MIN_INTERVAL_MS > 0) {
+                const cutoff = new Date(Date.now() - CHAIN_WAKE_MIN_INTERVAL_MS);
+                const recent = await db
+                  .select({ id: heartbeatRuns.id })
+                  .from(heartbeatRuns)
+                  .where(
+                    and(
+                      eq(heartbeatRuns.agentId, agent.id),
+                      gt(heartbeatRuns.createdAt, cutoff),
+                      sql`${heartbeatRuns.contextSnapshot}->>'source' = 'queue.chain'`,
+                      sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${nextTask.id}`,
+                    ),
+                  )
+                  .limit(1)
+                  .then((rows) => rows[0] ?? null);
+                if (recent) {
+                  chainWakeSuppressed = true;
+                  logger.info(
+                    { agentId: agent.id, nextTaskId: nextTask.id, withinMs: CHAIN_WAKE_MIN_INTERVAL_MS },
+                    "skipping chain-wake — same task was chain-woken within the cooldown (AA-3011 ping-pong guard); the sentinel callback still wakes it when the build finishes",
+                  );
+                }
+              }
+              if (nextTask && !chainWakeSuppressed) {
                 logger.info(
                   { agentId: agent.id, nextTaskId: nextTask.id, nextTaskIdentifier: nextTask.identifier },
                   "chain-waking agent for next queued task",

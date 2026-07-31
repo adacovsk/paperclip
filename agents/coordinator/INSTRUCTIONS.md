@@ -25,6 +25,7 @@ Human merges. You GC the worktree + branch.
 ## Run (do all steps every fire)
 
 0. Resolve agent IDs (`GET /agents`). Cache Worker/Reviewer/Architect. Every task/subtask MUST set `assigneeAgentId` — unassigned = invisible.
+0a. **Close superseded routine fires.** Your own routine tasks (`Coordinator routine <date> fire <n>`) never close themselves. Observed: three sat `in_progress` for 2-3 hours with **zero comments**, no `activeRun` and no `executionRunId`, each already superseded by a later fire — a fire that waits hours behind a deep callback queue can time out before it ever runs, stranding the task it checked out. You are the current fire by definition, so any *older* routine task still `in_progress` is dead. PATCH each to `cancelled`. One short comment naming the superseding fire, or none at all when the run queue is deep — the status is the load-bearing part, and each comment costs another wake into the queue you are trying to drain.
 1. Inbox (`GET /agents/me/inbox-lite`). If `PAPERCLIP_TASK_ID` set, handle first. Empty is normal.
 2. CI: `gh issue list --label ci-failure --state open --json number,title,body` in bevy-rpg. For each issue not already mapped to an active AA task (search existing task titles for the commit SHA mentioned in the issue body):
    a. Create AA-<n> titled `ci-fix: <commit-sha>`, label `ci-failure`, status `todo`.
@@ -367,13 +368,45 @@ cherry-pick on main, stop and escalate to the operator.
 
 ## Worktree teardown
 
-When the PR for `task/{task-id}` merges, tear down:
+When the PR for `task/{task-id}` merges, tear down. **Reap the task's build
+chain first** — removing the directory out from under a live cargo does not
+stop it. The build survives with its cwd marked `(deleted)`, keeps holding one
+of only three `cargo-sem.sh` slots, and burns CPU for a task that is already
+merged. Observed on AA-2713: a chain held cargo-slot-2 against a deleted
+worktree for ~67 minutes of rustc CPU before anything reaped it.
 
 ```sh
+W="$PWD/.paperclip/worktrees/{task-id}"
+# 1. Enumerate ACTUAL slot holders, then keep the ones living in this worktree.
+for pid in $(fuser /tmp/cargo-slot-*.lock 2>/dev/null); do
+  cwd=$(readlink /proc/"$pid"/cwd 2>/dev/null) || continue
+  case "${cwd% (deleted)}" in "$W"|"$W"/*)
+    kill -TERM "-$(ps -o pgid= -p "$pid" | tr -d ' ')" 2>/dev/null ;;   # whole group
+  esac
+done
+# 2. Only then remove the directory.
 git worktree remove .paperclip/worktrees/{task-id}
 git branch -D task/{task-id}        # local branch
 # remote branch is auto-deleted by GitHub on squash-merge
 ```
+
+**Do not substitute `ps aux | grep <worktree-path>`** — it reports a false
+clean, twice over. It matches on *cmdline*: `cargo-sem.sh` embeds the path, but
+its `cargo` / `clippy-driver` / `rustc` descendants inherit the directory via
+`cd` and carry relative paths, so they never match. And once the directory is
+gone the kernel marks the cwd `(deleted)`, so even a cwd grep on the live path
+stops matching. The slot lock plus `/proc` is the probe that actually sees them;
+`kill` targets the process *group* because the `.pid` sentinel names only the
+wrapper, not the slot-holding descendants.
+
+**Why reaping is safe here specifically.** A live wrapper whose dispatching run
+has died is **not** an orphan — that is the normal decoupled-land pattern, where
+the run hits its 2h watchdog while the detached build legitimately continues
+(observed alive at 3h09m) and still writes its `.exit` sentinel. Killing on
+pid-liveness alone destroys live work. The real test is whether the *task* still
+needs a verify result, and at this point in the procedure it provably does not:
+the PR has already merged. Do not lift this block to anywhere that condition
+does not hold.
 
 If `git worktree remove` complains about uncommitted changes, that means
 an agent left state behind — comment on the task and skip teardown

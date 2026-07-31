@@ -88,6 +88,20 @@
 #     The front spins (staying front, blocking no one behind it out of turn)
 #     until a slot frees.
 #
+# EXPRESS LANE (CARGO_SEM_PRIORITY=1). Strict FIFO has one pathological case: a
+# red `main` gates every verify, but the ci-fix that would clear it draws a
+# ticket like everything else and queues behind builds whose results are already
+# known to be worthless. Measured: the ci-fix sat 6th while all three slots were
+# held by verifies their own tasks had since moved to `blocked`. An express
+# waiter registers an extra presence lock; normal waiters yield before taking a
+# slot, and the express waiter skips the FIFO gate rather than waiting its turn
+# behind the very waiters that are yielding to it (doing both deadlocks — that
+# was the first attempt). It never advances `serving`, so ordering among normal
+# waiters is untouched, and it cannot preempt a build already holding a slot:
+# that would discard real work, so it still waits for the first slot to free.
+# Use it only for builds that gate the whole pipeline; a flood of express work
+# would starve the normal lane by design.
+#
 # WHY IT SELF-HEALS (this is the property the raw flock had and a naive
 # ticket counter would lose): every lock that gates progress is an flock the
 # kernel releases automatically when its owner dies —
@@ -181,6 +195,8 @@ CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
 WAIT="$D/cargo-sem.wait"
+EXP="$D/cargo-sem.express"
+PRIO="${CARGO_SEM_PRIORITY:-0}"
 
 # --- ONE cargo per acquisition (guard runs before any lock is touched) ---
 # A slot is held for the whole lifetime of the wrapped command, so wrapping a
@@ -297,6 +313,22 @@ wr() { printf '%s' "$2" > "$1"; }
 # fd (and any momentary acquire) is dropped immediately.
 alive() { ! ( exec 4>"$WAIT.$1"; flock -n 4; ) 2>/dev/null; }
 
+# --- express lane (CARGO_SEM_PRIORITY=1) ---
+# Is any *live* priority waiter queued? Same flock-presence trick as alive(), so
+# it inherits the same self-healing: a dead express waiter's lock is dropped by
+# the kernel, and its stale file is swept here rather than blocking the queue
+# forever. Normal waiters consult this before taking a slot; express waiters do
+# not, or they would yield to themselves.
+express_waiting() {
+  local f
+  for f in "$EXP".*; do
+    [ -e "$f" ] || continue
+    if ! ( exec 4>"$f"; flock -n 4; ) 2>/dev/null; then return 0; fi
+    rm -f "$f"
+  done
+  return 1
+}
+
 # Grab any free physical slot without blocking, holding it on fd 9. Returns 0 and
 # leaves fd 9 flocked on success, 1 (fd 9 closed) if every slot is busy.
 acquire_slot() {
@@ -313,6 +345,7 @@ acquire_slot() {
 exec 6>"$CTL"; flock 6
 T=$(rd "$NEXT"); wr "$NEXT" $((T + 1))
 exec 7>"$WAIT.$T"; flock -n 7   # own presence — self-flock always succeeds
+[ "$PRIO" = "1" ] && { exec 5>"$EXP.$T"; flock -n 5; }   # express presence
 flock -u 6; exec 6>&-
 
 # Optional trace for starvation debugging: records ticket order and,
@@ -328,7 +361,34 @@ while true; do
   wr "$SERV" "$s"
   flock -u 6; exec 6>&-
 
+  # Express lane: an express waiter must NOT also respect the FIFO gate below.
+  # It registered its presence at draw time, so normal waiters are already
+  # yielding to it; if it then waited its own turn behind them, both sides would
+  # wait for each other and the queue would deadlock (observed, not theorised).
+  # It contends for a slot directly and never advances `serving` — leaving the
+  # normal ordering among normals exactly as it was. It still cannot preempt a
+  # build already holding a slot: that would throw away real work.
+  if [ "$PRIO" = "1" ]; then
+    if acquire_slot; then
+      exec 7>&-; rm -f "$WAIT.$T"                          # stop blocking normals
+      exec 5>&-; rm -f "$EXP.$T"                           # stop normals yielding
+      [ -n "$DBG" ] && printf 'admit-express ticket=%s slot=%s t=%s\n' "$T" "$SLOT_IDX" "$(date +%s.%N)" >> "$DBG"
+      announce_admission
+      break
+    fi
+    sleep "$POLL"; continue
+  fi
+
   if [ "$s" -lt "$T" ]; then sleep "$POLL"; continue; fi   # a live waiter is ahead
+
+  # Express lane: a red `main` gates the whole pipeline, so the ci-fix build must
+  # not queue behind verifies whose results are already known to be worthless.
+  # Measured instance: the ci-fix sat 6th while all three slots were held by
+  # verifies their own tasks had since moved to `blocked`. Yielding here bounds
+  # the wait to the running builds rather than to the whole queue behind them.
+  # It cannot preempt a build already holding a slot — that would throw away real
+  # work — so an express build still waits for the first slot to free.
+  if [ "$PRIO" != "1" ] && express_waiting; then sleep "$POLL"; continue; fi
 
   if acquire_slot; then
     exec 6>"$CTL"; flock 6
