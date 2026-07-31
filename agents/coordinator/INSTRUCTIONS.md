@@ -275,13 +275,23 @@ branch handler). For each `{task-id}`:
    one cadence instead of bouncing for hours or burying an `escalate`
    comment. (Seen exactly this way: a real `transitions.rs` conflict that
    sat ~10h before a human hand-merged it.)
-4. **LAND.** `git push origin task/{task-id}` then `gh pr create --head
+4. **OPEN THE PR.** `git push origin task/{task-id}` then `gh pr create --head
    task/{task-id} --base main` with a body noting cargo result + base SHA +
-   "Landed by Coordinator decoupled-land step". Idempotent: if the
+   "PR opened by Coordinator decoupled-land step". Idempotent: if the
    branch is already on origin / a PR already exists, skip that part.
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
-   landed, now met). Comment the PR link on the parent; leave the parent
+   *opened*, now met). Comment the PR link on the parent; leave the parent
    `in_review` until the human merges (§Merge sweep tears down on merge).
+
+**Vocabulary, and it is load-bearing: "landed" means merged into
+`origin/main` — never merely "a PR exists".** Opening a PR is this step's
+whole output; the merge is the operator's, and only the operator's. A task
+whose commits are still only on `task/{identifier}` is NOT landed no matter
+how green its cargo run was, and marking its parent `done` there reports work
+as shipped while it sits on an unmerged branch — which is exactly how a batch
+of tasks went `done` with conflicting, never-merged branches. If you are about
+to write `done` on a parent, the test is `git merge-base --is-ancestor <sha>
+origin/main`, not the existence of a PR.
 
 Do NOT re-verify against the latest main on every fire — that re-rebase
 + re-cargo loop is the livelock itself. Cargo-green against a *recent*
@@ -330,7 +340,7 @@ parents):
 
 4. **On-main pre-check** (run before re-opening — guards against false positives where the operator cherry-picked the work):
    a. Pull SHA references from the task: scan task body + comments for `[a-f0-9]{7,40}` patterns, plus any commit hashes Worker may have left in `Stage: worker` trailer comments.
-   b. For each candidate SHA: `git -C $PAPERCLIP_PROJECT branch --contains <sha> origin/main` (run in the project repo). Non-empty output means the commit landed on main — accept the task as `done`, comment `"PR-evidence audit: matched commit <sha> on origin/main, accepting."` Skip re-open. **Then also run the cherry-pick teardown** (next paragraph): the worktree won't be cleaned by §Worktree teardown / §Merge sweep because there's no PR to track, so the audit must clean it directly. If the worktree at `.paperclip/worktrees/{task-id}` exists, run `git worktree remove --force` against it and `git push origin --delete task/{task-id}` if the remote branch still exists. Comment a single `Worktree torn down post-cherry-pick.` line.
+   b. For each candidate SHA: `git -C $PAPERCLIP_PROJECT merge-base --is-ancestor <sha> origin/main` (run in the project repo). **Exit code 0** means the commit landed on main — accept the task as `done`, comment `"PR-evidence audit: matched commit <sha> on origin/main, accepting."` Skip re-open. **Then also run the cherry-pick teardown** (next paragraph): the worktree won't be cleaned by §Worktree teardown / §Merge sweep because there's no PR to track, so the audit must clean it directly. If the worktree at `.paperclip/worktrees/{task-id}` exists, run `git worktree remove --force` against it and `git push origin --delete task/{task-id}` if the remote branch still exists. Comment a single `Worktree torn down post-cherry-pick.` line.
    c. If the candidate SHA shows up only as a *dangling object* (`git fsck --dangling | grep <sha>`) and is NOT on main, surface to operator: comment `"Dangling commit <sha> '<subject>' references this task but isn't on main. Operator: cherry-pick to recover, or comment to close out."` Leave task `done`, do NOT re-open (re-opening would create a duplicate Worker run).
    d. If no SHA references anywhere in the task, also try `git log origin/main --since={createdAt} --grep="{task-id}"` for commit messages mentioning the task ID. Match → accept as in (b).
    e. Still no evidence after a-d → fall through to step 5 (re-open).
