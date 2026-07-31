@@ -25,6 +25,9 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
+// Static, not a per-test dynamic import: transforming the routes module costs
+// seconds on a cold cache and would otherwise burn the per-test timeout.
+import { routineRoutes } from "../routes/routines.js";
 import { accessService } from "../services/access.js";
 
 vi.mock("../services/index.js", async () => {
@@ -115,8 +118,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await tempDb?.cleanup();
   });
 
-  async function createApp(actor: Record<string, unknown>) {
-    const { routineRoutes } = await import("../routes/routines.js");
+  function createApp(actor: Record<string, unknown>) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -271,5 +273,5 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
         "routine.run_triggered",
       ]),
     );
-  });
+  }, 60_000);
 });

@@ -1,5 +1,6 @@
 import path from "path";
 import { defineConfig } from "vitest/config";
+import { sharedTestTimeouts } from "../vitest.shared.js";
 
 export default defineConfig({
   resolve: {
@@ -10,5 +11,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    ...sharedTestTimeouts,
   },
 });

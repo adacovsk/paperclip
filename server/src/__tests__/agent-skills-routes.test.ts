@@ -350,7 +350,9 @@ describe("agent skill routes", () => {
     });
   });
 
-  it("materializes the bundled CEO instruction set for default CEO agents", async () => {
+  // The role-specific CEO bundle was retired in the agent-hierarchy overhaul:
+  // every role now materializes the single shared `default` bundle.
+  it("materializes the default instruction bundle for CEO agents", async () => {
     const res = await request(createApp())
       .post("/api/companies/company-1/agents")
       .send({
@@ -367,12 +369,9 @@ describe("agent skill routes", () => {
         role: "ceo",
         adapterType: "claude_local",
       }),
-      expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("You are the CEO."),
-        "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
-        "SOUL.md": expect.stringContaining("CEO Persona"),
-        "TOOLS.md": expect.stringContaining("# Tools"),
-      }),
+      {
+        "AGENTS.md": expect.stringContaining("You are an agent at Paperclip company."),
+      },
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
   });

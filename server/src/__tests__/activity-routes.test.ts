@@ -17,12 +17,17 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
 }));
 
+const mockHeartbeatService = vi.hoisted(() => ({
+  getRun: vi.fn(),
+}));
+
 vi.mock("../services/activity.js", () => ({
   activityService: () => mockActivityService,
 }));
 
 vi.mock("../services/index.js", () => ({
   issueService: () => mockIssueService,
+  heartbeatService: () => mockHeartbeatService,
 }));
 
 function createApp() {
