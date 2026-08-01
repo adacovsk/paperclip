@@ -72,7 +72,7 @@ Human merges. You GC the worktree + branch.
 5. Promote backlog → `todo` if <2 Worker tasks active. PATCH must set `assigneeAgentId`. **Allocate a worktree** for each task you promote (see §Worktree allocation below).
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
-8. **Merge sweep**: for each PR opened by Architect, check status. Merged → tear down worktree + branch (see §Worktree teardown).
+8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged.
 9. **Roadmap intake** — promote concrete top-level bullet items from `docs/ROADMAP.md` into the backlog. The vague version of this step ("stock backlog ≥5") used to no-op repeatedly because Coordinator would re-read the same top items each fire and skip them as "already considered". Be concrete:
    a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status in todo, in_progress, backlog)` and `inflight = count(status = in_review)`.
       - If `ready ≥ 5` → skip roadmap intake entirely; the un-started queue is already deep.
@@ -334,9 +334,21 @@ parents):
 1. Look up the task's expected branch: `task/{identifier}`.
 2. Check for a PR via `gh pr list --head task/{identifier} --state all --limit 1 --json number,state,mergedAt`.
 3. Three valid outcomes:
-   - PR exists and `MERGED` → leave task `done`.
-   - PR exists and `OPEN` → leave task `done`; §Merge sweep will pick it up.
+   - PR exists and `mergedAt != null` → leave task `done`.
+   - PR exists and `OPEN` → **demote the task to `in_review`** and comment
+     `"PR #N open, not merged — held at in_review; §Merge sweep closes this out on merge."`
+     An open PR is not a landing (see the vocabulary note in §decoupled-land),
+     and `done` is the signal every other sweep reads: a `done` parent is what
+     unblocks dependents and what the roadmap counts as shipped. Recording it
+     early is not a cosmetic mislabel — it hands downstream work a premise that
+     is not yet true. Observed exactly so: AA-2999 was recorded landed on an
+     open #596, which unblocked AA-3021 on the strength of
+     `spawn_campaign_characters` existing on main, where it did not yet exist.
    - **No PR** → run the **on-main pre-check** (step 4) before re-opening.
+
+   Trust `mergedAt`, not `state`. A `CLOSED` PR is not merged, and `MERGED` as a
+   state string is redundant with the field that actually carries the fact —
+   test the field so a closed-unmerged PR can never read as landed.
 
 4. **On-main pre-check** (run before re-opening — guards against false positives where the operator cherry-picked the work):
    a. Pull SHA references from the task: scan task body + comments for `[a-f0-9]{7,40}` patterns, plus any commit hashes Worker may have left in `Stage: worker` trailer comments.
