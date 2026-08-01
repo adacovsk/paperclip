@@ -72,7 +72,7 @@ Human merges. You GC the worktree + branch.
 5. Promote backlog → `todo` if <2 Worker tasks active. PATCH must set `assigneeAgentId`. **Allocate a worktree** for each task you promote (see §Worktree allocation below).
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
-8. **Merge sweep**: for each PR opened by Architect, check status. Merged → tear down worktree + branch (see §Worktree teardown).
+8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged.
 9. **Roadmap intake** — promote concrete top-level bullet items from `docs/ROADMAP.md` into the backlog. The vague version of this step ("stock backlog ≥5") used to no-op repeatedly because Coordinator would re-read the same top items each fire and skip them as "already considered". Be concrete:
    a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status in todo, in_progress, backlog)` and `inflight = count(status = in_review)`.
       - If `ready ≥ 5` → skip roadmap intake entirely; the un-started queue is already deep.
@@ -275,13 +275,23 @@ branch handler). For each `{task-id}`:
    one cadence instead of bouncing for hours or burying an `escalate`
    comment. (Seen exactly this way: a real `transitions.rs` conflict that
    sat ~10h before a human hand-merged it.)
-4. **LAND.** `git push origin task/{task-id}` then `gh pr create --head
+4. **OPEN THE PR.** `git push origin task/{task-id}` then `gh pr create --head
    task/{task-id} --base main` with a body noting cargo result + base SHA +
-   "Landed by Coordinator decoupled-land step". Idempotent: if the
+   "PR opened by Coordinator decoupled-land step". Idempotent: if the
    branch is already on origin / a PR already exists, skip that part.
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
-   landed, now met). Comment the PR link on the parent; leave the parent
+   *opened*, now met). Comment the PR link on the parent; leave the parent
    `in_review` until the human merges (§Merge sweep tears down on merge).
+
+**Vocabulary, and it is load-bearing: "landed" means merged into
+`origin/main` — never merely "a PR exists".** Opening a PR is this step's
+whole output; the merge is the operator's, and only the operator's. A task
+whose commits are still only on `task/{identifier}` is NOT landed no matter
+how green its cargo run was, and marking its parent `done` there reports work
+as shipped while it sits on an unmerged branch — which is exactly how a batch
+of tasks went `done` with conflicting, never-merged branches. If you are about
+to write `done` on a parent, the test is `git merge-base --is-ancestor <sha>
+origin/main`, not the existence of a PR.
 
 Do NOT re-verify against the latest main on every fire — that re-rebase
 + re-cargo loop is the livelock itself. Cargo-green against a *recent*
@@ -324,14 +334,26 @@ parents):
 1. Look up the task's expected branch: `task/{identifier}`.
 2. Check for a PR via `gh pr list --head task/{identifier} --state all --limit 1 --json number,state,mergedAt`.
 3. Three valid outcomes:
-   - PR exists and `MERGED` → leave task `done`.
-   - PR exists and `OPEN` → leave task `done`; §Merge sweep will pick it up.
+   - PR exists and `mergedAt != null` → leave task `done`.
+   - PR exists and `OPEN` → **demote the task to `in_review`** and comment
+     `"PR #N open, not merged — held at in_review; §Merge sweep closes this out on merge."`
+     An open PR is not a landing (see the vocabulary note in §decoupled-land),
+     and `done` is the signal every other sweep reads: a `done` parent is what
+     unblocks dependents and what the roadmap counts as shipped. Recording it
+     early is not a cosmetic mislabel — it hands downstream work a premise that
+     is not yet true. Observed exactly so: AA-2999 was recorded landed on an
+     open #596, which unblocked AA-3021 on the strength of
+     `spawn_campaign_characters` existing on main, where it did not yet exist.
    - **No PR** → run the **on-main pre-check** (step 4) before re-opening.
+
+   Trust `mergedAt`, not `state`. A `CLOSED` PR is not merged, and `MERGED` as a
+   state string is redundant with the field that actually carries the fact —
+   test the field so a closed-unmerged PR can never read as landed.
 
 4. **On-main pre-check** (run before re-opening — guards against false positives where the operator cherry-picked the work):
    a. Pull SHA references from the task: scan task body + comments for `[a-f0-9]{7,40}` patterns, plus any commit hashes Worker may have left in `Stage: worker` trailer comments.
-   b. For each candidate SHA: `git -C $PAPERCLIP_PROJECT branch --contains <sha> origin/main` (run in the project repo). Non-empty output means the commit landed on main — accept the task as `done`, comment `"PR-evidence audit: matched commit <sha> on origin/main, accepting."` Skip re-open. **Then also run the cherry-pick teardown** (next paragraph): the worktree won't be cleaned by §Worktree teardown / §Merge sweep because there's no PR to track, so the audit must clean it directly. If the worktree at `.paperclip/worktrees/{task-id}` exists, run `git worktree remove --force` against it and `git push origin --delete task/{task-id}` if the remote branch still exists. Comment a single `Worktree torn down post-cherry-pick.` line.
-   c. If the candidate SHA shows up only as a *dangling object* (`git fsck --dangling | grep <sha>`) and is NOT on main, surface to operator: comment `"Dangling commit <sha> '<subject>' references this task but isn't on main. Operator: cherry-pick to recover, or comment to close out."` Leave task `done`, do NOT re-open (re-opening would create a duplicate Worker run).
+   b. For each candidate SHA: `git -C $PAPERCLIP_PROJECT merge-base --is-ancestor <sha> origin/main` (run in the project repo). **Exit code 0** means the commit landed on main — accept the task as `done`, comment `"PR-evidence audit: matched commit <sha> on origin/main, accepting."` Skip re-open. **Then also run the cherry-pick teardown** (next paragraph): the worktree won't be cleaned by §Worktree teardown / §Merge sweep because there's no PR to track, so the audit must clean it directly. If the worktree at `.paperclip/worktrees/{task-id}` exists, run `git worktree remove --force` against it and `git push origin --delete task/{task-id}` if the remote branch still exists. Comment a single `Worktree torn down post-cherry-pick.` line.
+   c. If the candidate SHA shows up only as a *dangling object* (`git fsck --dangling | grep <sha>`) and is NOT on main, surface to operator: comment `"Dangling commit <sha> '<subject>' references this task but isn't on main. Operator: cherry-pick to recover, or comment to close out."` **Demote to `in_review`** — do not leave it `done`, and do not re-open to `todo`. `todo` would spawn a duplicate Worker run, which is what the old "leave it `done`" was avoiding; but `done` on a *dangling* commit is the worst of the three readings, because that work is not merely unmerged, it is unreachable. `in_review` avoids the duplicate run and still keeps the task out of the shipped count.
    d. If no SHA references anywhere in the task, also try `git log origin/main --since={createdAt} --grep="{task-id}"` for commit messages mentioning the task ID. Match → accept as in (b).
    e. Still no evidence after a-d → fall through to step 5 (re-open).
 
