@@ -3091,9 +3091,55 @@ export function heartbeatService(db: Db) {
                 logger.warn(
                   { issueId, agentId: agent.id, role: agent.role, runId: run.id, branch: branchToCheck, exitCode },
                   exitCode === 2
-                    ? "Layer-2 masquerade guard: task branch is not on origin (no PR landed) — withholding auto-done, holding in_review for re-dispatch"
+                    ? "Layer-2 masquerade guard: task branch is not on origin — holding in_review for re-dispatch"
                     : "Layer-2 masquerade guard: could not confirm task branch on origin (git error) — failing closed, holding in_review",
                 );
+              }
+
+              // Pushed is not landed. A Worker pushes on every successful run
+              // without merging anything, so `branchOnOrigin` alone marked tasks
+              // `done` whose commits lived only on `task/<id>` — and then fought
+              // the Coordinator audit in a flip/revert loop (AA-3297).
+              //
+              // `done` requires the branch to be reachable from the base ref.
+              // Fetch first: this repo is a long-lived worktree whose
+              // remote-tracking refs can be many merges stale, and a stale
+              // `origin/<base>` answers "not merged" for work that landed.
+              // Fails closed on any error, same as above — a withheld `done` is
+              // self-correcting via re-dispatch, a false `done` is silent loss.
+              const baseRef = executionWorkspace.repoRef ?? "main";
+              let branchMerged = false;
+              if (branchOnOrigin) {
+                try {
+                  await execFile("git", ["-C", repoForLsRemote, "fetch", "--quiet", "origin", baseRef], {
+                    timeout: 60_000,
+                  });
+                  await execFile(
+                    "git",
+                    [
+                      "-C",
+                      repoForLsRemote,
+                      "merge-base",
+                      "--is-ancestor",
+                      `origin/${branchToCheck}`,
+                      `origin/${baseRef}`,
+                    ],
+                    { timeout: 30_000 },
+                  );
+                  branchMerged = true;
+                } catch (err: unknown) {
+                  logger.info(
+                    {
+                      issueId,
+                      agentId: agent.id,
+                      runId: run.id,
+                      branch: branchToCheck,
+                      baseRef,
+                      exitCode: (err as { code?: number }).code,
+                    },
+                    "Layer-2 landing gate: branch is pushed but not reachable from the base ref — holding in_review until it merges",
+                  );
+                }
               }
 
               // Surface committed-but-unlanded work as in_review so the
@@ -3105,14 +3151,15 @@ export function heartbeatService(db: Db) {
               const nextStatus = resolveNoSkillCompletionStatus({
                 currentStatus: existingIssue.status,
                 branchOnOrigin,
+                branchMerged,
               });
               if (nextStatus) {
                 await issuesSvc.update(issueId, { status: nextStatus });
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, nextStatus },
                   nextStatus === "done"
-                    ? "auto-marked task done for agent without paperclip skill (branch confirmed on origin)"
-                    : "held task at in_review for agent without paperclip skill (branch not on origin — awaiting next stage / re-dispatch)",
+                    ? "auto-marked task done for agent without paperclip skill (branch merged into the base ref)"
+                    : "held task at in_review for agent without paperclip skill (not merged — awaiting next stage / re-dispatch)",
                 );
               } else if (existingIssue.status !== "in_review") {
                 logger.info(
