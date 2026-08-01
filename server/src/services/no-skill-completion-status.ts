@@ -9,12 +9,34 @@
 export function resolveNoSkillCompletionStatus(input: {
   /** The task's status at the moment the run finished. */
   currentStatus: string;
-  /** True only on a positive `git ls-remote` confirmation that the task branch landed. */
+  /**
+   * True only on a positive `git ls-remote` confirmation that the task branch
+   * exists on origin. This means **pushed**, which is not the same as landed — a
+   * Worker pushes by design without merging anything.
+   */
   branchOnOrigin: boolean;
+  /**
+   * True only on a positive `git merge-base --is-ancestor` confirmation that the
+   * branch is reachable from the base ref. This is the *only* evidence that the
+   * work actually landed.
+   */
+  branchMerged: boolean;
 }): "done" | "in_review" | null {
   // Layer-2 anti-masquerade invariant: a no-skill task may auto-complete only
-  // when its branch is confirmed on origin.
-  if (input.branchOnOrigin) return "done";
+  // when its work is reachable from the base ref.
+  //
+  // This deliberately tests `branchMerged`, NOT `branchOnOrigin`. Pushing is what
+  // a Worker does on every successful run; treating it as "landed" marked tasks
+  // `done` whose commits were only ever on `task/<id>` (AA-3271, AA-3021), and
+  // `done` is what unblocks dependents and counts as shipped.
+  //
+  // The failure was worse than a mislabel: it oscillated. The gate flipped a task
+  // to `done`, Coordinator's PR-evidence audit reverted it to `in_review`, the
+  // next run re-checked, the branch was still pushed, and it flipped back —
+  // three times over ~16 hours on AA-3179, while agents kept committing to a task
+  // the server had already declared finished. Two layers disagreeing about the
+  // meaning of "done", on independent cadences, is a loop the audit cannot win.
+  if (input.branchMerged) return "done";
 
   // Promotion is an ALLOWLIST, not a denylist. A no-skill run exits 0 whether or
   // not it did any work, so reaching this point is no evidence about the task —
