@@ -231,6 +231,36 @@ if [ "${CARGO_SEM_ALLOW_CHAIN:-0}" != "1" ]; then
   fi
 fi
 
+# --- CPU must not be parked in a power-saving profile ---
+# `powerprofilesctl set performance` is RUNTIME state: it does not survive a
+# reboot, and power-profiles-daemon has already drifted this AC-powered box to
+# `power-saver` once on its own. Parked, every core pins at 800 MHz against a
+# 4.2 GHz ceiling — 19% — and every verify runs ~3.5x slow.
+#
+# That regression is silent, which is the whole problem. Nothing fails; wall
+# clock just creeps, and a build that should take 40 min takes 2h19m. It went
+# unnoticed for days, and was eventually found only by measuring the box while
+# chasing a different bug. So detect it here, where every Architect build passes.
+#
+# WARN, never block. A slow build is worth running; a build that refuses to start
+# because a laptop is on battery is not. The point is to make the cause visible
+# in the log the moment it costs time, instead of leaving wall-clock creep as the
+# only signal. Set CARGO_SEM_SKIP_EPP_CHECK=1 to silence (deliberate battery
+# operation), and prefer fixing persistence — a boot-time
+# `powerprofilesctl set performance`, or a systemd unit — over silencing.
+if [ "${CARGO_SEM_SKIP_EPP_CHECK:-0}" != "1" ] && command -v powerprofilesctl >/dev/null 2>&1; then
+  _profile="$(powerprofilesctl get 2>/dev/null || echo unknown)"
+  if [ "$_profile" != "performance" ]; then
+    _mhz="$(awk '/cpu MHz/{s+=$2==""?0:$4; n++} END{if(n)printf "%.0f", s/n}' /proc/cpuinfo 2>/dev/null)"
+    printf 'cargo-sem.sh: WARNING — power profile is "%s", not "performance" (avg core %s MHz).\n' \
+      "$_profile" "${_mhz:-?}" >&2
+    printf '  Builds run ~3.5x slow parked at 800 MHz, and nothing fails — the only\n' >&2
+    printf '  symptom is wall-clock creep, which took days to notice last time.\n' >&2
+    printf '  Fix:  powerprofilesctl set performance   (runtime only — make it persist)\n' >&2
+    printf '  Silence: CARGO_SEM_SKIP_EPP_CHECK=1\n' >&2
+  fi
+fi
+
 # --- sccache must already be up BEFORE we hold a lock ---
 # If a cargo cold-starts the sccache server from *under* a slot lock, the
 # daemon inherits fd 9 and never exits — and flock releases only when every fd
