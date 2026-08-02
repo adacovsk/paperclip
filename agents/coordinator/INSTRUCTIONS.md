@@ -33,6 +33,12 @@ Human merges. You GC the worktree + branch.
    c. Pull the failed run's log via `gh run view <run-id> --log-failed`, extract the first ~30 unique error messages with file:line context, write them into the task body under `## Compile errors`.
    d. Assign Architect immediately once the worktree is allocated; Architect runs cargo itself against the worktree, fixes the listed errors, opens the PR.
    This is the only path that fixes a red `main`. Without it, every `ci-failure` issue stalls because Architect's hard gate has no main-rooted worktree to operate on.
+2a. **Dependency-bump intake.** `gh pr list --state open --json number,title,headRefName,files` in bevy-rpg; select PRs whose changed files include `Cargo.toml` or `Cargo.lock`. For each not already mapped to an active AA task (search task titles for the PR number):
+   a. Create AA-<n> titled `Verify: dependency bump PR #<pr>`, label `needs-build`, `dedupeKey: "verify"`, status `todo`.
+   b. Allocate the worktree from **the PR's head branch**, not `origin/main` — the bump only exists on the PR branch, so a main-rooted worktree compiles the old versions and reports a meaningless green.
+   c. Assign Architect. It runs cargo against the worktree and comments the result on the PR; it does **not** merge — dependency bumps stay an operator decision.
+   Scoped to manifest changes rather than to a bot actor, so a hand-edited dependency is covered too.
+   **Why this exists**: `ci.yml` used to build Dependabot PRs on `pull_request`. That trigger was removed to conserve GitHub Actions minutes, and this step is its replacement. A bump is not a task, so no agent otherwise ever builds it — `enum-map` 2.x → 3.1.0 merged unbuilt exactly that way, removed the `Enum::LENGTH` const the code used, and broke the lib on `main` for five days while `cargo test --lib` stayed green. **Do not drop this step without restoring the `pull_request` trigger**; deleting both leaves dependency bumps verified by nobody.
 3. Advance completed stages (dispatch Architect synchronously — see §Architect dispatch).
    **Stage-completion signals (post server Layer-2 gate, `heartbeat.ts`):** a no-skill
    agent (Worker, Architect) only reaches `done` when its branch is **on origin**; if not
