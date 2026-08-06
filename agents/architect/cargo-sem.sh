@@ -119,7 +119,8 @@
 # until the child exits. Do NOT rewrite this to `exec` into the command — that
 # drops the lock at exec and reintroduces unbounded concurrency. fd 7 = own
 # presence, fd 6 = ctl-lock (both released before the command runs); fd 4 = a
-# throwaway liveness probe (subshell-scoped).
+# throwaway liveness probe (subshell-scoped); fd 3 = the per-worktree mutex,
+# taken before any ticket is drawn and held for the same lifetime as fd 9.
 #
 # We deliberately do NOT `taskset`-pin slots to disjoint core sets (the old 2-slot
 # design pinned 0-3 / 4-7). On 4 cores that partitioning both fails to divide
@@ -420,6 +421,34 @@ acquire_slot() {
   done
   return 1
 }
+
+# --- ONE build per worktree, enforced OUTSIDE the semaphore ---
+# Two cargo invocations against the same worktree cannot proceed in parallel:
+# cargo takes an exclusive lock on that worktree's `target/` directory, so the
+# second blocks until the first finishes. That is correct cargo behaviour and
+# not the bug. The bug is WHERE it blocks — if both have already been admitted,
+# each holds a semaphore slot while one of them makes no progress at all, so the
+# effective ceiling drops below SLOTS and the blocked one can burn its whole
+# wall-clock budget waiting (AA-3261).
+#
+# It presents as "verifies are slow" rather than as a deadlock, which is why it
+# was hard to see: nothing errors, nothing times out at the semaphore layer, and
+# both runs look admitted and healthy.
+#
+# Serializing per worktree here, BEFORE a ticket is drawn, moves that wait
+# outside the ticket queue: the second caller blocks holding no slot and drawing
+# no ticket, so it neither consumes capacity nor takes a queue position it
+# cannot use. Same self-healing property as every other lock in this script —
+# it is an flock, so a dead holder releases it.
+#
+# Keyed by the resolved cwd, which is the worktree cargo will build in. Callers
+# in different worktrees never contend.
+WTKEY="$(pwd -P | cksum | tr -d ' \t-')"
+exec 3>"$D/cargo-wt-$WTKEY.lock"
+if ! flock -n 3; then
+  printf 'cargo-sem.sh: another build holds this worktree; waiting outside the queue.\n' >&2
+  flock 3
+fi
 
 # --- draw a ticket and register presence atomically under the ctl-lock ---
 exec 6>"$CTL"; flock 6
