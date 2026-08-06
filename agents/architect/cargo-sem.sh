@@ -326,13 +326,63 @@ run() {
 # failed announce costs this run its extension, nothing more; do not make it
 # fatal, and do not move it before the slot is held — announcing while still
 # queued restarts the clock for a build that has not started.
+#
+# The API key is OPTIONAL, deliberately. Requiring it made this a permanent
+# no-op: the adapter injects PAPERCLIP_API_KEY only for agents holding the
+# `paperclip` skill, and the Architect holds none — so every Architect build has
+# been skipping the announce and billing its queue wait against the build, which
+# is the exact failure this function exists to prevent. The server runs in Local
+# Trusted Mode (127.0.0.1 requests are the operator), so the call authenticates
+# without one. Send the header when a key IS present; never gate on it.
+api_post() {
+  local path="$1" body="$2"
+  [ -n "${PAPERCLIP_API_URL:-}" ] || return 1
+  if [ -n "${PAPERCLIP_API_KEY:-}" ]; then
+    curl -fsS --max-time 5 -X POST "$PAPERCLIP_API_URL$path" \
+      -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+      -H "Content-Type: application/json" -d "$body" 2>/dev/null
+  else
+    curl -fsS --max-time 5 -X POST "$PAPERCLIP_API_URL$path" \
+      -H "Content-Type: application/json" -d "$body" 2>/dev/null
+  fi
+}
+
 announce_admission() {
-  [ -n "${PAPERCLIP_API_URL:-}" ] && [ -n "${PAPERCLIP_API_KEY:-}" ] &&
-    [ -n "${PAPERCLIP_RUN_ID:-}" ] || return 0
-  curl -fsS --max-time 5 -X POST \
-    "$PAPERCLIP_API_URL/api/heartbeat-runs/$PAPERCLIP_RUN_ID/watchdog-restart" \
-    -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-    -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
+  [ -n "${PAPERCLIP_RUN_ID:-}" ] || return 0
+  api_post "/api/heartbeat-runs/$PAPERCLIP_RUN_ID/watchdog-restart" '{}' >/dev/null || true
+}
+
+# --- make the detached build visible ---
+# The Architect dispatches this script and exits, so from the server's side a
+# build that runs for hours holds no run at all: the issue shows no `Live` pulse
+# and reads exactly like a task that never started — indistinguishable from the
+# lost-sentinel failure. Opening a run against the issue lights up the existing
+# UI (issue row, Kanban card, inbox) with no new surface to maintain.
+#
+# Same best-effort contract as announce_admission: the build is the point, the
+# telemetry is not. Every failure path returns success and DETACHED_RUN_ID stays
+# empty, which simply skips the close.
+DETACHED_RUN_ID=""
+
+open_detached_run() {
+  [ -n "${PAPERCLIP_AGENT_ID:-}" ] && [ -n "${PAPERCLIP_API_URL:-}" ] || return 0
+  local body out
+  body=$(printf '{"agentId":"%s","issueId":"%s","pid":%s,"triggerDetail":"%s"}' \
+    "$PAPERCLIP_AGENT_ID" "${PAPERCLIP_TASK_ID:-}" "$$" "$(printf '%s' "$*" | tr -d '"\\' | cut -c1-200)")
+  out=$(api_post "/api/heartbeat-runs/detached" "$body") || return 0
+  DETACHED_RUN_ID=$(printf '%s' "$out" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')
+}
+
+# Closed from an EXIT trap, so a SIGTERM'd or SIGKILL'd-parent build still
+# settles wherever the shell gets to run it. A build killed outright (the
+# service-restart case) leaves the run open — that is the honest reading, and
+# the reaper deliberately will not "tidy" it, since guessing here is what
+# re-dispatches a healthy build.
+close_detached_run() {
+  [ -n "$DETACHED_RUN_ID" ] || return 0
+  api_post "/api/heartbeat-runs/$DETACHED_RUN_ID/detached-finish" \
+    "$(printf '{"exitCode":%s}' "${1:-1}")" >/dev/null || true
+  DETACHED_RUN_ID=""
 }
 
 rd() { local v=0; [ -f "$1" ] && v=$(<"$1"); printf '%s' "${v:-0}"; }
@@ -432,6 +482,10 @@ while true; do
   sleep "$POLL"                                            # front, but capacity full
 done
 
+open_detached_run "$@"
+trap 'close_detached_run "${rc:-143}"' EXIT
+
 run "$@"; rc=$?
+close_detached_run "$rc"
 exec 9>&-
 exit "$rc"

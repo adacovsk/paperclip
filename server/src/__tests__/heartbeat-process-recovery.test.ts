@@ -73,6 +73,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     includeIssue?: boolean;
     runErrorCode?: string | null;
     runError?: string | null;
+    invocationSource?: string;
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
@@ -118,7 +119,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       id: runId,
       companyId,
       agentId,
-      invocationSource: "assignment",
+      invocationSource: input?.invocationSource ?? "assignment",
       triggerDetail: "system",
       status: input?.runStatus ?? "running",
       wakeupRequestId,
@@ -174,6 +175,31 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.id, wakeupRequestId))
       .then((rows) => rows[0] ?? null);
     expect(wakeup?.status).toBe("claimed");
+  });
+
+  // A detached run's work lives outside this process, so a dead pid says nothing
+  // about the build. Reaping one is not a cosmetic wrong status: the retry path
+  // below would re-dispatch the agent and start a duplicate multi-hour build
+  // while the original is still compiling.
+  it("never reaps or retries a detached run, even with a dead pid", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "claude_local",
+      invocationSource: "detached_external",
+      processPid: 999_999_999,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(0);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("running");
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
   });
 
   it("queues exactly one retry when the recorded local pid is dead", async () => {

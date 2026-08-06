@@ -2221,6 +2221,74 @@ export function agentRoutes(db: Db) {
     res.json(run);
   });
 
+  // Open/close a run for work this process does not execute.
+  //
+  // The Architect dispatches its cargo builds detached and exits, so a verify
+  // that is compiling for hours has no live run: the issue reads as idle and the
+  // `Live` pulse (live-runs keyed on contextSnapshot.issueId) stays dark. The
+  // caller is `cargo-sem.sh` — it opens on slot admission and closes when the
+  // build exits. Nothing else can settle these runs, which is why the reaper
+  // exempts them.
+  router.post("/heartbeat-runs/detached", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const agentId = typeof body.agentId === "string" ? body.agentId : null;
+    if (!agentId) {
+      res.status(400).json({ error: "agentId is required" });
+      return;
+    }
+
+    const agent = await db.select().from(agentsTable).where(eq(agentsTable.id, agentId)).then((r) => r[0]);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    // An agent may only open a run against itself; the operator may open any.
+    if (req.actor.type === "agent" && req.actor.agentId !== agentId) {
+      res.status(403).json({ error: "Agent can only open a detached run for itself" });
+      return;
+    }
+
+    const pidRaw = Number(body.pid);
+    const run = await heartbeat.openDetachedRun({
+      companyId: agent.companyId,
+      agentId,
+      issueId: typeof body.issueId === "string" ? body.issueId : null,
+      pid: Number.isInteger(pidRaw) && pidRaw > 0 ? pidRaw : null,
+      triggerDetail: typeof body.triggerDetail === "string" ? body.triggerDetail.slice(0, 500) : null,
+    });
+
+    res.status(201).json({ runId: run.id });
+  });
+
+  router.post("/heartbeat-runs/:runId/detached-finish", async (req, res) => {
+    const runId = req.params.runId as string;
+    const existing = await heartbeat.getRun(runId);
+    if (!existing) {
+      res.status(404).json({ error: "Run not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    if (req.actor.type === "agent" && req.actor.agentId !== existing.agentId) {
+      res.status(403).json({ error: "Agent can only finish its own detached run" });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const exitCodeRaw = Number(body.exitCode);
+    const run = await heartbeat.finishDetachedRun(runId, {
+      exitCode: Number.isInteger(exitCodeRaw) ? exitCodeRaw : null,
+      error: typeof body.error === "string" ? body.error.slice(0, 2000) : null,
+    });
+    if (!run) {
+      res.status(409).json({ error: "Not a detached run" });
+      return;
+    }
+
+    res.json({ runId: run.id, status: run.status });
+  });
+
   // Restart a run's hard timeout because its real work is only now starting.
   //
   // The caller is `cargo-sem.sh` at the moment it wins a build slot. The
