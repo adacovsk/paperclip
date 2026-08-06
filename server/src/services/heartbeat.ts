@@ -1080,16 +1080,21 @@ export function heartbeatService(db: Db) {
           )
         : 0;
 
+    // Context size is input + cached input, not input alone. On a resumed
+    // session the whole prior transcript is served from cache, so
+    // `inputTokens` stays in the low tens while `cachedInputTokens` climbs into
+    // the millions — measuring only the former left this arm permanently dead
+    // and let sessions grow without bound.
+    const latestContextTokens = latestRawUsage
+      ? latestRawUsage.inputTokens + latestRawUsage.cachedInputTokens
+      : 0;
+
     let reason: string | null = null;
     if (policy.maxSessionRuns > 0 && runs.length > policy.maxSessionRuns) {
       reason = `session exceeded ${policy.maxSessionRuns} runs`;
-    } else if (
-      policy.maxRawInputTokens > 0 &&
-      latestRawUsage &&
-      latestRawUsage.inputTokens >= policy.maxRawInputTokens
-    ) {
+    } else if (policy.maxRawInputTokens > 0 && latestContextTokens >= policy.maxRawInputTokens) {
       reason =
-        `session raw input reached ${formatCount(latestRawUsage.inputTokens)} tokens ` +
+        `session raw input reached ${formatCount(latestContextTokens)} tokens ` +
         `(threshold ${formatCount(policy.maxRawInputTokens)})`;
     } else if (policy.maxSessionAgeHours > 0 && sessionAgeHours >= policy.maxSessionAgeHours) {
       reason = `session age reached ${Math.floor(sessionAgeHours)} hours`;
