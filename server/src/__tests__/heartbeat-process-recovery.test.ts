@@ -202,6 +202,26 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(runs).toHaveLength(1);
   });
 
+  it("cancels an issue's detached runs so the wrapper can tear the build down", async () => {
+    const { runId, issueId } = await seedRunFixture({
+      adapterType: "claude_local",
+      invocationSource: "detached_external",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const cancelled = await heartbeat.cancelDetachedRunsForIssue(issueId, "Issue moved to blocked");
+    expect(cancelled).toEqual([runId]);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("cancelled");
+    expect(run?.errorCode).toBe("detached_cancelled");
+
+    // The wrapper's close must not overwrite a recorded cancellation with the
+    // exit code of the build it just killed.
+    await heartbeat.finishDetachedRun(runId, { exitCode: 143 });
+    expect((await heartbeat.getRun(runId))?.status).toBe("cancelled");
+  });
+
   it("queues exactly one retry when the recorded local pid is dead", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       processPid: 999_999_999,
