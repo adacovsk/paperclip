@@ -64,7 +64,9 @@ Human merges. You GC the worktree + branch.
    - Architect `done` (branch confirmed on origin → PR exists) → mark parent done after PR merges
    - Architect `in_review` (assignee = Architect, **branch NOT on origin** → gate withheld auto-done):
      the verify run did cargo but never landed (the recurring Landing bug). **FIRST run the
-     §Landing sweep** — if cargo is green (sentinel `/tmp/verify-{task-id}.exit` == 0) and the branch
+     §Landing sweep** — if cargo is green (sentinel
+     `"${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify/{task-id}.exit"` == 0, keyed by the **parent**
+     id per §Landing sweep) and the branch
      merges cleanly into current `origin/main`, Coordinator itself pushes + opens the PR (landing is
      decoupled from the flaky Architect run — that is the structural fix). Only re-dispatch the
      Architect when the sweep is blocked **on cargo** (no green sentinel / non-zero exit) — that it
@@ -263,11 +265,32 @@ harmless if it already did.
 
 Run this sweep every fire, for every Verify subtask that is `in_review`
 with assignee = Architect (and as the FIRST action in the step-3 stranded
-branch handler). For each `{task-id}`:
+branch handler).
 
-1. **Cargo-green gate.** Read `/tmp/verify-{task-id}.exit`. Must be `0`.
-   No sentinel, or non-zero → do NOT land; the Architect must (re-)run
-   cargo. Re-dispatch per step 3 cap, or leave running if a live run owns it.
+> **`{task-id}` here is the PARENT task's id — the one the worktree is named
+> after — never the `Verify:` subtask's own id.** Worktrees are allocated per
+> parent (§Worktree allocation) and the Architect runs inside one, so every
+> artifact it writes is keyed by the parent: the sentinel files, the branch,
+> the `verifyrun-` process tag. Probing `AA-<subtask>.pid` / `.exit` therefore
+> finds nothing *even for a build that is actively compiling*, which reads as
+> "never started" and invites a re-dispatch. That is not hypothetical: a live
+> Verify was killed this way and lost ~50 minutes of build progress against a
+> contended cargo semaphore. **Absence of a subtask-keyed sentinel is evidence
+> of nothing.** Resolve the parent id first, then run the sweep with it.
+
+For each parent `{task-id}`:
+
+1. **Cargo-green gate.** Read
+   `"${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify/{task-id}.exit"`. Must be
+   `0`. (Not `/tmp/verify-*` — nothing has ever written there, so that path
+   made every task read as "no sentinel".) No sentinel, or non-zero → do NOT
+   land; the Architect must (re-)run cargo. Before concluding a build is dead,
+   probe it the way the Architect does: alive if
+   `test -d /proc/"$(cat "$VERIFY_DIR/{task-id}.pid")"`, or if
+   `pgrep -af cargo | grep verifyrun-{task-id}` matches, or if
+   `{task-id}.log` has a recent mtime — a build queued behind a busy
+   `cargo-sem.sh` slot can show nothing but its startup line for 20–40 minutes
+   and is RUNNING. Re-dispatch per the step 3 cap only when all three say dead.
 2. **Committed + ahead gate.** Worktree clean (`git -C
    .paperclip/worktrees/{task-id} status --porcelain` empty) AND ahead of
    `origin/main` (`git rev-list --count origin/main..HEAD` > 0). If clean

@@ -64,6 +64,13 @@ const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
+// Marker written on in-flight runs when the server is shutting down, *before* it
+// SIGTERMs their child processes. Without it the next boot's reaper can only say
+// "child pid N is no longer running", which reads like the child died on its own
+// and sent an investigation after OOM / SDK stream drops. The actual cause of
+// every clustered `process_lost` observed so far is us: a restart (a `tsx watch`
+// reload on any edited server file, or an operator restart) killing live runs.
+const SHUTDOWN_INTERRUPT_ERROR_CODE = "process_lost_shutdown";
 // Hard ceiling on `adapter.execute` so a hung adapter (child process never exits, never emits close)
 // can't wedge the awaiting promise indefinitely. The watchdog rejects the awaited promise; the
 // adapter's child process is terminated separately by the reaper. Tunable via env.
@@ -1936,6 +1943,43 @@ export function heartbeatService(db: Db) {
     }
   }
 
+  /**
+   * Stamp every run whose child we are about to kill, so the loss is attributable.
+   *
+   * Call this from the shutdown handler BEFORE `killAllRunningProcesses`. The
+   * kill and the process exit that follows leave no trace in the run record;
+   * the next boot's reaper finds a dead pid and reports the generic
+   * "child pid N is no longer running", which is indistinguishable from an OOM
+   * or an SDK stream drop. Recording the signal here is what makes
+   * `process_lost` say *why* — and clustered losses (four in the 43 minutes
+   * around two merges that touched watched server files) are restarts, not
+   * child-process instability.
+   */
+  async function markRunsInterruptedByShutdown(signal: string) {
+    const runIds = Array.from(runningProcesses.keys());
+    for (const runId of runIds) {
+      const message = `Server shutting down (${signal}); this run's child process is being killed`;
+      try {
+        const updated = await setRunStatus(runId, "running", {
+          error: message,
+          errorCode: SHUTDOWN_INTERRUPT_ERROR_CODE,
+        });
+        if (updated) {
+          await appendRunEvent(updated, await nextRunEventSeq(updated.id), {
+            eventType: "lifecycle",
+            stream: "system",
+            level: "warn",
+            message,
+            payload: { signal, ...(updated.processPid ? { processPid: updated.processPid } : {}) },
+          });
+        }
+      } catch (err) {
+        logger.warn({ err, runId }, "failed to record shutdown interruption on run");
+      }
+    }
+    return runIds.length;
+  }
+
   async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = new Date();
@@ -1985,9 +2029,12 @@ export function heartbeatService(db: Db) {
       }
 
       const shouldRetry = tracksLocalChild && !!run.processPid && (run.processLossRetryCount ?? 0) < 1;
-      const baseMessage = run.processPid
-        ? `Process lost -- child pid ${run.processPid} is no longer running`
-        : "Process lost -- server may have restarted";
+      const interruptedByShutdown = run.errorCode === SHUTDOWN_INTERRUPT_ERROR_CODE;
+      const baseMessage = interruptedByShutdown
+        ? `Process lost -- the server shut down while this run was in flight and killed child pid ${run.processPid ?? "?"} (${run.error ?? "shutdown"})`
+        : run.processPid
+          ? `Process lost -- child pid ${run.processPid} is no longer running`
+          : "Process lost -- server may have restarted";
 
       let finalizedRun = await setRunStatus(run.id, "failed", {
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
@@ -4552,6 +4599,8 @@ export function heartbeatService(db: Db) {
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
+
+    markRunsInterruptedByShutdown,
 
     resumeQueuedRuns,
 
