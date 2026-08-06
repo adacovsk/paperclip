@@ -49,7 +49,8 @@ Each row carries `agentId`, `status` (`running`/`succeeded`/`failed`/`cancelled`
 
 - **Error runs** — `status: failed`, or non-null `error`/`errorCode`. Group by `agentId`; a repeat across runs is a config bug, file it.
 - **Short-circuit runs** — `succeeded` with a very short `finishedAt - startedAt` and a `usageJson`/`resultJson` showing no real work, especially when the `contextSnapshot` issue did not advance. That is the wake firing into a no-op.
-- **Session rotation** — `sessionIdBefore` set but `sessionIdAfter` null on a non-crashed run, or `processLossRetryCount` climbing.
+- **Session rotation — crash arm** — `sessionIdBefore` set but `sessionIdAfter` null on a non-crashed run, or `processLossRetryCount` climbing.
+- **Session rotation — compounding arm** — `usageJson.sessionRotated: false` across a run of `sessionReused: true` rows sharing one `sessionIdAfter`, with `cachedInputTokens` trending up. The crash arm cannot see this: the session is not dying, it is growing, so `sessionIdAfter` stays non-null throughout. Group terminal runs by `sessionIdAfter` and flag any session carrying more runs than that agent's `runtimeConfig.heartbeat.sessionCompaction.maxSessionRuns`, or a run whose `inputTokens + cachedInputTokens` exceeds its `maxRawInputTokens`, without a rotation following. That is a rotation bug, not expensive-but-productive work — file it.
 
 Note `usageJson`/`resultJson` are null while a run is `running` and on `cancelled` runs — judge productivity only on terminal `succeeded`/`failed` rows. Treat a **404 from any of these routes as a sweep error, not an empty result set**: report it rather than recording `Pipeline healthy`.
 
@@ -60,6 +61,8 @@ Recent done-sounding comments (`"nothing to fix"`, `"all clean"`, `"review compl
 ### 5. Config drift
 
 Diff live `adapterConfig.promptTemplate` + `instructionsFilePath` content against `$PAPERCLIP_REPO/agents/{agent}/INSTRUCTIONS.md`. Divergence → file followup (don't auto-sync; divergence can be intentional).
+
+`runtimeConfig.heartbeat.sessionCompaction` is deliberately **per-agent and non-uniform** — each agent's thresholds are tuned to its own observed run distribution, not to a house default. `claude_local`'s adapter default zeroes every threshold, so an agent with no override never rotates at all; an agent whose values differ from its neighbours is not drift. Flag only a *missing* `sessionCompaction` block, or `enabled: false`.
 
 ### 6. Hide stale completions
 
