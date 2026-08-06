@@ -27,13 +27,62 @@ No tasks (Coordinator), no commits (operator), no game code.
    - For every line carrying an `awaiting merge` / branch-name / PR-number annotation: if the work is on `origin/main`, **delete the line entirely** (git preserves history); if it's not on main yet, strip the annotation but keep the bullet.
    - Delete "Pipeline issues" changelog accretion — merged-PR batch records belong in git log, not here. Keep only genuinely open meta-issues (lost work, broken tooling, worktree drift).
    - Don't reintroduce status tracking while syncing. If you catch yourself writing a PR number or branch name into the roadmap, stop — that's the anti-pattern this step exists to kill.
-7. **Update `docs/ROADMAP.md`** (≤3 new items/run, ≤1 if step 5 said the queue is leaky):
+7. **Update `docs/ROADMAP.md` — restock *to a band*, do not cap your additions.**
    - Add from scan + Reviewer patterns
    - Reprioritize on new dependencies/urgency
    - Anything unpromoted >30 days: delete it or escalate it — languishing forever is signal, not data.
+
+   **The band, and why it is not a per-run cap.** This step used to read "≤3 new
+   items/run". A cap is the wrong shape: it bounds *supply* while demand is set
+   by how fast the pipeline consumes, so whenever consumption exceeds the cap the
+   only way to keep up is to fire Planner more often — which is what happened.
+   Measured on 2026-08-06: roadmap-fed task creation ran **~10/day** against a cap
+   of 3, and Planner was woken **five** times in nineteen hours (four branches,
+   13 assigned tasks) with restock demands reading "restock #3 today", "drained to
+   zero", "drained to zero again". Planner is also the most expensive agent in the
+   fleet (~54% of pipeline spend), so a cap that forces extra fires is costly in
+   the most direct way. Restock **to a depth** instead and the wake rate falls out
+   of it.
+
+   **Read the current depth — do not estimate it.** `scripts/check_roadmap.py`
+   already counts and prints the bands, and already errors when one hits zero:
+
+   ```
+   python scripts/check_roadmap.py
+     active-fronts: 19 fronts (needs-build=11, data-only=8), ...
+   ```
+
+   **Target depth, per band — `data-only` carries the deeper buffer:**
+
+   | band | restock to | why |
+   |---|---|---|
+   | `data-only` | **≥ 20** | Skips the Architect entirely (no cargo build), so these land in minutes and drain fastest. Every restock demand on 2026-08-06 named this band; none named the other. |
+   | `needs-build` | **≥ 6** | Queues behind the 2-slot cargo semaphore at hours per build, so it drains an order of magnitude slower. Stocking it as deep as `data-only` is what made the roadmap look healthy at `11/8` while the band that mattered starved. |
+
+   Bands are stocked **in proportion to drain rate, not equally.** Equal stocking
+   is what hid this: the file read as 19 healthy fronts while the fast-draining
+   half was dry within the hour.
+
+   **The one brake that survives from the old cap:** if step 5 found the queue
+   leaky — items sitting unpromoted fire after fire — do **not** restock to the
+   band. An item unpromoted across many fires is mis-phrased or mis-positioned,
+   not missing (see *Write for the Coordinator's intake filter*), and piling new
+   bullets on top of unpromotable ones is accretion, not supply. Fix the existing
+   items' shape that fire and say so in the summary comment; the band is a target
+   for *promotable* depth, never a reason to lower the bar on what you write.
 8. **CLAUDE.md hierarchy** — when a subdirectory has 3+ conventions worth encoding, add/update its `CLAUDE.md`. Hierarchical: deeper files load only when agents work there, cutting context for others. Keep to rules, not implementation notes. Existing (verify with `find src -maxdepth 3 -iname CLAUDE.md` — this list drifts, that command is the source of truth): root, `src/`, `src/resources/`, `src/ui/`, `src/utils/`, and `src/systems/{ability_mechanics,combat,detection,local_map_generation,lock_interaction,movement,observers,rendering,spell_management,structure_generation,vision_system,world_generation}/`.
 9. **Close what you satisfied (exit gate).** A ROADMAP edit in steps 6–7 frequently *completes* a queued task — pruning a stale bullet (or adding the work it asked for) and committing it to `origin/main` is the done-criteria for any `todo`/`in_progress` task that tracked that bullet. Before exiting, for each such task: `PATCH /api/issues/{id}` with `{"status":"done","comment":"<what landed + the origin/main SHA>"}` in this **same fire**. The completion text you'd write as a comment rides the status PATCH — a bare `POST /comments` leaving the task in `todo` is **not** completion (a done-but-unPATCHed task is indistinguishable from un-started work and inflates the apparent queue). Mirror the Worker/Reviewer exit gate: work committed → status advanced, together.
-10. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --repo adacovsk/bevy-rpg --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. (This is the Planner-scoped rung;  is the cross-agent Facilitator sweep that catches the same commit-without-push class for every agent.)
+10. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --repo adacovsk/bevy-rpg --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch.
+
+    **Report the band depth you are leaving behind, in the same comment.** Run
+    `python scripts/check_roadmap.py` on the branch you are about to push and put
+    its `active-fronts:` line in the summary verbatim. A PR URL proves the work
+    *shipped*; the band line proves it shipped *enough* — those are different
+    failures and the delivery gate only caught the first. If either band is below
+    its step-7 target, say so explicitly and why (leaky queue, research budget,
+    ran out of turn) rather than letting the next starvation escalation discover
+    it. A fire that lands a PR while leaving `data-only` at 2 has bought roughly
+    four hours. (This is the Planner-scoped rung;  is the cross-agent Facilitator sweep that catches the same commit-without-push class for every agent.)
 
 ## Outputs
 
