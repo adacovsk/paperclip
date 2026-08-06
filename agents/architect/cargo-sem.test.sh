@@ -37,9 +37,14 @@ export -f work
 export DIR LOG HOLD
 
 echo "Dispatching $WAITERS waiters at $SLOTS-slot semaphore ($SEM)..."
+# Each waiter runs in its OWN directory, because that is what the fleet does:
+# one worktree per task. The per-worktree mutex serializes same-directory
+# builds, so dispatching every waiter from a shared cwd would measure that
+# mutex instead of the semaphore and report a peak concurrency of 1.
 pids=()
 for i in $(seq 1 "$WAITERS"); do
-  "$SEM" bash -c 'work' _ &
+  mkdir -p "$DIR/wt$i"
+  ( cd "$DIR/wt$i" && "$SEM" bash -c 'work' _ ) &
   pids+=($!)
   sleep 0.25   # >> ticket-draw time, so contention is real but tickets still interleave under load
 done
@@ -91,4 +96,34 @@ if len(order) != waiters:
 
 print("RESULT:", "PASS" if not fail else "FAIL")
 sys.exit(fail)
+PY
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+
+# --- per-worktree mutex: same directory must never build concurrently ---
+# Two cargo runs in one worktree serialize on cargo's own target/ lock anyway;
+# the defect this guards is them serializing *after* admission, each holding a
+# slot while only one progresses. Both must overlap zero times, and — the part
+# that matters — the waiter must not be occupying a slot while it waits.
+echo
+echo "Checking per-worktree serialization (2 waiters, same cwd, $SLOTS slots)..."
+: > "$LOG"
+mkdir -p "$DIR/shared"
+for _ in 1 2; do ( cd "$DIR/shared" && "$SEM" bash -c 'work' _ ) & done
+wait
+
+python3 - "$LOG" <<'PY'
+import sys, re
+evts = []
+for line in open(sys.argv[1]):
+    m = re.match(r'(START|END)\s+pid=\d+ t=([\d.]+)', line)
+    if m: evts.append((float(m[2]), +1 if m[1] == 'START' else -1))
+cur = peak = 0
+for _, d in sorted(evts):
+    cur += d; peak = max(peak, cur)
+starts = sum(1 for _t, d in evts if d == +1)
+print(f"same-worktree peak concurrency = {peak} (must be 1), completed = {starts}/2")
+ok = peak == 1 and starts == 2
+print("RESULT:", "PASS" if ok else "FAIL")
+sys.exit(0 if ok else 1)
 PY
