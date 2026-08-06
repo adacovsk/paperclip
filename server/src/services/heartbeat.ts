@@ -97,6 +97,34 @@ const CHAIN_WAKE_MIN_INTERVAL_MS = Math.max(
   Number(process.env.CHAIN_WAKE_MIN_INTERVAL_MS) || 5 * 60 * 1000,
 );
 
+/**
+ * Chain-wake candidate guard (AA-2966): exclude a task that is `in_review`
+ * behind a live child stage owned by a *different* agent.
+ *
+ * The parent is waiting on that child by definition, so re-waking the parent's
+ * owner cannot advance anything — the agent re-reads the branch, finds its own
+ * work already committed, writes a no-op, and exits. One Worker task absorbed
+ * 28 such wakes in three days (its own run log named it the "seventeenth
+ * identical dispatch"), and 147 of 200 Worker runs in that window were sub-40s
+ * no-ops.
+ *
+ * The two older guards cannot see this class: `ne(issues.id, issueId)` only
+ * blocks re-selecting the task just processed, and the no-progress guard only
+ * looks at the *triggering* run, which is often real work. The child's own
+ * `subtask.completed` callback is what legitimately re-wakes this parent.
+ */
+export function notWaitingOnForeignChildStage(agentId: string) {
+  return sql`NOT (
+    ${issues.status} = 'in_review'
+    AND EXISTS (
+      SELECT 1 FROM ${issues} AS child
+      WHERE child.parent_id = ${issues.id}
+        AND child.status NOT IN ('done', 'cancelled')
+        AND child.assignee_agent_id IS DISTINCT FROM ${agentId}
+    )
+  )`;
+}
+
 export interface RunWatchdog {
   promise: Promise<never>;
   abort: (reason: string) => void;
@@ -3269,6 +3297,7 @@ export function heartbeatService(db: Db) {
                     eq(issues.assigneeAgentId, agent.id),
                     ne(issues.id, issueId),
                     inArray(issues.status, ["in_progress", "in_review", "todo"]),
+                    notWaitingOnForeignChildStage(agent.id),
                   ),
                 )
                 .orderBy(
