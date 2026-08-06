@@ -2007,12 +2007,12 @@ export function heartbeatService(db: Db) {
 
       // Detached runs have no adapter child and are never in the in-memory maps,
       // so every heuristic below is wrong for them by construction. Left in, a
-      // detached run is reaped the moment its pid is unobservable and — because
-      // the Architect is a tracked-local-child adapter with a pid recorded — can
-      // satisfy `shouldRetry` and RE-DISPATCH THE AGENT for a build that is
-      // running fine. Only the wrapper knows when the build is done, so only the
-      // wrapper settles these; a leaked row costs a stale pulse, a spurious
-      // retry costs a duplicate multi-hour build.
+      // detached run is reaped the moment its pid is unobservable and — on a
+      // tracked-local-child adapter with a pid recorded — can satisfy
+      // `shouldRetry` and RE-DISPATCH THE AGENT for work that is running fine.
+      // Only the caller that launched the work knows when it is done, so only
+      // that caller settles these: a leaked row costs a stale pulse, a spurious
+      // retry costs a duplicate run of whatever was already in flight.
       if (run.invocationSource === DETACHED_INVOCATION_SOURCE) continue;
 
       // Apply staleness threshold to avoid false positives
@@ -4562,6 +4562,42 @@ export function heartbeatService(db: Db) {
         exitCode,
         error: ok ? null : (opts.error ?? `Detached command exited ${exitCode ?? "unknown"}`),
       });
+    },
+
+    /**
+     * Cancel the detached runs attached to an issue, so their wrappers stop.
+     *
+     * A verify moved to `blocked` (branch conflicts with the base, typically)
+     * has a worthless result, but its build holds a semaphore slot until it
+     * finishes on its own, delaying every verify queued behind it.
+     *
+     * This does NOT signal anything. The server knows the wrapper's pid but not
+     * its process tree, and the wrapper is not a process-group leader, so
+     * killing from here would either miss the compiler or take out the agent's
+     * whole session. Instead the run is marked `cancelled` and the wrapper's own
+     * watcher — which does know its child — polls, sees it, and tears the build
+     * down locally.
+     */
+    async cancelDetachedRunsForIssue(issueId: string, reason: string) {
+      const open = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.invocationSource, DETACHED_INVOCATION_SOURCE),
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
+          ),
+        );
+
+      for (const { id } of open) {
+        await setRunStatus(id, "cancelled", {
+          finishedAt: new Date(),
+          error: reason,
+          errorCode: "detached_cancelled",
+        });
+      }
+      return open.map((row) => row.id);
     },
 
     /**

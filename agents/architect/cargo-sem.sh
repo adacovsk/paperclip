@@ -327,13 +327,13 @@ run() {
 # fatal, and do not move it before the slot is held — announcing while still
 # queued restarts the clock for a build that has not started.
 #
-# The API key is OPTIONAL, deliberately. Requiring it made this a permanent
-# no-op: the adapter injects PAPERCLIP_API_KEY only for agents holding the
-# `paperclip` skill, and the Architect holds none — so every Architect build has
-# been skipping the announce and billing its queue wait against the build, which
-# is the exact failure this function exists to prevent. The server runs in Local
-# Trusted Mode (127.0.0.1 requests are the operator), so the call authenticates
-# without one. Send the header when a key IS present; never gate on it.
+# The API key is OPTIONAL, deliberately. The adapter injects PAPERCLIP_API_KEY
+# only for agents configured with the `paperclip` skill, so gating on it makes
+# this a silent no-op for any agent without that skill — which is the normal
+# configuration for a build-only agent, and turns the announce into dead code
+# exactly where it is needed. In Local Trusted Mode (loopback requests are the
+# operator) the call authenticates without a key. Send the header when a key IS
+# present; never gate on it.
 api_post() {
   local path="$1" body="$2"
   [ -n "${PAPERCLIP_API_URL:-}" ] || return 1
@@ -482,10 +482,67 @@ while true; do
   sleep "$POLL"                                            # front, but capacity full
 done
 
+# Kill a build's whole process tree, deepest first.
+#
+# Walking /proc children is deliberate: the tree is
+# time -> nice -> ionice -> env -> cargo -> N rustc -> sccache, and killing only
+# the top leaves the compilers running — still holding memory and cores, which
+# is the entire cost we are trying to reclaim. Killing by process GROUP is not
+# an option either: this shell is not a group leader, so the group is the
+# agent's whole session and `kill -- -PGID` would take the agent down with the
+# build. Children first, parent last, so nothing re-parents mid-sweep.
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+# --- stop building for a task nobody is waiting on ---
+# A verify moved to `blocked` (branch conflicts with the base) has a worthless
+# result, but its build holds a slot until it finishes on its own, delaying
+# every build queued behind it.
+#
+# The server cannot do this itself — it knows this pid but not the tree below
+# it, and killing by group would hit the agent's session. So cancellation is a
+# flag the server sets and this watcher reads, and the teardown happens here
+# where the process tree is known.
+#
+# Poll interval is deliberately slow. A build runs for tens of minutes to hours;
+# reclaiming a slot 30s later than theoretically possible costs nothing, and a
+# tight loop against the API for every concurrent build would cost more than the
+# slot is worth.
+watch_for_cancel() {
+  local build_pid="$1" status
+  [ -n "$DETACHED_RUN_ID" ] && [ -n "${PAPERCLIP_API_URL:-}" ] || return 0
+  while kill -0 "$build_pid" 2>/dev/null; do
+    sleep "${CARGO_SEM_CANCEL_POLL:-30}"
+    status=$(curl -fsS --max-time 5 \
+      ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
+      "$PAPERCLIP_API_URL/api/heartbeat-runs/$DETACHED_RUN_ID" 2>/dev/null |
+      sed -n 's/.*"status":"\([a-z_]*\)".*/\1/p')
+    if [ "$status" = "cancelled" ]; then
+      printf 'cargo-sem.sh: build cancelled server-side; tearing down pid %s\n' "$build_pid" >&2
+      kill_tree "$build_pid"
+      return 0
+    fi
+  done
+}
+
 open_detached_run "$@"
 trap 'close_detached_run "${rc:-143}"' EXIT
 
-run "$@"; rc=$?
+# The build runs as a background child so this shell stays free to watch for
+# cancellation. fd 9 (the slot lock) is inherited and also still held here, so
+# the slot is released only when BOTH have exited — the FD LIFETIME contract in
+# the header is unchanged.
+run "$@" & BUILD_PID=$!
+watch_for_cancel "$BUILD_PID" &
+WATCH_PID=$!
+
+wait "$BUILD_PID"; rc=$?
+kill "$WATCH_PID" 2>/dev/null || true
 close_detached_run "$rc"
 exec 9>&-
 exit "$rc"
