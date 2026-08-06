@@ -556,8 +556,14 @@ export async function startServer(): Promise<StartedServer> {
       logger.error({ err }, "startup reconciliation of persisted runtime services failed");
     });
   
+  // Hoisted out of the scheduler block so the shutdown handler below can reach
+  // it: killing tracked children is what makes their runs unattributable, so
+  // the same handler has to record why first.
+  let heartbeatForShutdown: ReturnType<typeof heartbeatService> | null = null;
+
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any);
+    heartbeatForShutdown = heartbeat;
     const routines = routineService(db as any);
   
     // Before the DB-side reap, kill any claude CLI subprocesses that outlived
@@ -732,6 +738,17 @@ export async function startServer(): Promise<StartedServer> {
   // they can't outlive us, then stop embedded Postgres if we started it.
   const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
     logger.info({ signal }, "Shutting down");
+    try {
+      const marked = (await heartbeatForShutdown?.markRunsInterruptedByShutdown(signal)) ?? 0;
+      if (marked > 0) {
+        logger.warn(
+          { signal, interruptedRuns: marked },
+          "killing in-flight agent runs — their children do not survive a restart",
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, "Failed to record shutdown interruption on in-flight runs");
+    }
     try {
       await killAllRunningProcesses();
     } catch (err) {

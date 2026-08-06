@@ -209,6 +209,30 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(issue?.checkoutRunId).toBe(runId);
   });
 
+  it("attributes the loss to the server shutdown that caused it", async () => {
+    const { runId } = await seedRunFixture({ processPid: 999_999_999 });
+    const heartbeat = heartbeatService(db);
+
+    runningProcesses.set(runId, { child: { kill: () => true } as never, graceSec: 1 });
+    const marked = await heartbeat.markRunsInterruptedByShutdown("SIGTERM");
+    expect(marked).toBe(1);
+    runningProcesses.delete(runId);
+
+    await heartbeat.reapOrphanedRuns();
+
+    const failedRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.errorCode).toBe("process_lost");
+    // The whole point: the record says the server killed it, not the bare
+    // "child pid N is no longer running" that reads as child instability.
+    expect(failedRun?.error).toContain("the server shut down");
+    expect(failedRun?.error).toContain("SIGTERM");
+  });
+
   it("does not queue a second retry after the first process-loss retry was already used", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       processPid: 999_999_999,
