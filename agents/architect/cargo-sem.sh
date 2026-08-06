@@ -139,59 +139,121 @@ NPROC="$(nproc 2>/dev/null || echo 4)"
 # distinct core ids from lscpu; fall back to nproc where lscpu is unavailable.
 PHYS="$(lscpu -p=core 2>/dev/null | grep -v '^#' | sort -u | grep -c '' 2>/dev/null)"
 [ "${PHYS:-0}" -ge 1 ] 2>/dev/null || PHYS="$NPROC"
-# Default slots: one build per physical core, minus one reserved for the OS,
-# sccache, and the Paperclip orchestration that share this box; floor of 2.
-# Default per-build job cap: logical cores spread across the slots, floor of 2 so
-# a build always makes reasonable progress. Default codegen units: one per
-# physical core, floor of 1 (1 is legal — it serializes codegen within a rustc,
-# it does not disable it). Explicit CARGO_SEM_* overrides any of the three.
-SLOTS="${CARGO_SEM_SLOTS:-$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))}"
-JOBS="${CARGO_SEM_JOBS:-$(( NPROC / SLOTS < 2 ? 2 : NPROC / SLOTS ))}"
-CGU="${CARGO_SEM_CGU:-$(( PHYS < 1 ? 1 : PHYS ))}"
-# Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
-# floored at 1, so a caller can say "this stage is the heavy one, give it less"
-# without embedding a number tuned to one machine. The test stage passes 2 (see
-# the Architect INSTRUCTIONS launch block): on this 4-core box that is 4 -> 2,
-# and on a 16-core box 16 -> 8 — the same *proportional* relief rather than a
-# crippling absolute. Divides an explicit CARGO_SEM_CGU too, so "half whatever
-# this box decided" holds however CGU was arrived at.
-CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
-[ "$CGU" -ge 1 ] || CGU=1
+# =========================== CAPACITY DERIVATION ============================
+#
+# DECLARE THE BUDGETS, DERIVE THE KNOBS — in that order, in this one block.
+#
+# The header above is emphatic that the lever is the PRODUCT, SLOTS x JOBS x
+# CGU. An earlier revision nonetheless derived all three *independently* from
+# core counts and then patched SLOTS for memory sixty lines further down. Two
+# defects followed from that shape, and both are structural rather than
+# mis-tuning:
+#
+#   1. ORDERING. JOBS was computed from SLOTS *before* the memory cap lowered
+#      SLOTS, so it described a slot count that no longer existed. Measured on
+#      this box: JOBS=2 (from 8/3) while 2 slots actually ran — the box
+#      simultaneously under-jobbed each build and over-threaded the machine.
+#
+#   2. THE PRODUCT WAS NEVER EXPRESSED. Nobody chose it; it fell out. This box
+#      landed on 3x2x4 = 24 threads on 4 physical cores (6x oversubscription),
+#      and 2x2x4 = 16 after the cap. Neither number was a decision, and the
+#      header's own bug report — 37 threads, desktop unusable — was the same
+#      defect one revision earlier. A quantity that is never named cannot be
+#      tuned, only overridden from outside, which is why every correction to
+#      this script arrived as a CARGO_SEM_* exception.
+#
+# So the inputs are now the two things the hardware actually bounds — a THREAD
+# budget and a MEMORY budget — and SLOTS/JOBS/CGU are consequences. SLOTS is
+# final before anything derives from it. The product is invariant by
+# construction, so hitting a different target means changing a budget, not
+# bolting on another exception.
+#
+# THREAD BUDGET. Default NPROC: do not run more compile threads than the
+# machine has hardware threads. Oversubscription past ~1x buys churn, cache
+# thrash and heat — and on a 15 W ULV part heat means throttling, so the
+# marginal thread makes the other builds slower. `nice -n19`/`ionice -c3`
+# already handle desktop priority; they do not make excess threads free.
+THREADS="${CARGO_SEM_THREADS:-$NPROC}"
+[ "$THREADS" -ge 1 ] 2>/dev/null || THREADS="$NPROC"
 
-# MEMORY CEILING — derived from measurement, never from a constant.
+# MEMORY BUDGET, and the slot ceiling that falls out of it.
 #
-# Every default above comes from core counts, but the header is explicit that
-# memory binds first ("3 slots x ~8 GB is ~24 GB on a 31 GB box"). A box with
-# these 4 cores and 8 GB would thrash on settings that are fine here; one with
-# 128 GB would never OOM at all. So slots are additionally capped by what this
-# machine can actually hold.
-#
-# The per-build figure is NOT hardcoded: `run()` records peak RSS of each build
+# The per-build figure is NOT hardcoded: run() records peak RSS of each build
 # via /usr/bin/time and keeps a monotonic high-water mark in $RSSF, so the
 # estimate is this box's own worst observed build. Until a build has been
-# measured the cap is simply inactive — an unmeasured machine keeps the
-# CPU-derived slots rather than accepting an invented number.
+# measured the memory ceiling is simply inactive — an unmeasured machine keeps
+# the CPU-derived slots rather than accepting an invented number.
 #
 # MemTotal, not MemAvailable: every caller must agree on capacity or they would
 # disagree about how many slot locks exist. MemTotal is stable; MemAvailable
 # moves as builds start, so deriving from it would let two concurrent callers
-# compute different SLOTS. The mark only ever rises, so the cap only ever
-# *lowers* slots — capacity shrinks, never grows, which is the safe direction
-# (a slot already held above the new ceiling drains and is simply not reused).
+# compute different SLOTS. The mark only ever rises, so this only ever *lowers*
+# slots — capacity shrinks, never grows, which is the safe direction (a slot
+# already held above the new ceiling drains and is simply not reused).
 #
-# An explicit CARGO_SEM_SLOTS still wins: if the operator has said how many,
-# that is a decision, not an estimate.
+# NOT ALL OF MemTotal IS THE BUILD'S TO SPEND. This is a desktop, not a
+# dedicated build box: a browser, an editor, postgres and the Paperclip server
+# share it, plus the page cache that makes the builds themselves fast. Dividing
+# the WHOLE of MemTotal by the peak build handed every byte to cargo. Measured
+# failure: MemTotal 31.1 GiB / peak 9.35 GiB = 3, the CPU derivation was also
+# 3, so the ceiling lowered nothing and three slots were admitted at ~9.35 GiB
+# each = 28 GiB of rustc before the desktop got a byte. Result was a 35-minute
+# OOM storm — 14 oom-killer invocations, all 4 GiB of swap exhausted, rustc
+# killed twice at ~7.9 GiB, and a dozen browser processes taken as collateral
+# because they carry a higher oom_score_adj.
+#
+# Hence a PERCENTAGE of MemTotal. Still MemTotal-derived, so the "every caller
+# must agree" invariant holds — a percentage of a stable number is stable. The
+# default reserves ~30% (~9 GiB here) for everything that is not a build, sized
+# to what the desktop plus page cache was actually holding when the box went
+# over. Raising it toward 100 re-creates the storm; lowering it serializes
+# builds, which is the safe direction — swapping a build box is worse than
+# queueing it.
 RSSF="$D/cargo-sem.peak-rss"
 RSSL="$D/cargo-sem.rss.lock"
-if [ -z "${CARGO_SEM_SLOTS:-}" ]; then
-  _memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
-  _peak=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); _peak="${_peak:-0}"
-  if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
-    _memslots=$(( _memkb / _peak ))
-    [ "$_memslots" -ge 1 ] || _memslots=1
-    [ "$_memslots" -lt "$SLOTS" ] && SLOTS="$_memslots"
-  fi
+MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
+[ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
+
+# SLOTS — the one quantity bounded by BOTH ceilings, so it resolves first.
+# Cores: one build per physical core, less one reserved for the OS, sccache and
+# the Paperclip orchestration sharing this box; floor of 2. Memory: how many
+# worst-observed builds fit in the budget. The lower wins. An explicit
+# CARGO_SEM_SLOTS is a decision, not an estimate, and beats both.
+_cpuslots=$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))
+_memslots="$_cpuslots"
+_memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+_peak=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); _peak="${_peak:-0}"
+if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
+  _memslots=$(( (_memkb * MEMPCT / 100) / _peak ))
+  [ "$_memslots" -ge 1 ] || _memslots=1
 fi
+SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
+[ "$SLOTS" -ge 1 ] 2>/dev/null || SLOTS=1
+
+# JOBS x CGU — now, and only now, split the per-slot thread budget. Both
+# multiply into the same product but cost memory differently: JOBS spawns
+# additional whole rustc processes, CGU adds codegen threads inside one (more
+# LLVM modules live at once). Splitting them evenly rather than loading either
+# end keeps both the process count and the per-process footprint moderate.
+# Floors of 1 apply to each; CGU=1 is legal and serializes codegen within a
+# rustc rather than disabling it.
+_per_slot=$(( THREADS / SLOTS ))
+[ "$_per_slot" -ge 1 ] || _per_slot=1
+_split=1
+while [ $(( (_split + 1) * (_split + 1) )) -le "$_per_slot" ]; do _split=$(( _split + 1 )); done
+JOBS="${CARGO_SEM_JOBS:-$_split}"
+CGU="${CARGO_SEM_CGU:-$(( _per_slot / _split ))}"
+[ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
+[ "$CGU" -ge 1 ] 2>/dev/null || CGU=1
+
+# Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
+# floored at 1, so a caller can say "this stage is the heavy one, give it less"
+# without embedding a number tuned to one machine. The test stage passes 2 (see
+# the Architect INSTRUCTIONS launch block) for the same *proportional* relief on
+# any box. Divides an explicit CARGO_SEM_CGU too, so "half whatever this box
+# decided" holds however CGU was arrived at.
+CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
+[ "$CGU" -ge 1 ] || CGU=1
 CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
