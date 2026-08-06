@@ -64,6 +64,12 @@ const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
+// Invocation source for runs whose work executes entirely outside this process,
+// with no adapter child to track: the Architect's detached `cargo-sem.sh` builds.
+// The wrapper opens the run when it wins a slot and closes it when the build
+// exits, which is the ONLY thing that settles such a run — see the reaper
+// exemption below for why this must never be reaped or retried.
+const DETACHED_INVOCATION_SOURCE = "detached_external";
 // Marker written on in-flight runs when the server is shutting down, *before* it
 // SIGTERMs their child processes. Without it the next boot's reaper can only say
 // "child pid N is no longer running", which reads like the child died on its own
@@ -1998,6 +2004,16 @@ export function heartbeatService(db: Db) {
 
     for (const { run, adapterType } of activeRuns) {
       if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
+
+      // Detached runs have no adapter child and are never in the in-memory maps,
+      // so every heuristic below is wrong for them by construction. Left in, a
+      // detached run is reaped the moment its pid is unobservable and — because
+      // the Architect is a tracked-local-child adapter with a pid recorded — can
+      // satisfy `shouldRetry` and RE-DISPATCH THE AGENT for a build that is
+      // running fine. Only the wrapper knows when the build is done, so only the
+      // wrapper settles these; a leaked row costs a stale pulse, a spurious
+      // retry costs a duplicate multi-hour build.
+      if (run.invocationSource === DETACHED_INVOCATION_SOURCE) continue;
 
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
@@ -4467,6 +4483,86 @@ export function heartbeatService(db: Db) {
     },
 
     getRun,
+
+    /**
+     * Open a run standing for work that executes outside this process.
+     *
+     * The Architect dispatches `cargo-sem.sh` detached and exits, so a verify
+     * that is compiling for hours holds no run at all: the issue row reads
+     * exactly like one that never started, and the `Live` pulse — which is just
+     * `live-runs` keyed by `contextSnapshot.issueId` — stays dark. The build
+     * state was only ever observable by hand, via `/proc` and the semaphore's
+     * lockfiles.
+     *
+     * This gives that work a row, so the existing UI lights up with no new
+     * surface. `processPid` is the wrapper's own pid, recorded for diagnosis
+     * only — nothing supervises it (see the reaper exemption).
+     */
+    async openDetachedRun(opts: {
+      companyId: string;
+      agentId: string;
+      issueId?: string | null;
+      pid?: number | null;
+      triggerDetail?: string | null;
+    }) {
+      const now = new Date();
+      const run = await db
+        .insert(heartbeatRuns)
+        .values({
+          companyId: opts.companyId,
+          agentId: opts.agentId,
+          invocationSource: DETACHED_INVOCATION_SOURCE,
+          triggerDetail: opts.triggerDetail ?? null,
+          status: "running",
+          startedAt: now,
+          processPid: opts.pid ?? null,
+          processStartedAt: opts.pid ? now : null,
+          contextSnapshot: opts.issueId ? { issueId: opts.issueId } : null,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      publishLiveEvent({
+        companyId: run.companyId,
+        type: "heartbeat.run.status",
+        payload: {
+          runId: run.id,
+          agentId: run.agentId,
+          status: run.status,
+          invocationSource: run.invocationSource,
+          triggerDetail: run.triggerDetail,
+          error: null,
+          errorCode: null,
+          startedAt: run.startedAt ? new Date(run.startedAt).toISOString() : null,
+          finishedAt: null,
+        },
+      });
+
+      return run;
+    },
+
+    /**
+     * Settle a detached run. Idempotent: a run already in a terminal state is
+     * returned untouched, so a wrapper that closes twice (trap plus normal exit)
+     * cannot rewrite a recorded outcome.
+     */
+    async finishDetachedRun(
+      runId: string,
+      opts: { exitCode?: number | null; error?: string | null },
+    ) {
+      const existing = await getRun(runId);
+      if (!existing) return null;
+      if (existing.invocationSource !== DETACHED_INVOCATION_SOURCE) return null;
+      if (existing.status !== "running" && existing.status !== "queued") return existing;
+
+      const exitCode = typeof opts.exitCode === "number" ? opts.exitCode : null;
+      const ok = exitCode === 0;
+      return await setRunStatus(runId, ok ? "succeeded" : "failed", {
+        finishedAt: new Date(),
+        exitCode,
+        error: ok ? null : (opts.error ?? `Detached command exited ${exitCode ?? "unknown"}`),
+      });
+    },
 
     /**
      * Restart an in-flight run's hard timeout from now.
