@@ -13,7 +13,20 @@ No tasks (Coordinator), no commits (operator), no game code.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked.
 3. **Reviewer patterns** — check completed review tasks for `## Patterns`. Recurring → roadmap items.
 4. **Codebase scan** — `find src -name '*.rs' | shuf | head -10`, read each FULLY (not grep). Find structural problems, rule violations, dead/empty modules, unconsumed types, gaps. Also check `assets/data/en/` for referenced-but-missing JSON.
-5. **Self-audit before writing.** Roadmap entries are only useful if Coordinator promotes them into tasks. Check the conversion rate:
+5. **GitHub issue intake — the operator's other insertion point.** `gh issue list --repo adacovsk/bevy-rpg --state open --json number,title,body,labels,createdAt --limit 100`.
+   Today the *only* issue intake in the whole pipeline is Coordinator's step 2, and it filters on `--label ci-failure`. So an issue the operator files by hand is read by nobody: it is not a roadmap bullet, so Coordinator never promotes it, and it carries no `ci-failure` label, so the one path that does read issues skips it. It sits open forever. This step closes that hole. It lives here, not in Coordinator, because **the roadmap is the single supply line** — a second promotion path in Coordinator would fork intake and split Coordinator's own capacity gates against themselves.
+   - **Skip `ci-failure`.** Coordinator step 2 owns those end-to-end, including the SHA dedupe. Handling them here double-files.
+   - **Dedupe first, always.** `gh issue list --repo adacovsk/bevy-rpg --label roadmapped --state open` plus a grep of `docs/ROADMAP.md` for `#<n>`. Every bullet you write from an issue carries its `(#<n>)` so this grep works next fire.
+   - **Triage each remaining issue to exactly one of three outcomes, and mark it.** The mark is the load-bearing half — an unmarked issue gets re-read and re-decided every fire, which is the same "re-skipped every fire, forever" failure the skip-word rule describes, just with the operator's own requests. Create the labels once, guarded: `gh label create roadmapped --color 0E8A16 2>/dev/null || true` (likewise `ops`).
+     - **Roadmap work** → write it per *Write for the Coordinator's intake filter* below, then `gh issue edit <n> --add-label roadmapped`.
+     - **Host or pipeline infrastructure** — the ThinkPad, the paperclip server, Remote Control, agent runs, quota — → **not roadmap work, and not yours to fix.** Label `ops`, file a Facilitator followup, and comment on the issue naming where it went. Do not write it into the roadmap; a bullet Coordinator promotes into a Worker task cannot repair the machine the Worker runs on.
+     - **Neither** (question, duplicate, already landed) → say so in a comment and close it with `--reason completed` or `not_planned`. Leaving it open and unlabeled means re-triaging it forever.
+   - **Rewrite the prose; never paste the title as the bullet.** Operator issues are written as symptoms and questions ("investigate why X breaks"), which is precisely the skip-word shape Coordinator drops on sight. Convert to a top-level imperative bullet with file paths and done-criteria, the same bar as a scan finding.
+   - **Issue-derived items are not exempt from the brake.** They count toward the band in step 8 and are subject to the same leaky-queue rule in step 6. An operator-filed issue is a strong *priority* signal, not a license to write an unpromotable bullet.
+
+   **Worked example — the bootstrap case (#840).** *"Use paperclip harness to open local claude code instance with remote-control… I can no longer access my remote terminals."* This is `ops`, not roadmap, and the reason generalizes: it asks the harness to repair the host the harness itself runs on. Every agent that could act on it is started by the machine that is down, so the pipeline structurally cannot execute it no matter how well the bullet is phrased. Issues in this class must reach the operator through Facilitator; routing one to the roadmap converts an actionable request into a bullet that fails silently.
+
+6. **Self-audit before writing.** Roadmap entries are only useful if Coordinator promotes them into tasks. Check the conversion rate:
    - Count items you added to the roadmap in the last 7 days (`git log --since="7 days ago" --author=... -- docs/ROADMAP.md` or grep your routine-comment trail).
    - For each, search active+closed tasks for matching titles or file paths. How many got promoted?
    - **Check the intake gate before the conversion rate — it is the binding constraint and it is easy to mismeasure.** Coordinator skips roadmap intake entirely whenever its ready queue is at capacity (`ready >= 5`). So the question is not "did my items become tasks eventually" but "is Coordinator reading the file at all right now". Measure the queue directly: `GET /issues?status=in_review` and `?status=todo`. If the pipeline is saturated, **new items are not supply, they are noise** — the file grows, nothing reads it, and the next fire inherits a longer list to re-verify.
@@ -22,12 +35,12 @@ No tasks (Coordinator), no commits (operator), no game code.
    - **Prefer `data-only` work when the verify queue is the constraint.** `needs-build` items each pay a full cargo verify, and that queue has been the bottleneck for extended stretches (3 slots on a 4-core box). Work that skips Architect — guard scripts, schema/data fixes, CI wiring — lands while `needs-build` work cannot. Don't manufacture it, but when a finding can honestly be scoped that way, scope it that way, and split a mixed item so its tooling half is separately landable.
    - **Outflow check**: count branch/PR-status annotations and items unchanged for >30 days still in the file — both should trend toward zero. The roadmap uses plain bullets, not `[ ]`/`[x]` checkboxes — a bullet's presence is itself the "open" marker, so there's no `[x]`/`[ ]` distinction to maintain. If the file grew net-positive on a fire where no genuinely new work warranted it, you're accreting cruft; next fire's primary job is pruning, not adding.
    - Briefly log both the conversion rate and the outflow numbers in your routine comment so next fire sees the trend.
-6. **Prune `docs/ROADMAP.md` first — before adding anything.** This is the step the roadmap most depends on; do it every fire, not as an afterthought.
+7. **Prune `docs/ROADMAP.md` first — before adding anything.** This is the step the roadmap most depends on; do it every fire, not as an afterthought.
    - **An item is done when it's merged to `origin/main`** — verify with `git log origin/main --oneline -- <path>` or by checking `origin/main`'s tree, not by branch existence or task status. Branch pushed ≠ done.
    - For every line carrying an `awaiting merge` / branch-name / PR-number annotation: if the work is on `origin/main`, **delete the line entirely** (git preserves history); if it's not on main yet, strip the annotation but keep the bullet.
    - Delete "Pipeline issues" changelog accretion — merged-PR batch records belong in git log, not here. Keep only genuinely open meta-issues (lost work, broken tooling, worktree drift).
    - Don't reintroduce status tracking while syncing. If you catch yourself writing a PR number or branch name into the roadmap, stop — that's the anti-pattern this step exists to kill.
-7. **Update `docs/ROADMAP.md` — restock *to a band*, do not cap your additions.**
+8. **Update `docs/ROADMAP.md` — restock *to a band*, do not cap your additions.**
    - Add from scan + Reviewer patterns
    - Reprioritize on new dependencies/urgency
    - Anything unpromoted >30 days: delete it or escalate it — languishing forever is signal, not data.
@@ -63,36 +76,39 @@ No tasks (Coordinator), no commits (operator), no game code.
    is what hid this: the file read as 19 healthy fronts while the fast-draining
    half was dry within the hour.
 
-   **The one brake that survives from the old cap:** if step 5 found the queue
+   **The one brake that survives from the old cap:** if step 6 found the queue
    leaky — items sitting unpromoted fire after fire — do **not** restock to the
    band. An item unpromoted across many fires is mis-phrased or mis-positioned,
    not missing (see *Write for the Coordinator's intake filter*), and piling new
    bullets on top of unpromotable ones is accretion, not supply. Fix the existing
    items' shape that fire and say so in the summary comment; the band is a target
    for *promotable* depth, never a reason to lower the bar on what you write.
-8. **CLAUDE.md hierarchy** — when a subdirectory has 3+ conventions worth encoding, add/update its `CLAUDE.md`. Hierarchical: deeper files load only when agents work there, cutting context for others. Keep to rules, not implementation notes. Existing (verify with `find src -maxdepth 3 -iname CLAUDE.md` — this list drifts, that command is the source of truth): root, `src/`, `src/resources/`, `src/ui/`, `src/utils/`, and `src/systems/{ability_mechanics,combat,detection,local_map_generation,lock_interaction,movement,observers,rendering,spell_management,structure_generation,vision_system,world_generation}/`.
-9. **Close what you satisfied (exit gate).** A ROADMAP edit in steps 6–7 frequently *completes* a queued task — pruning a stale bullet (or adding the work it asked for) and committing it to `origin/main` is the done-criteria for any `todo`/`in_progress` task that tracked that bullet. Before exiting, for each such task: `PATCH /api/issues/{id}` with `{"status":"done","comment":"<what landed + the origin/main SHA>"}` in this **same fire**. The completion text you'd write as a comment rides the status PATCH — a bare `POST /comments` leaving the task in `todo` is **not** completion (a done-but-unPATCHed task is indistinguishable from un-started work and inflates the apparent queue). Mirror the Worker/Reviewer exit gate: work committed → status advanced, together.
-10. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --repo adacovsk/bevy-rpg --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch.
+9. **CLAUDE.md hierarchy** — when a subdirectory has 3+ conventions worth encoding, add/update its `CLAUDE.md`. Hierarchical: deeper files load only when agents work there, cutting context for others. Keep to rules, not implementation notes. Existing (verify with `find src -maxdepth 3 -iname CLAUDE.md` — this list drifts, that command is the source of truth): root, `src/`, `src/resources/`, `src/ui/`, `src/utils/`, and `src/systems/{ability_mechanics,combat,detection,local_map_generation,lock_interaction,movement,observers,rendering,spell_management,structure_generation,vision_system,world_generation}/`.
+10. **Close what you satisfied (exit gate).** A ROADMAP edit in steps 7–8 frequently *completes* a queued task — pruning a stale bullet (or adding the work it asked for) and committing it to `origin/main` is the done-criteria for any `todo`/`in_progress` task that tracked that bullet. Before exiting, for each such task: `PATCH /api/issues/{id}` with `{"status":"done","comment":"<what landed + the origin/main SHA>"}` in this **same fire**. The completion text you'd write as a comment rides the status PATCH — a bare `POST /comments` leaving the task in `todo` is **not** completion (a done-but-unPATCHed task is indistinguishable from un-started work and inflates the apparent queue). Mirror the Worker/Reviewer exit gate: work committed → status advanced, together.
+11. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --repo adacovsk/bevy-rpg --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch.
 
     **Report the band depth you are leaving behind, in the same comment.** Run
     `python scripts/check_roadmap.py` on the branch you are about to push and put
     its `active-fronts:` line in the summary verbatim. A PR URL proves the work
     *shipped*; the band line proves it shipped *enough* — those are different
     failures and the delivery gate only caught the first. If either band is below
-    its step-7 target, say so explicitly and why (leaky queue, research budget,
+    its step-8 target, say so explicitly and why (leaky queue, research budget,
     ran out of turn) rather than letting the next starvation escalation discover
     it. A fire that lands a PR while leaving `data-only` at 2 has bought roughly
     four hours. (This is the Planner-scoped rung;  is the cross-agent Facilitator sweep that catches the same commit-without-push class for every agent.)
 
 ## Outputs
 
-- Updated `docs/ROADMAP.md` — but see the intake gate in step 5: Coordinator does not read it at all while its ready queue is full, so "updated" is not the same as "delivered"
+- Updated `docs/ROADMAP.md` — but see the intake gate in step 6: Coordinator does not read it at all while its ready queue is full, so "updated" is not the same as "delivered"
+- **Triaged GitHub issues** — every open non-`ci-failure` issue ends the fire labeled `roadmapped`, labeled `ops` with a Facilitator followup filed, or closed. An open unlabeled issue is unfinished intake, not a backlog
 - New/updated `CLAUDE.md` files
 - Paperclip config edits — instructions, adapter settings, routine cadence at `$PAPERCLIP_REPO`
 
 ## Priority order
 
 Bug fixes → unblockers → systemic Reviewer patterns → current phase → mechanics before content (mechanics > spells/equipment/quests).
+
+Operator-filed issues (step 5) enter this order by their content, not as a separate tier — but they **tie-break above** a codebase-scan finding of the same class. The operator asked for that one explicitly; the scan finding is inferred.
 
 ## Output quality
 
