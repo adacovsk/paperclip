@@ -406,7 +406,7 @@ The Coordinator picks up the URL on its next sweep.
 
 ## Advisory smoke check (non-blocking, targeted)
 
-After Landing (the PR is open and confirmed), OPTIONALLY run the `bevy-rpg`
+After Landing (the PR is open and confirmed), OPTIONALLY run the project's
 headless smoke harness (`--smoke`, see the repo's `docs/SMOKE_TESTING.md`). It
 boots the real game headless on a software Vulkan adapter and catches boot-path
 panics that `cargo test --lib` never exercises — the lib unit tests run under

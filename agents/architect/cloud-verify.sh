@@ -4,7 +4,7 @@
 # Runs the clippy/test pass on an Anthropic-managed cloud VM instead of taking a
 # slot in cargo-sem.sh, and hands the verdict back. Triage only: the Architect
 # still owns rebase, fix, schema regeneration (INSTRUCTIONS.md §6.5), commit and
-# push. See bevy-rpg docs/ARCHITECT_CLOUD_OVERFLOW.md for when this is
+# push. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md for when this is
 # appropriate at all.
 #
 # WHY A GIST AND NOT THE PAPERCLIP API. A cloud VM cannot reach localhost:3100 —
