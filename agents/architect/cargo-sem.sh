@@ -187,9 +187,24 @@ THREADS="${CARGO_SEM_THREADS:-$NPROC}"
 # MemTotal, not MemAvailable: every caller must agree on capacity or they would
 # disagree about how many slot locks exist. MemTotal is stable; MemAvailable
 # moves as builds start, so deriving from it would let two concurrent callers
-# compute different SLOTS. The mark only ever rises, so this only ever *lowers*
-# slots — capacity shrinks, never grows, which is the safe direction (a slot
-# already held above the new ceiling drains and is simply not reused).
+# compute different SLOTS. The window file changes only when a build finishes,
+# so it is stable in the same sense — every caller reading it at a given moment
+# derives the same SLOTS, which is the invariant that matters.
+#
+# A RECENT WINDOW, NOT AN ALL-TIME MAXIMUM. An earlier revision kept a single
+# monotonically-rising high-water mark, on the reasoning that capacity should
+# only ever shrink. That is not a safe direction, it is a one-way ratchet: a
+# single outlier build pins the ceiling forever, because nothing can ever lower
+# it again. Measured failure: one build recorded 10.90 GiB, which fixed
+# memslots at (31.06 GiB x 70%) / 10.90 GiB = 1 permanently. The queue went
+# strictly serial with two of three physical slots sitting idle and eleven
+# verifies waiting — a multi-day drain caused entirely by one stale number.
+#
+# So the estimate is the max over the last WINDOW recorded builds. Still
+# pessimistic (a max, not a mean — the ceiling must survive the worst build in
+# the window), still this machine's own measurements, but an outlier now ages
+# out after WINDOW builds instead of never. Do NOT restore the all-time
+# maximum: a ceiling that cannot fall is a ceiling that ends up wrong forever.
 #
 # NOT ALL OF MemTotal IS THE BUILD'S TO SPEND. This is a desktop, not a
 # dedicated build box: a browser, an editor, postgres and the Paperclip server
@@ -211,6 +226,11 @@ THREADS="${CARGO_SEM_THREADS:-$NPROC}"
 # queueing it.
 RSSF="$D/cargo-sem.peak-rss"
 RSSL="$D/cargo-sem.rss.lock"
+# How many recent builds the memory estimate looks back over. Small enough that
+# one outlier clears in a few builds, large enough that the ceiling is not set
+# by a single cheap incremental compile.
+RSSWIN="${CARGO_SEM_RSS_WINDOW:-5}"
+[ "$RSSWIN" -ge 1 ] 2>/dev/null || RSSWIN=5
 MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 [ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
 
@@ -222,7 +242,8 @@ MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 _cpuslots=$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))
 _memslots="$_cpuslots"
 _memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
-_peak=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); _peak="${_peak:-0}"
+_peak=$(awk 'BEGIN{m=0} {gsub(/[^0-9]/,"")} $0!="" && $0+0>m {m=$0+0} END{print m}' "$RSSF" 2>/dev/null)
+_peak="${_peak:-0}"
 if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
   _memslots=$(( (_memkb * MEMPCT / 100) / _peak ))
   [ "$_memslots" -ge 1 ] || _memslots=1
@@ -364,8 +385,10 @@ run() {
     rm -f "$rss"
     if [ -n "$m" ] && [ "$m" -gt 0 ] 2>/dev/null; then
       exec 8>"$RSSL"; flock 8
-      local prev; prev=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); prev="${prev:-0}"
-      [ "$m" -gt "$prev" ] && printf '%s' "$m" > "$RSSF"
+      { awk '{gsub(/[^0-9]/," "); for(i=1;i<=NF;i++) print $i}' "$RSSF" 2>/dev/null; \
+        printf '%s\n' "$m"; } \
+        | awk 'NF' | tail -n "$RSSWIN" > "$RSSF.new" 2>/dev/null \
+        && mv -f "$RSSF.new" "$RSSF"
       flock -u 8; exec 8>&-
     fi
     return $rc
