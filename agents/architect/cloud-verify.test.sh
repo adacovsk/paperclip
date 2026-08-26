@@ -98,5 +98,43 @@ EOF
 chmod +x "$BIN/git"
 "$CV" launch AA-2 task/AA-2 >/dev/null 2>&1;   check "unpushed branch -> 98" "$?" 98
 
+echo "watch writes a sentinel on every path:"
+# The one property that must never fail. A watch that exits without writing
+# $task.exit is indistinguishable from "still building", which is the strand the
+# 99 sentinel was introduced to eliminate.
+export CLOUD_VERIFY_POLL=0
+cat > "$BIN/git" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = "ls-remote" ] && exit 2   # unpushed -> launch dies with 98
+exit 0
+EOF
+chmod +x "$BIN/git"
+make_gh ""
+rm -f "$CLOUD_VERIFY_DIR/AA-3.exit"
+"$CV" watch AA-3 task/AA-3 >/dev/null 2>&1
+check "launch failure still writes .exit" "$(cat "$CLOUD_VERIFY_DIR/AA-3.exit" 2>/dev/null)" 98
+
+# Terminal verdict path: launch succeeds, first poll is already conclusive.
+cat > "$BIN/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in ls-remote) exit 0 ;; rev-parse) echo bbb222 ;; *) exit 0 ;; esac
+EOF
+chmod +x "$BIN/git"
+cat > "$BIN/script" <<'EOF'
+#!/usr/bin/env bash
+echo "Created cloud session: x"; echo "View: .../session_01ABCDEFGH?from=cli"
+EOF
+chmod +x "$BIN/script"
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$BIN/claude"
+verdict FAIL
+make_gh "$(printf 'gid1\tcloud-verify AA-4 bbb222\t1 file\tsecret\tnow')"
+rm -f "$CLOUD_VERIFY_DIR/AA-4.exit"
+"$CV" watch AA-4 task/AA-4 >/dev/null 2>&1
+check "red verdict lands as .exit=1" "$(cat "$CLOUD_VERIFY_DIR/AA-4.exit" 2>/dev/null)" 1
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
