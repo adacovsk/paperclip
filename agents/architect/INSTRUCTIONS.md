@@ -258,12 +258,35 @@ you bypasses the schema gate.
 
 Use it only when **all** hold:
 
-- Your task is `needs-build`. A `data-only` task never needed you at all.
-- Two or more `needs-build` tasks are waiting on you, so the queue — not this
-  build — is what the pipeline is stuck behind. Read the depth from the API; do
-  not guess it from how busy the box feels.
+- Two or more tasks are waiting on you, so the queue — not this build — is what
+  the pipeline is stuck behind. Measure it; do not guess it from how busy the box
+  feels:
+
+  ```sh
+  curl -fsS "$PAPERCLIP_API_URL/api/companies/<companyId>/issues?limit=200" \
+    ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
+  | python3 -c 'import json,sys,os
+  xs = json.load(sys.stdin)
+  xs = xs if isinstance(xs, list) else xs.get("issues", xs.get("data", []))
+  me = os.environ["PAPERCLIP_AGENT_ID"]
+  print(sum(1 for i in xs
+            if i.get("assigneeAgentId") == me
+            and i.get("status") in ("in_review", "blocked")))'
+  ```
+
+  **Depth is assignee + status, NOT the pipeline label.** `needs-build` /
+  `data-only` are described in the project's `CLAUDE.md`, but `labels` and
+  `labelIds` come back empty on every issue in this instance — a label-based
+  filter silently counts zero and the lane would never fire. If labels are
+  populated later, add them as a *narrowing* filter on top of this count, not as
+  a replacement for it.
 - The branch is pushed. The VM clones the remote and never sees your worktree;
   `cloud-verify.sh` refuses with `98` rather than verifying stale code.
+
+**A threshold of 2 is not a throttle — measured depth was 13.** So treat the
+count as a floor that stops the lane firing on an empty queue, not as something
+that will ration it. If every task starts going to the cloud and that is not what
+you want, raise the threshold rather than assuming the queue will fall below it.
 
 Launch it detached, exactly as you would the local chain:
 
