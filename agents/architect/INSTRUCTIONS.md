@@ -312,9 +312,10 @@ Two things this does **not** buy, and misreading either wastes a cycle:
   is that a *broken* branch goes back to the Worker without ever consuming a
   cargo slot; a green one still gets verified locally before Landing.
 
-If `gh` is missing on the VM the verdict cannot be published and you will get
-`99`, not a red. Do not read that as a build failure and do not edit Rust —
-escalate, it is an environment gap.
+If the VM cannot publish its verdict you will get `99`, not a red. Do not read
+that as a build failure and do not edit Rust — escalate, it is an environment
+gap. The verdict travels as a git ref (`refs/cloud-verify/<task>/<sha>`), not a
+gist, precisely so it does not depend on `gh`, which the cloud image lacks.
 
 ## Landing: commit, push, and open the PR (ONE atomic block)
 
