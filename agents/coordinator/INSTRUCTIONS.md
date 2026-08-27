@@ -305,23 +305,6 @@ For each parent `{task-id}`:
    one cadence instead of bouncing for hours or burying an `escalate`
    comment. (Seen exactly this way: a real `transitions.rs` conflict that
    sat ~10h before a human hand-merged it.)
-
-   **Sub-case — stale past a migration, NOT merge-conflicted.** If
-   `merge-tree` reports `CONFLICT (modify/delete)` and the *deleted* side is
-   `origin/main`, the branch edits a file that no longer exists upstream.
-   There is no second version to reconcile, so "needs operator merge" is
-   unreachable by construction: a hand-merge would resurrect a file the
-   current loader does not read and silently revert the migration commit.
-   **Cancel the task and re-file its requirement as fresh work against the
-   new layout**, carrying the original description over verbatim, then tear
-   down the worktree and branch. Re-authoring is nearly always cheaper — six
-   such branches sat `blocked` for ~19 days on the wrong disposition before
-   anyone checked whether the merge they were waiting for could exist.
-
-   A green cargo sentinel on such a branch is **not** evidence of anything:
-   it attests to a pre-migration tree shape. Confirm freshness with
-   `git merge-base --is-ancestor $(cat "$VERIFY_DIR/{task-id}.base")
-   origin/main` before treating any `.exit` as current.
 4. **OPEN THE PR.** `git push origin task/{task-id}` then `gh pr create --head
    task/{task-id} --base main` with a body noting cargo result + base SHA +
    "PR opened by Coordinator decoupled-land step". Idempotent: if the
