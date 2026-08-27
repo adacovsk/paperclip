@@ -90,7 +90,14 @@ bypass the schema regeneration gate. Publishing that verdict is the entire job.
 2. Run each of these, recording the exit status of each:
      cargo clippy --all-targets
      cargo test --lib
-     cargo test --tests
+     cargo test --tests --no-fail-fast
+
+   `--no-fail-fast` on the last one is load-bearing. `--tests` selects every
+   target with test = true, which includes the lib unittest target; that target
+   runs first, and without the flag a single pre-existing lib failure stops cargo
+   before any integration binary executes. The verdict then reports the
+   integration suites as failed when they never ran — the most misleading shape a
+   red can take, because it points the reader at code that was never exercised.
    Then, ONLY if the diff against the base touches any src/**.rs:
      cargo clippy --no-default-features
 
