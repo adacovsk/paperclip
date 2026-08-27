@@ -26,7 +26,7 @@
 # revision of this header claimed "peak build RSS ~2 GB; 24 GB free" and
 # concluded memory was a non-issue. That is stale by ~4x: measured with 3 slots
 # held, the two workspace-crate rustc alone were 7.8 GB (`--crate-name
-# rust_bevy_rpg src/main.rs`, 47 min in) and 4.1 GB (`src/lib.rs`) — 12 GB live,
+# <crate> src/main.rs`, 47 min in) and 4.1 GB (`src/lib.rs`) — 12 GB live,
 # 642 MB free of 31 GB, and into swap. The big linking rustc for this crate is
 # the outlier, not the dependency rustc (~0.2-0.3 GB each), so worst case scales
 # with SLOTS: 3 slots x ~8 GB is ~24 GB on a 31 GB box that also holds ~12 GB of
@@ -68,11 +68,11 @@
 # parallelism, which concurrent slots already supply at the machine level.
 #
 # CGU is exported as CARGO_PROFILE_DEV_CODEGEN_UNITS rather than committed to
-# bevy-rpg's Cargo.toml on purpose. It must NOT apply to a human's dev build:
+# the project's Cargo.toml on purpose. It must NOT apply to a human's dev build:
 # workspace crates compile incrementally at 256 units, and lowering that
 # coarsens rebuilds and slows the edit-compile-run loop. Fleet builds are
 # non-incremental, so they lose nothing. (Dependencies are a different case and
-# are capped in bevy-rpg's [profile.dev.package."*"] — cargo never builds them
+# are capped in the project's [profile.dev.package."*"] — cargo never builds them
 # incrementally, so the cap is free for everyone.)
 #
 # HOW FAIRNESS IS ENFORCED. Admission is a strict ticket queue, decoupled from

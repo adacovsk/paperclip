@@ -2,7 +2,7 @@
 
 Status: Proposal
 Last updated: 2026-04-26
-Audience: Paperclip pipeline contributors; bevy-rpg pipeline operator
+Audience: Paperclip pipeline contributors; game pipeline operator
 
 ## 1. Problem
 
@@ -50,7 +50,7 @@ Each agent run for the task uses `cwd = <worktree-path>`. Adapters (`claude-loca
 
 ### 2.4 What flips from today
 
-- bevy-rpg `CLAUDE.md` "No Agent Commits" → "Agents commit to per-task feature branches; only the human merges to main."
+- The project's `CLAUDE.md` "No Agent Commits" → "Agents commit to per-task feature branches; only the human merges to main."
 - Worker/Reviewer/Architect `INSTRUCTIONS.md` each get a "Commit your work to the task branch before exiting" rule.
 - Worker `INSTRUCTIONS.md` "No git commits (operator)" rule deleted.
 - Architect `INSTRUCTIONS.md` gains "Open PR at end of run" step.
@@ -145,8 +145,7 @@ clear error rather than guessing — silent fallbacks are how dirty
 state leaks across machines.
 
 Why env vars instead of hardcoded values: this fork lives at
-`github.com/<user>/paperclip` and the bevy-rpg fork at
-`github.com/<user>/bevy-rpg`. Other operators forking either repo
+`github.com/<user>/paperclip` and the game repo fork. Other operators forking either repo
 should be able to point at their own paths and account by setting four
 env vars, not by editing every INSTRUCTIONS file.
 
@@ -165,7 +164,7 @@ Split into landable pieces so we can pilot before flipping every task:
 2. **Worker**: update INSTRUCTIONS to commit to the branch. Deliverable: one piloted task lands as a branch with Worker commits, no PR yet.
 3. **Reviewer / Architect**: same INSTRUCTIONS update; Architect adds the `gh pr create` step. Deliverable: a piloted task lands as a PR, end-to-end.
 4. **Cleanup**: Coordinator detects merge, removes worktree + branch.
-5. **Flip the project rule**: `bevy-rpg/CLAUDE.md` "No Agent Commits" → "Agents commit to task branches".
+5. **Flip the project rule**: the project's `CLAUDE.md` "No Agent Commits" → "Agents commit to task branches".
 6. **Garbage collection**: Coordinator stale-scan extends to orphaned worktrees.
 
 Steps 1–3 land in sequence; step 5 only flips after 3 is verified on at least one full task end-to-end so we don't loosen the global rule before the new flow demonstrably works.
@@ -235,7 +234,7 @@ main checkout. One line:
 .paperclip/worktrees/
 ```
 
-This was added to bevy-rpg in commit `<hash>`; do the equivalent in
+This was added to the game repo in commit `<hash>`; do the equivalent in
 any other project this pipeline points at.
 
 ### 6.4 Verifying setup
@@ -285,5 +284,5 @@ one full task end-to-end through the new flow to verify each stage:
    `git worktree remove` + `git branch -D`.
 
 If all seven steps work without manual intervention, flip
-`bevy-rpg/CLAUDE.md` "No Agent Commits" → "Agents commit to task
+the project's `CLAUDE.md` "No Agent Commits" → "Agents commit to task
 branches" (§4 step 5) and the rollout is complete.

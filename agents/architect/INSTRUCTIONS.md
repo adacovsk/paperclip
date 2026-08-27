@@ -211,7 +211,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 1. Step 0 precondition gate already passed (you're in the task worktree on the right branch). If no task assigned and no CI failures, exit immediately.
 2. **Check the sentinel FIRST — the §Detached launch state machine.** `VERIFY_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"; EXIT="$VERIFY_DIR/{task-id}.exit"`. Branch on its presence/value before touching cargo:
    - **absent + build running** (`pgrep -f verifyrun-{task-id}`) → exit the run (build in flight, a later wake lands it).
-   - **absent + no build** → launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run.
+   - **absent + no build** → launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run. **Unless the cloud overflow lane applies — see §Cloud overflow lane below**, in which case launch that instead and exit the run. Everything downstream of this branch is identical either way: the cloud lane writes the same `{task-id}.exit` sentinel with the same vocabulary.
    - **present, `0`** → cargo passed → **read `{task-id}.integration` (see below), then** go to *Identify your task's changed files* then §Landing.
    - **`{task-id}.integration` — report-only, never a gate.** Written by the fourth stage (§Cargo discipline rule 5). Absent = the stage was skipped (no Rust under `src/` or `tests/` changed) or the gating stages failed, so there is nothing to report. `0` = integration suites passed; say nothing. **Non-zero = they failed, and you Land anyway** — this does not block the PR and you must not enter the fix loop for it. Post one comment on the task naming the failing tests from `{task-id}.integration.log` (`grep -E "^(test .* FAILED|failures:|---- .* stdout ----)"` and the `test result:` line), state whether any failing suite is in your changed-files list, and continue to §Landing in the same run. `137` means OOM, not a real failure — report it as inconclusive rather than as a broken suite.
      - If a failing suite **is** in your changed-files list, it is yours: fix it before landing, as a normal in-scope failure.
@@ -243,6 +243,78 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 
     > **Why the trigger is the script and not a path prefix.** This step used to fire only on `git diff --name-only main..HEAD` containing `src/resources/`. That is a strict *subset* of what the CI guard checks: the guard derives its roots from `src/bin/generate_schemas.rs`'s imports and then follows `use` edges two hops out, so it also claims files under `src/components/`, `src/systems/` and elsewhere. Two PRs stalled red on exactly that gap on 2026-08-02 (#684 offenders were `components/player.rs` + three `systems/` files, #685's were `combat/damage_system.rs` + `terrain_system.rs`) — the Architect correctly followed the old rule, saw no `src/resources/` change, skipped, and CI failed anyway. Both PRs were otherwise green, so this was the only thing blocking their merge. Running the guard removes the second, hand-maintained copy of "what counts as schema-relevant"; there is now one definition and CI owns it. **Do not re-narrow this trigger to a path prefix** — the prefix is what silently drifted out from under the guard.
 7. **When the sentinel reads `0`, your immediate next tool call is the §Landing block** — one atomic Bash invocation that commits any pending fix, pushes, opens the PR, and `rm -f`s the sentinel. Do NOT end the run between observing `0` and landing: the historical worst failure mode is committing/observing success and then stopping *before* push, stranding verified work with no PR. Landing is one block with no turn boundary inside it. The verify is not complete until Landing prints `PR confirmed for task/{task-id}`. (Note: because the build is detached, Landing usually runs on a *different, later* wake than the launch — that is expected and correct, not a strand.)
+
+## Cloud overflow lane
+
+**OFF unless `ARCHITECT_CLOUD_LANE=1` is set in your environment.** Unset means
+skip this section entirely and launch the local chain as always. The flag is the
+rollback: clearing it restores the previous behaviour with no other edit.
+
+When it is set, run the clippy/test pass on a cloud VM instead of taking a
+`cargo-sem.sh` slot. **This changes where verification runs, not who owns it** —
+you still rebase, fix, regenerate schemas (§6.5), commit, push and open the PR.
+The cloud session is read-only by construction: a landing that did not go through
+you bypasses the schema gate.
+
+Use it only when **all** hold:
+
+- Two or more tasks are waiting on you, so the queue — not this build — is what
+  the pipeline is stuck behind. Measure it; do not guess it from how busy the box
+  feels:
+
+  ```sh
+  curl -fsS "$PAPERCLIP_API_URL/api/companies/<companyId>/issues?limit=200" \
+    ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
+  | python3 -c 'import json,sys,os
+  xs = json.load(sys.stdin)
+  xs = xs if isinstance(xs, list) else xs.get("issues", xs.get("data", []))
+  me = os.environ["PAPERCLIP_AGENT_ID"]
+  print(sum(1 for i in xs
+            if i.get("assigneeAgentId") == me
+            and i.get("status") in ("in_review", "blocked")))'
+  ```
+
+  **Depth is assignee + status, NOT the pipeline label.** `needs-build` /
+  `data-only` are described in the project's `CLAUDE.md`, but `labels` and
+  `labelIds` come back empty on every issue in this instance — a label-based
+  filter silently counts zero and the lane would never fire. If labels are
+  populated later, add them as a *narrowing* filter on top of this count, not as
+  a replacement for it.
+- The branch is pushed. The VM clones the remote and never sees your worktree;
+  `cloud-verify.sh` refuses with `98` rather than verifying stale code.
+
+**A threshold of 2 is not a throttle — measured depth was 13.** So treat the
+count as a floor that stops the lane firing on an empty queue, not as something
+that will ration it. If every task starts going to the cloud and that is not what
+you want, raise the threshold rather than assuming the queue will fall below it.
+
+Launch it detached, exactly as you would the local chain:
+
+```sh
+CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
+( "$CV" watch "{task-id}" "task/{task-id}" >/dev/null 2>&1 & )
+```
+
+Then exit the run. `watch` polls to a terminal verdict, writes
+`{task-id}.exit`, and fires the same wakeup callback the local wrapper does, so
+the next wake reads the sentinel through the **unchanged** state machine above:
+`0` → Landing, non-zero → fix loop, `96`/`98` → environment/base, `99` →
+inconclusive, relaunch.
+
+Two things this does **not** buy, and misreading either wastes a cycle:
+
+- **No quota relief.** Cloud draws the same account rate limits. What you reclaim
+  is the build box's cores and memory. If the queue is short, waiting is cheaper
+  than offloading — the VM starts cold with no sccache, so a single cloud verify
+  is *slower* than a warm local one. This lane trades per-build latency for
+  parallelism, and it is only a win when something else is genuinely blocked.
+- **No verdict you can skip your own verification over.** It is triage. Its value
+  is that a *broken* branch goes back to the Worker without ever consuming a
+  cargo slot; a green one still gets verified locally before Landing.
+
+If `gh` is missing on the VM the verdict cannot be published and you will get
+`99`, not a red. Do not read that as a build failure and do not edit Rust —
+escalate, it is an environment gap.
 
 ## Landing: commit, push, and open the PR (ONE atomic block)
 
@@ -406,7 +478,7 @@ The Coordinator picks up the URL on its next sweep.
 
 ## Advisory smoke check (non-blocking, targeted)
 
-After Landing (the PR is open and confirmed), OPTIONALLY run the `bevy-rpg`
+After Landing (the PR is open and confirmed), OPTIONALLY run the project's
 headless smoke harness (`--smoke`, see the repo's `docs/SMOKE_TESTING.md`). It
 boots the real game headless on a software Vulkan adapter and catches boot-path
 panics that `cargo test --lib` never exercises — the lib unit tests run under

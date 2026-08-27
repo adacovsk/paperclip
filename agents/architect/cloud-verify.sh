@@ -4,7 +4,7 @@
 # Runs the clippy/test pass on an Anthropic-managed cloud VM instead of taking a
 # slot in cargo-sem.sh, and hands the verdict back. Triage only: the Architect
 # still owns rebase, fix, schema regeneration (INSTRUCTIONS.md §6.5), commit and
-# push. See bevy-rpg docs/ARCHITECT_CLOUD_OVERFLOW.md for when this is
+# push. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md for when this is
 # appropriate at all.
 #
 # WHY A GIST AND NOT THE PAPERCLIP API. A cloud VM cannot reach localhost:3100 —
@@ -159,8 +159,58 @@ cmd_poll() {
   esac
 }
 
+# Detached driver: launch, poll to a terminal verdict, write the SAME sentinel the
+# local verify wrapper writes, then fire the wakeup callback.
+#
+# WHY THE SAME SENTINEL. The relay's exit codes were chosen to match the
+# Architect's existing vocabulary — 0 land, non-zero fix, 96/98 environment/base,
+# 99 inconclusive-and-relaunch. So the cloud lane needs no second state-machine
+# shape in INSTRUCTIONS.md: it writes `$STATE_DIR/<task>.exit` and every branch
+# downstream behaves identically to a local build. A second shape would be a
+# second thing to keep in sync, and the sentinel semantics are the part that has
+# already cost real cycles when misread.
+cmd_watch() {
+  local task="${1:?task id}" branch="${2:?branch}" rc
+  local exit_file="$STATE_DIR/$task.exit"
+  mkdir -p "$STATE_DIR"
+
+  # Subshells are load-bearing, not style: cmd_launch/cmd_poll reach terminal
+  # states via `die`/`exit`, which would take this driver down with them and
+  # leave no sentinel at all — the silent-strand failure the 99 sentinel exists
+  # to prevent. Running them in a subshell turns those exits into statuses.
+  ( cmd_launch "$task" "$branch" ) >> "$STATE_DIR/$task.cloud.log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # A launch failure is an environment/base failure, never a build failure —
+    # cargo did not run, so the code is not implicated.
+    printf '%s\n' "$rc" > "$exit_file"
+    wake "$task"; return 0
+  fi
+
+  while :; do
+    ( cmd_poll "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1
+    rc=$?
+    [ "$rc" -eq 75 ] || break
+    sleep "${CLOUD_VERIFY_POLL:-60}"
+  done
+  printf '%s\n' "$rc" > "$exit_file"
+  wake "$task"
+}
+
+# Mirrors the local wrapper's callback so a verdict does not wait for the next
+# scheduled wake. Best-effort: a missed wake costs latency, not correctness.
+wake() {
+  [ -n "${PAPERCLIP_API_URL:-}" ] && [ -n "${PAPERCLIP_AGENT_ID:-}" ] || return 0
+  curl -fsS -X POST "$PAPERCLIP_API_URL/api/agents/$PAPERCLIP_AGENT_ID/wakeup" \
+    ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
+    -H 'Content-Type: application/json' \
+    -d '{"source":"automation","triggerDetail":"callback","reason":"cloud-verify-ready"}' \
+    >/dev/null 2>&1 || true
+}
+
 case "${1:-}" in
   launch) shift; cmd_launch "$@" ;;
   poll)   shift; cmd_poll   "$@" ;;
-  *) printf 'usage: %s launch <task-id> <branch> | poll <task-id>\n' "${0##*/}" >&2; exit 2 ;;
+  watch)  shift; cmd_watch  "$@" ;;
+  *) printf 'usage: %s launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
 esac
