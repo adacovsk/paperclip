@@ -132,6 +132,15 @@ cmd: cargo test --tests = 0
    If the push fails, say so explicitly and print the error — a verdict that is
    not published did not happen, and a silent failure is worse than a red.
 
+   PUBLISH SOMETHING, ALWAYS. This step is not conditional on finishing step 2.
+   If you run low on context, hit a wall you cannot get past, or decide to stop
+   for any reason, publish first and stop after. A run that ends without a pushed
+   verdict is indistinguishable from a hung VM and is the single most expensive
+   way to fail: the poll waits out its whole deadline and then reports
+   inconclusive, so the queue you were offloading is blocked for longer than if
+   you had never been launched. Partial results are useful; silence is not. Use
+   result: STALE with a note when you cannot report PASS or FAIL honestly.
+
 4. Print the pushed ref name, then stop.
 PROMPT
 }
