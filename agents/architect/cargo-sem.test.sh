@@ -127,3 +127,53 @@ ok = peak == 1 and starts == 2
 print("RESULT:", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)
 PY
+
+# --- the memory ceiling widening while a build is queued (AA-5045) ---
+# SLOTS is derived from a *rolling* window of recent build RSS, so it moves. The
+# defect was resolving it once at launch: a waiter kept contending against its
+# launch-time ceiling, and as FIFO head it held the low-water mark against
+# everyone behind it, so the queue stopped rather than merely running slow.
+#
+# Drives the real input rather than a fake: no CARGO_SEM_SLOTS here (that is an
+# explicit decision and would bypass the memgate entirely), just the peak-RSS
+# file the derivation reads. Start it wide enough that only one build fits, then
+# shrink the recorded peak while the second waits. A waiter that re-derives is
+# admitted immediately; one that does not waits for the first to finish.
+echo
+echo "Checking that a queued waiter picks up a widened memory ceiling..."
+MEMDIR="$(mktemp -d)"
+: > "$MEMDIR/events.log"
+MEMKB=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo)
+# One "build" claims 70% of RAM, so (MemTotal * 70/100) / peak == 1 slot.
+printf '%s\n' "$(( MEMKB * 70 / 100 ))" > "$MEMDIR/cargo-sem.peak-rss"
+
+(
+  export CARGO_SEM_DIR="$MEMDIR" CARGO_SEM_POLL="0.05"
+  unset CARGO_SEM_SLOTS
+  export DIR="$MEMDIR" LOG="$MEMDIR/events.log" HOLD="6"
+  mkdir -p "$MEMDIR/a" "$MEMDIR/b"
+  ( cd "$MEMDIR/a" && "$SEM" bash -c 'work' _ ) &
+  sleep 1
+  ( cd "$MEMDIR/b" && "$SEM" bash -c 'work' _ ) &
+  # Second is now queued behind a 1-slot ceiling. Widen it: a cheap recent build
+  # drops the window's peak, so the derivation now fits several.
+  sleep 1
+  printf '%s\n' "$(( MEMKB / 1000 ))" > "$MEMDIR/cargo-sem.peak-rss"
+  wait
+)
+
+python3 - "$MEMDIR/events.log" <<'PY'
+import sys, re
+starts = []
+for line in open(sys.argv[1]):
+    m = re.match(r'(START|END)\s+pid=\d+ t=([\d.]+)', line)
+    if m and m[1] == 'START':
+        starts.append(float(m[2]))
+starts.sort()
+ok = len(starts) == 2 and (starts[1] - starts[0]) < 5.0
+gap = f"{starts[1] - starts[0]:.2f}s" if len(starts) == 2 else "n/a"
+print(f"second admission came {gap} after the first (must be < 5s; the first build holds 6s)")
+print("RESULT:", "PASS" if ok else "FAIL")
+sys.exit(0 if ok else 1)
+PY
+rm -rf "$MEMDIR"
