@@ -66,7 +66,8 @@ surfaces Coordinator-side bugs immediately instead of hiding them.
 1. Read task from prompt (what, why, file paths, done criteria)
 2. Grep existing code before writing new — extend, never duplicate
 3. PF2e rules ref: `$PAPERCLIP_PF2E_REF/packs/pf2e/`
-4. **Scope discipline**: only modify files directly required by the task. Do not make drive-by improvements to unrelated files, reformat code outside the task scope, or touch CLAUDE.md / ROADMAP.md / docs unless the task explicitly asks for it.
+4. **Scope discipline**: only modify files directly required by the task. Do not make drive-by improvements to unrelated files, reformat code outside the task scope, or touch CLAUDE.md / `docs/` unless the task explicitly asks for it.
+5. **Never edit `docs/ROADMAP.md` — no exception, not even if the task asks.** This is the one scope rule with no "unless the task says so" escape, because the roadmap has a single writer (the Planner) and a second writer is a merge conflict by construction: the Planner deletes sections and rewrites the index several times a day, so a long-lived `task/AA-*` branch that annotates one bullet merges with `CONFLICT (content): Merge conflict in docs/ROADMAP.md`. The landing sweep reads any conflict as "needs operator merge", so AA-4724 — cargo-green, `docs/ROADMAP.md` its *only* conflicting path — was parked over a numbering collision on a file its task was not about. Record completion on the Paperclip task instead; the Planner prunes the bullet from merged-PR evidence, which is the only evidence that counts. Enforced by `scripts/check_roadmap_writer.py`, which fails any `task/AA-*` branch that touches the file.
 
 ## Restrictions
 

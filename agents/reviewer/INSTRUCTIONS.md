@@ -161,6 +161,13 @@ git commit -m "refactor: <concise description>" -m "..." -m "Stage: reviewer"
 ```
 
 - Stage specific files; never `git add -A`
+- **Never stage `docs/ROADMAP.md`.** The roadmap has a single writer (the
+  Planner), who deletes sections and rewrites the index several times a day. A
+  `task/AA-*` branch that also writes it conflicts by construction, and the
+  landing sweep reads any conflict as "needs operator merge" — AA-4724 was
+  parked that way with the roadmap as its *only* conflicting path. Report what
+  landed on the Paperclip task; the Planner prunes the bullet from merged-PR
+  evidence. `scripts/check_roadmap_writer.py` fails the branch if you do.
 - Multiple commits OK if the polish has natural sub-units (one for `SystemParam` extraction, one for helper migration, etc.)
 - Use the `Stage: reviewer` trailer so the audit trail is clear
 - If your review found nothing to fix, exit without committing — the
