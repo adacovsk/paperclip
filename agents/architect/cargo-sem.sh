@@ -234,47 +234,72 @@ RSSWIN="${CARGO_SEM_RSS_WINDOW:-5}"
 MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 [ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
 
-# SLOTS — the one quantity bounded by BOTH ceilings, so it resolves first.
-# Cores: one build per physical core, less one reserved for the OS, sccache and
-# the Paperclip orchestration sharing this box; floor of 2. Memory: how many
-# worst-observed builds fit in the budget. The lower wins. An explicit
-# CARGO_SEM_SLOTS is a decision, not an estimate, and beats both.
-_cpuslots=$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))
-_memslots="$_cpuslots"
-_memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
-_peak=$(awk 'BEGIN{m=0} {gsub(/[^0-9]/,"")} $0!="" && $0+0>m {m=$0+0} END{print m}' "$RSSF" 2>/dev/null)
-_peak="${_peak:-0}"
-if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
-  _memslots=$(( (_memkb * MEMPCT / 100) / _peak ))
-  [ "$_memslots" -ge 1 ] || _memslots=1
-fi
-SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
-[ "$SLOTS" -ge 1 ] 2>/dev/null || SLOTS=1
+# derive_limits — SLOTS, then JOBS x CGU, from the ceilings as they stand NOW.
+#
+# A FUNCTION, not a one-shot, because the memory ceiling it reads is designed to
+# move: `$RSSF` is a rolling window of recent builds, so `_peak` — and therefore
+# SLOTS — changes as builds finish. Resolving it once at launch meant a
+# long-lived waiter kept enforcing whatever ceiling was true when it started,
+# and a stale-low waiter at the FIFO head pinned every ticket behind it (the
+# strict no-overtake rule below means the queue does not run slow, it stops).
+#
+# Re-deriving inside the admission loop does not break the agreement the header
+# above requires. That invariant is "every caller reading at a given moment
+# derives the same SLOTS" — a property of the inputs (MemTotal is stable, and
+# the window file changes only when a build finishes), not of when the reading
+# happens. Callers converge on each other as the window moves rather than each
+# holding its own launch-time snapshot.
+#
+# JOBS and CGU are re-derived with it, deliberately: they are the per-slot
+# thread budget and are meaningless against a slot count that no longer exists.
+# Computing them from a stale SLOTS is the ordering bug the header records as
+# already having been made once.
+derive_limits() {
+  # SLOTS — the one quantity bounded by BOTH ceilings, so it resolves first.
+  # Cores: one build per physical core, less one reserved for the OS, sccache and
+  # the Paperclip orchestration sharing this box; floor of 2. Memory: how many
+  # worst-observed builds fit in the budget. The lower wins. An explicit
+  # CARGO_SEM_SLOTS is a decision, not an estimate, and beats both.
+  _cpuslots=$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))
+  _memslots="$_cpuslots"
+  _memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+  _peak=$(awk 'BEGIN{m=0} {gsub(/[^0-9]/,"")} $0!="" && $0+0>m {m=$0+0} END{print m}' "$RSSF" 2>/dev/null)
+  _peak="${_peak:-0}"
+  if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
+    _memslots=$(( (_memkb * MEMPCT / 100) / _peak ))
+    [ "$_memslots" -ge 1 ] || _memslots=1
+  fi
+  SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
+  [ "$SLOTS" -ge 1 ] 2>/dev/null || SLOTS=1
 
-# JOBS x CGU — now, and only now, split the per-slot thread budget. Both
-# multiply into the same product but cost memory differently: JOBS spawns
-# additional whole rustc processes, CGU adds codegen threads inside one (more
-# LLVM modules live at once). Splitting them evenly rather than loading either
-# end keeps both the process count and the per-process footprint moderate.
-# Floors of 1 apply to each; CGU=1 is legal and serializes codegen within a
-# rustc rather than disabling it.
-_per_slot=$(( THREADS / SLOTS ))
-[ "$_per_slot" -ge 1 ] || _per_slot=1
-_split=1
-while [ $(( (_split + 1) * (_split + 1) )) -le "$_per_slot" ]; do _split=$(( _split + 1 )); done
-JOBS="${CARGO_SEM_JOBS:-$_split}"
-CGU="${CARGO_SEM_CGU:-$(( _per_slot / _split ))}"
-[ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
-[ "$CGU" -ge 1 ] 2>/dev/null || CGU=1
+  # JOBS x CGU — now, and only now, split the per-slot thread budget. Both
+  # multiply into the same product but cost memory differently: JOBS spawns
+  # additional whole rustc processes, CGU adds codegen threads inside one (more
+  # LLVM modules live at once). Splitting them evenly rather than loading either
+  # end keeps both the process count and the per-process footprint moderate.
+  # Floors of 1 apply to each; CGU=1 is legal and serializes codegen within a
+  # rustc rather than disabling it.
+  _per_slot=$(( THREADS / SLOTS ))
+  [ "$_per_slot" -ge 1 ] || _per_slot=1
+  _split=1
+  while [ $(( (_split + 1) * (_split + 1) )) -le "$_per_slot" ]; do _split=$(( _split + 1 )); done
+  JOBS="${CARGO_SEM_JOBS:-$_split}"
+  CGU="${CARGO_SEM_CGU:-$(( _per_slot / _split ))}"
+  [ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
+  [ "$CGU" -ge 1 ] 2>/dev/null || CGU=1
 
-# Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
-# floored at 1, so a caller can say "this stage is the heavy one, give it less"
-# without embedding a number tuned to one machine. The test stage passes 2 (see
-# the Architect INSTRUCTIONS launch block) for the same *proportional* relief on
-# any box. Divides an explicit CARGO_SEM_CGU too, so "half whatever this box
-# decided" holds however CGU was arrived at.
-CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
-[ "$CGU" -ge 1 ] || CGU=1
+  # Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
+  # floored at 1, so a caller can say "this stage is the heavy one, give it less"
+  # without embedding a number tuned to one machine. The test stage passes 2 (see
+  # the Architect INSTRUCTIONS launch block) for the same *proportional* relief on
+  # any box. Divides an explicit CARGO_SEM_CGU too, so "half whatever this box
+  # decided" holds however CGU was arrived at.
+  CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
+  [ "$CGU" -ge 1 ] || CGU=1
+}
+
+derive_limits
+
 CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
@@ -549,6 +574,12 @@ DBG="${CARGO_SEM_DEBUG:+$D/cargo-sem.debug.log}"
 
 # --- wait for the front of the queue AND a free slot ---
 while true; do
+  # Re-read the ceilings every pass. A waiter can sit here for hours while builds
+  # around it finish and the memory window moves; without this it would keep
+  # contending against its launch-time SLOTS, and as FIFO head it would hold the
+  # low-water mark against everyone behind it (AA-5045).
+  derive_limits
+
   exec 6>"$CTL"; flock 6
   s=$(rd "$SERV")
   while [ "$s" -lt "$T" ] && ! alive "$s"; do rm -f "$WAIT.$s"; s=$((s + 1)); done
