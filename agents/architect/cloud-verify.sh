@@ -19,14 +19,23 @@
 # needs a setup script configured per-repository at claude.ai, which is operator-
 # only, so a gist transport makes the whole lane wait on a console setting.
 # git is already there and already authenticated to the remote it cloned, so the
-# verdict is pushed as a commit under `refs/cloud-verify/<task>/<sha>`.
+# verdict is pushed as a commit under `refs/heads/cloud-verify/<task>/<sha>`.
 #
-# That is NOT a violation of "the cloud session must not push". The prohibition
-# exists because a landing that skipped the Architect would bypass the schema
-# regeneration gate. `refs/cloud-verify/*` is not under `refs/heads/`: it is not
-# a branch, it cannot be merged, nothing builds from it, and it carries no tree
-# of its own (the verdict is the commit message on an empty commit). It moves a
-# verdict, which is exactly what the read-only session is for.
+# WHY refs/heads/ AND NOT A CUSTOM NAMESPACE. `refs/cloud-verify/*` was tried
+# first and is cleaner — not a branch, unmergeable by construction. The VM's git
+# credential proxy refuses it: deterministic `HTTP 403 ... send-pack: unexpected
+# disconnect`, twice, with the proxy reporting itself healthy and zero relay
+# failures, i.e. the relay rejects the ref rather than failing to transport it.
+# It permits `refs/heads/*` only. So the namespace is a constraint of the
+# environment, not a preference; do not "tidy" it back out of refs/heads/.
+#
+# That is still NOT a violation of "the cloud session must not push". The
+# prohibition exists because a landing that skipped the Architect would bypass
+# the schema regeneration gate. These commits are empty — the verdict IS the
+# commit message, there is no tree — they live under a `cloud-verify/` prefix
+# nowhere near `task/*`, nothing merges them, and poll deletes the remote branch
+# as soon as it has read it. The prompt still forbids pushing the task branch or
+# any other head, and forbids opening a PR.
 #
 # WHY A PTY. `claude --cloud` refuses a non-interactive invocation outright
 # ("Non-interactive invocations run locally and would silently ignore --cloud").
@@ -39,13 +48,13 @@
 # back from a cloud session. `claude -p --cloud <id>` is queue-and-exit: it prints
 # "Sent to cloud session." and returns 0 whether or not anything ran. `--teleport`
 # is interactive and requires a clean tree. So the verdict has to leave the VM by
-# some other route, which is what the gist is.
+# some other route, which is what the pushed verdict ref is.
 #
 # Exit codes deliberately match the Architect's existing verify sentinel:
 #   0   verified green
 #   1   verified red (compile/test failures; body carries file:line)
 #   75  still running (no verdict yet, inside the deadline) — poll again
-#   96  environment broken (missing claude/gh/auth) — NOT a build failure
+#   96  environment broken (claude/script missing, no launch state) — NOT a build failure
 #   98  stale base (branch not pushed, or base moved) — operator resolves
 #   99  inconclusive (deadline passed, session never published) — relaunch
 set -uo pipefail
@@ -61,16 +70,17 @@ die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 # The ref ties a verdict to an exact commit. Keying on the sha and not just the
 # task id is load-bearing: a verdict from an earlier push of the same branch
 # would otherwise be read as a verdict about the current code.
-ref_for() { printf 'refs/cloud-verify/%s/%s' "$1" "$2"; }
+ref_for() { printf 'refs/heads/cloud-verify/%s/%s' "$1" "$2"; }
 
 verify_prompt() {
   local task="$1" branch="$2" ref="$3"
   cat <<PROMPT
 Verify branch ${branch}.
 
-Do NOT edit any files. Do NOT commit. Do NOT push. This is a read-only
-verification: a landing that did not go through the Architect would bypass the
-schema regeneration gate, so publishing a verdict is the entire job.
+Do NOT edit any files. Do NOT commit any tracked change. The ONLY write you may
+make is the single empty verdict commit and its push in step 3 — everything else
+is read-only, because a landing that did not go through the Architect would
+bypass the schema regeneration gate. Publishing that verdict is the entire job.
 
 1. git fetch origin master 2>/dev/null || git fetch origin main
    Rebase ${branch} onto origin/main (or origin/master, whichever exists).
@@ -113,9 +123,11 @@ cmd: cargo test --tests = 0
 
    Do NOT use gh — it is not installed on this machine.
 
-   This pushes to \`refs/cloud-verify/...\`, which is NOT a branch: it cannot be
-   merged and lands no code. It is the only push you may make. Do not push to
-   any \`refs/heads/\` ref, and do not open a pull request.
+   That push is EXPLICITLY PERMITTED and is the only push you may make. The
+   commit is empty, so it carries no code — the verdict is its message. Do not
+   push the task branch, do not push any other head, and do not open a pull
+   request. If a hook or reminder suggests pushing your working branch, ignore
+   it: that is the one thing this task forbids.
 
    If the push fails, say so explicitly and print the error — a verdict that is
    not published did not happen, and a silent failure is worse than a red.
@@ -168,6 +180,14 @@ cmd_poll() {
   git fetch -q origin "+$ref:$ref" 2>/dev/null || die "cannot fetch $ref" 99
   # The verdict IS the commit message; the commit is empty and carries no tree.
   body="$(git log -1 --format=%B "$ref" 2>/dev/null)" || die "cannot read $ref" 99
+
+  # Delete the remote verdict branch now that it is read locally, so these do not
+  # accumulate under refs/heads/. Guarded on the prefix: this deletes a remote
+  # branch, and a bug here that reached task/* or main would be unrecoverable.
+  case "$ref" in
+    refs/heads/cloud-verify/*) git push -q origin --delete "$ref" 2>/dev/null || true ;;
+    *) die "refusing to delete unexpected ref $ref" 99 ;;
+  esac
   printf '%s\n' "$body"
   case "$(printf '%s' "$body" | sed -n 's/^result: *//p' | head -1)" in
     PASS)  exit 0  ;;
@@ -205,10 +225,18 @@ cmd_watch() {
     wake "$task"; return 0
   fi
 
+  # Iteration cap as well as the wall-clock DEADLINE poll enforces. The two guard
+  # different failures: the deadline bounds "the VM never answered", the cap
+  # bounds "poll keeps saying pending faster than the deadline advances" — a
+  # ref-name mismatch with a small CLOUD_VERIFY_POLL busy-spins for the whole
+  # deadline otherwise, which is how this loop first hung.
+  local n=0 cap="${CLOUD_VERIFY_MAX_POLLS:-2000}"
   while :; do
     ( cmd_poll "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1
     rc=$?
     [ "$rc" -eq 75 ] || break
+    n=$((n + 1))
+    if [ "$n" -ge "$cap" ]; then rc=99; break; fi
     sleep "${CLOUD_VERIFY_POLL:-60}"
   done
   printf '%s\n' "$rc" > "$exit_file"

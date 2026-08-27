@@ -24,7 +24,7 @@ bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s (%s)\n' "$1" "$2"; }
 check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected $3, got $2"; }
 
 # --- stubs -----------------------------------------------------------------
-# The verdict is a commit message on a ref under refs/cloud-verify/. `make_git`
+# The verdict is a commit message on a ref under refs/heads/cloud-verify/. `make_git`
 # takes the ref name the remote is pretending to have published ("" = none yet).
 make_git() {
   cat > "$BIN/git" <<EOF
@@ -56,7 +56,7 @@ cmd: cargo clippy --all-targets = 0
 EOF
 }
 
-REF="refs/cloud-verify/AA-1/bbb222"
+REF="refs/heads/cloud-verify/AA-1/bbb222"
 NOW="$(date +%s)"
 
 echo "verdict parsing:"
@@ -82,12 +82,12 @@ echo "staleness:"
 # A verdict for the SAME task at a DIFFERENT head must not be matched. This is
 # the case that would otherwise land unverified code: the branch was pushed
 # again after the cloud session started.
-seed_state AA-1 "refs/cloud-verify/AA-1/ccc333" "$NOW"
+seed_state AA-1 "refs/heads/cloud-verify/AA-1/ccc333" "$NOW"
 make_git "$REF"
 "$CV" poll AA-1 >/dev/null 2>&1;               check "different head not published -> 75" "$?" 75
 # Substring collision: AA-1 must not pick up AA-12's verdict.
 seed_state AA-1 "$REF" "$NOW"
-make_git "refs/cloud-verify/AA-12/bbb222"
+make_git "refs/heads/cloud-verify/AA-12/bbb222"
 "$CV" poll AA-1 >/dev/null 2>&1;               check "AA-12 ref not matched by AA-1 -> 75" "$?" 75
 
 echo "launch preconditions:"
@@ -133,7 +133,7 @@ exit 0
 EOF
 chmod +x "$BIN/claude"
 verdict FAIL
-make_git "refs/cloud-verify/AA-4/bbb222"
+make_git "refs/heads/cloud-verify/AA-4/bbb222"
 rm -f "$CLOUD_VERIFY_DIR/AA-4.exit"
 "$CV" watch AA-4 task/AA-4 >/dev/null 2>&1
 check "red verdict lands as .exit=1" "$(cat "$CLOUD_VERIFY_DIR/AA-4.exit" 2>/dev/null)" 1
