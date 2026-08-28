@@ -325,6 +325,30 @@ For each parent `{task-id}`:
    such branches sat `blocked` for ~19 days on the wrong disposition before
    anyone checked whether the merge they were waiting for could exist.
 
+   **Never revert a block you are not the most recent author of.** A sweep that
+   decides whether a block still holds by re-testing its *own* predicate — the
+   parent's status, a stale conflict, an idle window — will happily overwrite a
+   newer block written by someone else for a different reason, because it never
+   read that reason. Measured: seven verify subtasks blocked with "`origin/main`
+   does not compile, so `cargo clippy --all-targets` cannot go green on any
+   branch" were all unblocked in one pass at `2026-08-27T01:41:19Z` under the
+   comment *"Its parent is no longer blocked, so the reason no longer holds"* —
+   a reason an earlier pass of the same sweep had written, replayed over the
+   newer one. The comment directly above it said red `main` and was not read.
+   All seven relaunched onto a still-red `main`, burned 575-1038 log lines of
+   compile apiece, exited `99`, and competed for `cargo-sem.sh` slots with the
+   ci-fix repairing the very breakage that doomed them.
+
+   So before clearing any `blocked`, read the **most recent** block comment on
+   that task and clear it only if it is the one you wrote and its stated cause
+   is gone. If the newest block came from another agent or another fire, leave
+   it and say so. Otherwise every block is provisional until a sweep happens to
+   disagree, and there is no durable way to say "do not build this yet".
+   **Do not work around this by blocking the parent** to make a parent-status
+   predicate keep the child down: that inverts what a parent's status means in
+   order to steer a sweep, and it stops working silently the moment the
+   predicate changes.
+
    A green cargo sentinel on such a branch is **not** evidence of anything:
    it attests to a pre-migration tree shape. Confirm freshness with
    `git merge-base --is-ancestor $(cat "$VERIFY_DIR/{task-id}.base")
@@ -355,6 +379,27 @@ regressions are caught later by a `ci-fix` task, not by blocking the land.
 This is the backstop the §PR-evidence audit was compensating for; with
 landing decoupled, that audit becomes a true backstop rather than the
 primary net.
+
+## Closing a PR unmerged
+
+Never close a PR unmerged on a *supersede* or *already on main* claim without a
+**per-file** check against the branch's own content. A temporal correlation
+between a merge batch and a branch is not evidence.
+
+Accept only one of:
+
+```sh
+git diff --stat origin/main...origin/<branch>          # empty  -> truly on main
+git merge-base --is-ancestor origin/<branch> origin/<claimed-superseder>
+```
+
+Quote the command output in the closing comment. Failing that, leave the PR open.
+
+PR #1136 (`task/AA-5202-reland`) was closed as "already on main via #1153" when
+#1153 touched an entirely disjoint file set; ~91 lines of finished `data-only`
+work sat in a closed branch while its roadmap bullet read as unclaimed. Ancestry
+is also blind to reverts, so on a `done`-acceptance path probe content on
+`origin/main` (line count / distinctive grep), not ancestry alone.
 
 ## PR-evidence audit
 
