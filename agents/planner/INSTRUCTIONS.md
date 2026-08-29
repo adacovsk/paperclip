@@ -86,16 +86,31 @@ No tasks (Coordinator), no commits (operator), no game code.
      active-fronts: 19 fronts (needs-build=11, data-only=8), ...
    ```
 
-   **Target depth, per band — `data-only` carries the deeper buffer:**
+   **Target depth, per band — `needs-build` carries the deeper buffer:**
 
    | band | restock to | why |
    |---|---|---|
-   | `data-only` | **≥ 20** | Skips the Architect entirely (no cargo build), so these land in minutes and drain fastest. Every restock demand on 2026-08-06 named this band; none named the other. |
-   | `needs-build` | **≥ 6** | Queues behind the 2-slot cargo semaphore at hours per build, so it drains an order of magnitude slower. Stocking it as deep as `data-only` is what made the roadmap look healthy at `11/8` while the band that mattered starved. |
+   | `needs-build` | **≥ 12** | Game mechanics: systems, components, observers, the ability/effect vocabulary. This is the product. It queues behind the cargo semaphore at hours per build, so a shallow buffer starves the pipeline of the only work that changes what the game *does*. |
+   | `data-only` | **≥ 8** | Lands in minutes without the Architect, so it refills fast and needs less standing depth. Enough to keep the pipeline fed while a build is queued — not so much that it becomes the pipeline. |
 
-   Bands are stocked **in proportion to drain rate, not equally.** Equal stocking
-   is what hid this: the file read as 19 healthy fronts while the fast-draining
-   half was dry within the hour.
+   **Why this is the way round it is, having been the other way round.** Stocking
+   by drain rate alone (`data-only ≥ 20`, `needs-build ≥ 6`) is locally correct
+   and globally wrong: it optimises for keeping agents busy, and the fastest work
+   to promote is JSON edits and guard scripts. Sustained, that ships a pipeline
+   that mostly inspects itself — the roadmap fills with tooling about the tooling
+   while the mechanics backlog (battle forms granting nothing, riders with no crit
+   gate, resistance keys with no reader) stays six items deep. Throughput is not
+   the goal; shipped mechanics are. Expect the Architect queue to be the binding
+   constraint under this ratio. That is the intended trade, not a regression to
+   report — if the queue is the problem, fix the queue, do not restock around it
+   with cheaper work.
+
+   **Within `data-only`, prefer game data over new tooling.** An item that
+   authors or corrects `assets/data/` content is content work. A new `check_*.py`
+   is tooling, and tooling only earns a slot when it prevents a *recurring*
+   authoring defect — the standing rule that a repeated corrective fix should
+   become a constraint, not a licence to file guards speculatively. If a fire's
+   `data-only` additions are mostly new guards, it restocked the wrong band.
 
    **The one brake that survives from the old cap:** if step 6 found the queue
    leaky — items sitting unpromoted fire after fire — do **not** restock to the
