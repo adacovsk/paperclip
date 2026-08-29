@@ -86,24 +86,23 @@ No tasks (Coordinator), no commits (operator), no game code.
      active-fronts: 19 fronts (needs-build=11, data-only=8), ...
    ```
 
-   **Target depth, per band — `needs-build` carries the deeper buffer:**
+   **One floor: restock until the ready index holds at least 20 fronts.** Not a
+   per-band pair. Two numbers invite the arithmetic that went wrong last time —
+   a deep `data-only` target and a shallow `needs-build` one were each defensible
+   alone, and together they meant the pipeline stocked whatever was cheapest to
+   finish. One floor over the whole index, and a rule about which band absorbs it.
 
-   | band | restock to | why |
-   |---|---|---|
-   | `needs-build` | **≥ 12** | Game mechanics: systems, components, observers, the ability/effect vocabulary. This is the product. It queues behind the cargo semaphore at hours per build, so a shallow buffer starves the pipeline of the only work that changes what the game *does*. |
-   | `data-only` | **≥ 8** | Lands in minutes without the Architect, so it refills fast and needs less standing depth. Enough to keep the pipeline fed while a build is queued — not so much that it becomes the pipeline. |
-
-   **Why this is the way round it is, having been the other way round.** Stocking
-   by drain rate alone (`data-only ≥ 20`, `needs-build ≥ 6`) is locally correct
-   and globally wrong: it optimises for keeping agents busy, and the fastest work
-   to promote is JSON edits and guard scripts. Sustained, that ships a pipeline
-   that mostly inspects itself — the roadmap fills with tooling about the tooling
-   while the mechanics backlog (battle forms granting nothing, riders with no crit
-   gate, resistance keys with no reader) stays six items deep. Throughput is not
-   the goal; shipped mechanics are. Expect the Architect queue to be the binding
-   constraint under this ratio. That is the intended trade, not a regression to
-   report — if the queue is the problem, fix the queue, do not restock around it
-   with cheaper work.
+   **`needs-build` is the band that runs dry last.** Stocking by drain rate alone
+   is locally correct and globally wrong: `data-only` skips the Architect and
+   lands in minutes, so it always looks like the efficient band to fill — and it
+   optimises for keeping agents busy rather than for shipping the game. Sustained,
+   that yields a pipeline that mostly inspects itself: the roadmap fills with
+   tooling about the tooling while the mechanics backlog (battle forms granting
+   nothing, riders with no crit gate, resistance keys with no reader) stays a
+   handful of items deep. Throughput is not the goal; shipped mechanics are.
+   Expect the Architect queue to be the binding constraint when you stock this
+   way. That is the intended trade, not a regression to report — if the queue is
+   the problem, fix the queue, do not restock around it with cheaper work.
 
    **Within `data-only`, prefer game data over new tooling.** An item that
    authors or corrects `assets/data/` content is content work. A new `check_*.py`
