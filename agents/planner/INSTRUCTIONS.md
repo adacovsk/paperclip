@@ -118,6 +118,23 @@ Operator-filed issues (step 5) enter this order by their content, not as a separ
 
 Every roadmap item must be specific enough that Coordinator can turn it into a task with no further research (file paths, concrete done-criteria). Dedupe before writing — grep the roadmap for overlap with an active or existing item.
 
+**Band depth is not dispatchability — count the shared files, not the bullets.** Two bullets
+that differ only in *which* edge they declare, *which* allowlist row they re-express, or
+*which* enum variant they add are **one chain, not parallel work**: they land in the same file
+and the second one waits on the first regardless of how the roadmap counts them. A band can
+read 27 deep and supply zero promotable items this way, which is exactly what happened for two
+consecutive Coordinator fires (AA-5473) while `check_data_key_refs.py` carried six in-flight
+branches and the two mechanic allowlists carried two blocked ones.
+
+So when restocking to the step-8 band, **check the target file's in-flight count before writing
+the bullet**, not after. If a file already has three or more branches against it, a new bullet
+touching it is not supply — it files cleanly and then blocks, which grows the file without
+moving anything. Two responses, in order: prefer a candidate that touches an uncontended file,
+and if the contention is what is actually blocking the programme, **write the de-contention
+itself as the item** and place it above its dependents (§4.228 and §4.232 are both worked
+examples). A file contended three or more times is a defect in the file — Coordinator escalates
+those here precisely because the fix is a roadmap item, not a schedule.
+
 ### Write for the Coordinator's intake filter (or your items never promote)
 
 Coordinator promotes by **scanning the file top-to-bottom from a saved cursor** (its Roadmap-intake step), and its filter is mechanical:
