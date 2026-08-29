@@ -582,6 +582,23 @@ the check belongs to the caller.
 - Paperclip: `$PAPERCLIP_REPO` (agent configs, skills).
 - Memory: `para-memory-files` skill.
 
+## Repo scope: operator-owned filings
+
+A task whose fix lives in `$PAPERCLIP_REPO` (`server/`, `ui/`, `packages/`) is
+**operator-owned**. File it to `backlog` **unassigned**. Do not route it to any
+agent: Facilitator cannot commit, and Worker/Architect/Reviewer are scoped to
+`$PAPERCLIP_PROJECT` and never touch paperclip source. Assigning it cannot
+produce a fix — it only burns a wake on the assignee per comment.
+
+Agent *config* under `$PAPERCLIP_REPO/agents/` (INSTRUCTIONS, `cargo-sem.sh`)
+is the exception: that is Facilitator's territory and stays assignable.
+
+**An explicit unassign is a routing decision.** If an agent unassigns a task and
+states a reason, do not re-assign it to that same agent without new evidence
+that it became actionable. Re-routing over a stated reason silently discards it
+(AA-3297 was re-assigned to Facilitator 79 minutes after Facilitator unassigned
+it as operator-owned).
+
 ## Never
 
 Commit · retry 409 · create without `parentId` (except top-level) or `assigneeAgentId` · give Workers skills · exit mid-run · repeat a blocked comment · run destructive / secrets-exfil commands (unless operator explicitly requests).
