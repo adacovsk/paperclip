@@ -9,6 +9,23 @@ No tasks (Coordinator), no commits (operator), no game code.
 
 ## Run (every fire)
 
+0. **Branch — one, reused. Do this before reading anything.** You write the roadmap from `planner/roadmap` and from no other branch. Never mint a per-fire name.
+
+    ```bash
+    git fetch origin --prune
+    if gh pr list --head planner/roadmap --state open --json number -q '.[].number' | grep -q .; then
+        git checkout planner/roadmap && git merge --no-edit origin/main   # PR still open — append to it
+    else
+        git checkout -B planner/roadmap origin/main                       # PR merged, or first fire — recreate
+    fi
+    ```
+
+    The `else` is what gives you a fresh branch exactly when the last one landed, so the name is stable forever and the content never trails `main`. `merge`, not `rebase`: replaying a roadmap edit fails where the merge succeeds ([AA-5311](/AA/issues/AA-5311)), and a failed replay strands the fire, not the file.
+
+    **Why this is a rule and not a preference.** Minting a name per fire produced sixteen live `planner/*` branches — five in one day — two of which carried overlapping restocks committed hours apart, and one of which (`planner/prune-0826e`) sat 376 commits behind `main` with every one of its edits already landed by a later fire that had forked separately. A second writer branch collides on the `## Active fronts` index exactly as a task branch does, with the added cost that neither side is wrong, so there is nothing to discard. Step 11 already tells you to resume an interrupted fire "from the existing branch instead of silently redoing the work onto a conflicting parallel branch" — this is the branch it means.
+
+    `scripts/check_roadmap_writer.py` enforces it at pre-push: a `planner/*` branch other than `planner/roadmap` that touches `docs/ROADMAP.md` or `docs/roadmap/` fails. Left the shared checkout on your branch and a red appears somewhere unrelated? That is the same defect from the other end ([AA-5539](/AA/issues/AA-5539)) — return the checkout to `main` when you are done.
+
 1. **Context** — `git log --oneline -10` + recent completed reviews via `paperclip` skill. Note what changed since last run.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked.
 3. **Reviewer patterns** — check completed review tasks for `## Patterns`. Recurring → roadmap items.
@@ -89,7 +106,7 @@ No tasks (Coordinator), no commits (operator), no game code.
    for *promotable* depth, never a reason to lower the bar on what you write.
 9. **CLAUDE.md hierarchy** — when a subdirectory has 3+ conventions worth encoding, add/update its `CLAUDE.md`. Hierarchical: deeper files load only when agents work there, cutting context for others. Keep to rules, not implementation notes. Existing (verify with `find src -maxdepth 3 -iname CLAUDE.md` — this list drifts, that command is the source of truth): root, `src/`, `src/resources/`, `src/ui/`, `src/utils/`, and `src/systems/{ability_mechanics,combat,detection,local_map_generation,lock_interaction,movement,observers,rendering,spell_management,structure_generation,vision_system,world_generation}/`.
 10. **Close what you satisfied (exit gate).** A ROADMAP edit in steps 7–8 frequently *completes* a queued task — pruning a stale bullet (or adding the work it asked for) and committing it to `origin/main` is the done-criteria for any `todo`/`in_progress` task that tracked that bullet. Before exiting, for each such task: `PATCH /api/issues/{id}` with `{"status":"done","comment":"<what landed + the origin/main SHA>"}` in this **same fire**. The completion text you'd write as a comment rides the status PATCH — a bare `POST /comments` leaving the task in `todo` is **not** completion (a done-but-unPATCHed task is indistinguishable from un-started work and inflates the apparent queue). Mirror the Worker/Reviewer exit gate: work committed → status advanced, together.
-11. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch.
+11. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. Step 0 is what makes that resumable: the branch is always `planner/roadmap`, so an interrupted fire has a name to come back to.
 
     **Report the band depth you are leaving behind, in the same comment.** Run
     `python scripts/check_roadmap.py` on the branch you are about to push and put
