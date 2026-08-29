@@ -78,11 +78,18 @@ Human merges. You GC the worktree + branch.
      operator`; stop re-dispatching that task.
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
 5. Promote backlog → `todo` if <2 Worker tasks active. PATCH must set `assigneeAgentId`. **Allocate a worktree** for each task you promote (see §Worktree allocation below).
+   - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because the second one's merge conflict is billed to the operator as a hand-merge.
+     This is not hypothetical scheduling theory. Seven branches went unmergeable at once, and **six of them were the same kind of work** — adding a usage-limit/frequency gate to one more `AbilityMechanic` variant — so they necessarily all edited `src/systems/active_modifiers.rs` and `execute.rs`. Main then absorbed two more commits on that same surface and every in-flight branch broke together. The pipeline read that as six independent "needs operator merge" parks, billing six hand-merges for one scheduling decision ([AA-5194](/AA/issues/AA-5194)).
+     **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges.
+   - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it: the `validate-data.yml` per-guard step list became `run_guards.py` auto-discovery, so adding a guard needs no workflow edit at all ([AA-4227](/AA/issues/AA-4227)); and `docs/ROADMAP.md` was given a single writer, enforced by `scripts/check_roadmap_writer.py` ([AA-5199](/AA/issues/AA-5199)). `assets.manifest.json` ([AA-4970](/AA/issues/AA-4970)) is the open one.
+   - **When several branches are already conflicting on one file, ask the operator to merge them in a deliberate order** — resolve the contended file once and rebase the rest onto that result. Six blind three-way merges of the same hunk produce six divergent resolutions; do not park them as independent operator work.
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
 8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged.
 9. **Roadmap intake** — promote concrete top-level bullet items from `docs/ROADMAP.md` into the backlog. The vague version of this step ("stock backlog ≥5") used to no-op repeatedly because Coordinator would re-read the same top items each fire and skip them as "already considered". Be concrete:
    a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status in todo, in_progress, backlog)` and `inflight = count(in_review parents that are still waiting on the Architect)`.
+      - **Count only tasks that are actually dispatchable, or this gate measures the wrong pool.** `ready` exists to answer *"is there un-started work a Worker could pick up?"* — so exclude any task no Worker will ever be handed. Concretely: **skip unassigned tasks** (your own step 0 says unassigned = invisible; a task nothing can dispatch is not queue depth) and skip platform/pipeline/host bugs, which are Facilitator's and are routinely parked for weeks. Measured on a fire when this rule was written: `backlog` held **45**, of which **39 were unassigned** — Paperclip platform bugs, worktree and wake-loop defects, the oldest parked since 2026-07-31. `ready` computed as 51, the gate tripped at `≥ 5`, and roadmap intake was skipped **on the strength of 39 tasks no Worker was ever going to run**. The Planner meanwhile had both supply bands stocked above target, so the pipeline reported a deep queue and an idle Worker at the same time.
+      - Symptom to recognise: `ready` is large, `in_progress` is **0**, and Worker has nothing active. That combination means the queue is deep in name only — recount it with the exclusions above before skipping intake.
       - If `ready ≥ 5` → skip roadmap intake entirely; the un-started queue is already deep.
       - Else if `ready + inflight ≥ 8` → scan and promote **`data-only` items only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. Architect-bound parents serialize on the cargo lock, so promoting more `needs-build` work lengthens that queue without adding throughput, while `data-only` work skips Architect entirely and still flows.
       - **`inflight` is not "everything `in_review`".** Count a parent only if it is genuinely queued for or running a build: it has an open Architect verify subtask, or a build slot held against its worktree. An `in_review` parent whose PR is already open is waiting on a **human merge**, not on the Architect — it consumes no build capacity, and counting it throttles intake on an idle resource. This gate exists to protect the cargo lock, so measure the cargo lock. (Observed: every `in_review` parent had an open PR and every build slot was free, and intake was still restricted to `data-only`.)
@@ -94,7 +101,7 @@ Human merges. You GC the worktree + branch.
       - **Skip research items** that ask the operator to investigate, decide, or audit (signal words: "investigate", "decide", "audit", "review", "consider"). Those need operator deliberation, not Worker execution. Leave them for the operator.
       - **Skip meta items** (CLAUDE.md, ROADMAP.md edits) — those are Planner's territory.
       - **Skip section headers and prose** — `**Goal**:`, `**Active phase**:`, paragraph text between sections. Only bullet lines that introduce a concrete unit of work.
-      - **Promote** anything else: create a `backlog` task. Title = first sentence of the item (strip leading `**bold**` titles to make it readable), ≤80 chars. Body = full bullet text including any nested sub-bullets that belong to the item, + `Source: docs/ROADMAP.md:<line>`.
+      - **Promote** anything else: create a `backlog` task. Title = first sentence of the item (strip leading `**bold**` titles to make it readable), ≤80 chars. Body = full bullet text including any nested sub-bullets that belong to the item, + `Source: docs/ROADMAP.md:<line>`. **If the section carries a `**Detail**:` link, put that path in the body too** (`Detail: docs/roadmap/<number>.md`) — the section holds only the summary and the dispatch metadata, so a Worker handed the bullet alone is missing the analysis it was written from.
         **Label.** If the bullet states an explicit `**Label**:`, use it verbatim — the Planner has already classified it. Otherwise: `needs-build` **iff** the work touches `src/**/*.rs`; everything else is `data-only` (`assets/data/**`, `scripts/**`, `.github/workflows/**`, `docs/**`). The label answers exactly one question — *does Architect need to run cargo?* — so a pure-Python CI guard under `scripts/` is `data-only` even though it is code, not data. Mislabeling it `needs-build` parks a task that needs no compiler behind the serialized cargo lock.
    d. **Cap.** Stop after **3 new promotions per fire**. Burst-promoting 50 items floods the queue and starves urgent work.
    e. **Update cursor.** Write `Roadmap intake cursor: ROADMAP.md:<last-line-promoted>` in your routine task comment so the next fire continues forward instead of re-reading the same top items.
@@ -318,6 +325,30 @@ For each parent `{task-id}`:
    such branches sat `blocked` for ~19 days on the wrong disposition before
    anyone checked whether the merge they were waiting for could exist.
 
+   **Never revert a block you are not the most recent author of.** A sweep that
+   decides whether a block still holds by re-testing its *own* predicate — the
+   parent's status, a stale conflict, an idle window — will happily overwrite a
+   newer block written by someone else for a different reason, because it never
+   read that reason. Measured: seven verify subtasks blocked with "`origin/main`
+   does not compile, so `cargo clippy --all-targets` cannot go green on any
+   branch" were all unblocked in one pass at `2026-08-27T01:41:19Z` under the
+   comment *"Its parent is no longer blocked, so the reason no longer holds"* —
+   a reason an earlier pass of the same sweep had written, replayed over the
+   newer one. The comment directly above it said red `main` and was not read.
+   All seven relaunched onto a still-red `main`, burned 575-1038 log lines of
+   compile apiece, exited `99`, and competed for `cargo-sem.sh` slots with the
+   ci-fix repairing the very breakage that doomed them.
+
+   So before clearing any `blocked`, read the **most recent** block comment on
+   that task and clear it only if it is the one you wrote and its stated cause
+   is gone. If the newest block came from another agent or another fire, leave
+   it and say so. Otherwise every block is provisional until a sweep happens to
+   disagree, and there is no durable way to say "do not build this yet".
+   **Do not work around this by blocking the parent** to make a parent-status
+   predicate keep the child down: that inverts what a parent's status means in
+   order to steer a sweep, and it stops working silently the moment the
+   predicate changes.
+
    A green cargo sentinel on such a branch is **not** evidence of anything:
    it attests to a pre-migration tree shape. Confirm freshness with
    `git merge-base --is-ancestor $(cat "$VERIFY_DIR/{task-id}.base")
@@ -348,6 +379,27 @@ regressions are caught later by a `ci-fix` task, not by blocking the land.
 This is the backstop the §PR-evidence audit was compensating for; with
 landing decoupled, that audit becomes a true backstop rather than the
 primary net.
+
+## Closing a PR unmerged
+
+Never close a PR unmerged on a *supersede* or *already on main* claim without a
+**per-file** check against the branch's own content. A temporal correlation
+between a merge batch and a branch is not evidence.
+
+Accept only one of:
+
+```sh
+git diff --stat origin/main...origin/<branch>          # empty  -> truly on main
+git merge-base --is-ancestor origin/<branch> origin/<claimed-superseder>
+```
+
+Quote the command output in the closing comment. Failing that, leave the PR open.
+
+PR #1136 (`task/AA-5202-reland`) was closed as "already on main via #1153" when
+#1153 touched an entirely disjoint file set; ~91 lines of finished `data-only`
+work sat in a closed branch while its roadmap bullet read as unclaimed. Ancestry
+is also blind to reverts, so on a `done`-acceptance path probe content on
+`origin/main` (line count / distinctive grep), not ancestry alone.
 
 ## PR-evidence audit
 
