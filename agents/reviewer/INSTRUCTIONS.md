@@ -20,16 +20,50 @@ exit — do NOT edit, do NOT commit, do NOT push.
 2. **`cd` into the worktree path.** Doesn't exist → comment and exit.
 3. **Verify branch.** `git branch --show-current` must equal
    `task/{task-id}`. Mismatch → comment and exit.
-4. **Sync to current main.** `git fetch origin main && git rebase
-   origin/main`. A stale branch makes "this file changed" checks
-   hallucinate — main moving forward looks like Worker reverting things.
-   Rebase conflicts → comment `"Branch conflicts with current main;
-   rebase failed at <commit>. Operator must resolve."` and
-   `git rebase --abort` then exit.
-5. **Verify Worker actually committed.** After the rebase, `git log
-   origin/main..HEAD --oneline` must list at least one Worker commit.
-   Empty → comment `"No Worker commits on this branch after rebase onto
-   main — nothing to review."` and exit.
+4. **Sync to current main — but test ancestry first, and only rebase if
+   you actually need to.** A stale branch makes "this file changed" checks
+   hallucinate: main moving forward looks like Worker reverting things.
+   What you need is "does this branch contain current main", which is an
+   **ancestry** question, not a replay question:
+
+   ```bash
+   git fetch origin main
+   git merge-base --is-ancestor origin/main HEAD || git rebase origin/main
+   ```
+
+   **Do not rebase unconditionally.** `git rebase` asks "do this branch's
+   original commits replay cleanly onto main", which is permanently false
+   once the branch has been **hand-merged by the operator** — main then
+   already contains these commits, the replay finds nothing to apply or
+   conflicts against itself, and the branch is blocked forever even though
+   it is perfectly mergeable. That failure burned two full agent fires and
+   a Facilitator unblock/re-block cycle on one task before it was
+   diagnosed. `--is-ancestor` returns true in exactly that case, so the
+   rebase is skipped and review proceeds.
+
+   Rebase conflicts (only reachable when main is genuinely *not* an
+   ancestor) → comment `"Branch conflicts with current main; rebase failed
+   at <commit>. Operator must resolve."` and `git rebase --abort` then
+   exit.
+5. **Verify Worker actually committed — and distinguish "nothing was done"
+   from "it already landed."** `git log origin/main..HEAD --oneline` must
+   list at least one Worker commit. Empty has **two** causes and they need
+   different answers:
+
+   - **Branch already merged into main** (the operator hand-merged it).
+     `git merge-base --is-ancestor HEAD origin/main` is true. The work
+     exists, it is on main, and there is nothing left to review — comment
+     `"Branch already merged into origin/main; review is moot."`, set the
+     task to `done` rather than blocked, and exit. Do **not** report this
+     as missing Worker commits: that reads as a Worker failure and sends
+     the task back round the loop for work that already shipped.
+   - **Genuinely no commits.** HEAD is not an ancestor of main and there is
+     still nothing to review — comment `"No Worker commits on this branch
+     — nothing to review."` and exit.
+
+   Check the ancestry before writing either comment. This is the same
+   hand-merge blind spot as §4 one step later; fixing §4 alone just moves
+   the block here.
 
 Only after all five checks pass, proceed to the procedure below.
 
@@ -127,6 +161,15 @@ git commit -m "refactor: <concise description>" -m "..." -m "Stage: reviewer"
 ```
 
 - Stage specific files; never `git add -A`
+- **Never stage `docs/ROADMAP.md` or `docs/roadmap/`.** The roadmap has a single writer (the
+  Planner), who deletes sections and rewrites the index several times a day. A
+  `task/AA-*` branch that also writes it conflicts by construction, and the
+  landing sweep reads any conflict as "needs operator merge" — AA-4724 was
+  parked that way with the roadmap as its *only* conflicting path. Report what
+  landed on the Paperclip task; the Planner prunes the bullet from merged-PR
+  evidence. `scripts/check_roadmap_writer.py` fails the branch if you do — it
+  covers `docs/roadmap/` too, which is the same document stored one file per
+  section rather than a separate reference tree.
 - Multiple commits OK if the polish has natural sub-units (one for `SystemParam` extraction, one for helper migration, etc.)
 - Use the `Stage: reviewer` trailer so the audit trail is clear
 - If your review found nothing to fix, exit without committing — the

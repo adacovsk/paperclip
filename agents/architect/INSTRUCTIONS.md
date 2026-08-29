@@ -117,7 +117,7 @@ Verify tasks live in `in_review` status (not `todo`) — Coordinator creates the
 These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with cargo lock contention and broken shell redirects. Do not improvise.
 
 1. **One cargo at a time — one cargo invocation alive *within your own run*.** Cargo serializes globally on `target/.cargo-lock`. A sibling Architect's cargo is fine — wait, you serialize at the OS level. But never start a second `cargo` command *yourself* before your previous one has exited. If you do, the second sits blocked on the lock, your first is still running, and you've doubled the wait for nothing.
-2. **Detached launch — launch the build with its sentinel, then END your run. Do not block-and-poll.** The canonical launch (§Procedure — sentinel state machine / the `setsid` block below) writes `{task-id}.exit` when cargo finishes and fires a `/wakeup` callback; a later wake reads the sentinel and Lands. Exiting after a correct detached launch is the *designed* path, not a strand — the §Procedure — sentinel state machine says so explicitly ("absent + no build → launch the detached chain, then exit the run"; "absent + build running → exit the run").
+2. **Detached launch — launch the build with its sentinel, then END your run. Do not block-and-poll.** The canonical launch (§Procedure — sentinel state machine / the launch block below) writes `{task-id}.exit` when cargo finishes and fires a `/wakeup` callback; a later wake reads the sentinel and Lands. **Detached means a transient systemd scope, not bare `setsid`** — `setsid` detaches the session while leaving the chain in `paperclip.service`'s cgroup, where a server restart kills it (see the launch block); and the chain traps signals so a kill still leaves a `99` sentinel rather than silence. Exiting after a correct detached launch is the *designed* path, not a strand — the §Procedure — sentinel state machine says so explicitly ("absent + no build → launch the detached chain, then exit the run"; "absent + build running → exit the run").
 
    > **WHY THIS RULE IS INVERTED — do not revert it.** This rule previously said the opposite: *background it, then BLOCK by polling, never end your run mid-build*. That is what the sentinel machinery was built to replace, and leaving it in place cost real work. `cargo-sem.sh` admits only `SLOTS` builds at once (default = physical cores − 1), and **a run's hard watchdog starts when the run is dispatched, not when it acquires a slot.** So a blocking Architect past the slot ceiling spends its entire budget sitting in the ticket queue and is killed by the watchdog with `Process lost` — having compiled nothing. Observed: five verifies unblocked within 8 seconds, all five killed, load ~14 on a 4-core box. Blocking does not make the build finish sooner; it only guarantees the *waiting* is what gets billed. A detached build survives the death of the run that launched it — that is the entire point of the sentinel + pid-file + callback design.
 
@@ -175,18 +175,28 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    - **Wrong**: `cargo clippy > /tmp/file` — drops stderr entirely. Same empty-file outcome.
    - **Wrong**: `cargo clippy &> /tmp/file` — bash-only, captures both but doesn't stream to you. Use `tee`.
 4. **Never try to kill a stale cargo process.** Your bash environment is sandboxed; `kill`/`pkill` will be denied. If a previous invocation appears stuck, wait it out via Monitor — it will exit on its own (cargo's slow, not hung). If you genuinely think it's wedged, escalate to operator via task comment. Do not loop attempting `kill`. The same applies to a *live* orphan build (a verify still compiling for a task whose PR already merged) — killing it needs privileges your sandbox lacks, so that reap is a Facilitator/operator action. Your contribution to orphan-reaping is the pre-launch guard (§Detached launch launch block): you stop *new* orphans from ever queuing, you don't kill running ones.
-5. **One detached process, two slot acquisitions — the `&&` goes BETWEEN `cargo-sem.sh` calls, never inside one.** Both stages live in the single `setsid` launch, so the verify stays one detached process you can `pgrep` for and one sentinel to read — but each cargo command is its own `cargo-sem.sh` invocation:
+5. **One detached process, up to four slot acquisitions — the `&&` goes BETWEEN `cargo-sem.sh` calls, never inside one.** All stages live in the single `setsid` launch, so the verify stays one detached process you can `pgrep` for and one sentinel to read — but each cargo command is its own `cargo-sem.sh` invocation:
    ```sh
-   "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --all-targets && "$SEM" env CARGO_INCREMENTAL=0 cargo test --lib
+   "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --all-targets && "$SEM" env CARGO_INCREMENTAL=0 cargo test --lib && { if git diff --name-only origin/main...HEAD | grep -qE "^src/.*\\.rs$"; then "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --no-default-features; else true; fi; }
    ```
+   The third stage closes the one configuration nothing checks per-change. Root `CLAUDE.md` runs `ci.yml` weekly only, and CI's clippy is `--no-default-features`; a feature-gated compile error therefore reaches `main` and blocks *every* task until an operator fixes it. That is not hypothetical — `3273812c` landed an `E0599` that default-feature clippy could not see, and it stayed red until PR #649.
+   - **Why clippy and not `test --no-default-features`.** Clippy is check-level: no codegen, no link, and sccache is warm from the stage that just ran, so the marginal cost is one slot round-trip plus a mostly-cached front-end pass. A no-default-features *test* stage would be a full test-binary link — the stage that already gets OOM-killed (rule at line 149) — and it would buy nothing here, since the failure class this stage exists for is a compile error.
+   - **Why the `else true`.** The gate skips the stage when the diff touches no Rust under `src/`. Without the `else`, a skipped stage leaves `grep`'s non-zero status as the group's status and the sentinel reports a build failure for a docs-only task.
+   - **Fourth stage — `cargo test --tests`, REPORT-ONLY. It must never reach `$rc`.** The three gating stages *compile* the integration crates (`--all-targets`) but never *run* them, so a `src`-only change that breaks a `tests/*.rs` suite at runtime passes every per-task gate. That is not hypothetical: it reddened `main` via `tests/core_mechanics.rs` and spawned four `ci-failure` issues (#656, #658, #659, #661), because `cargo test --lib` never executed the failing test (AA-3406). This stage runs them and **reports**; it does not block the PR.
+     - **Why report-only and not a gate.** `tests/` is separately maintained and has historically been broken on `main` for reasons unrelated to any single task. Promoting this to a gate re-creates exactly the failure the `--lib` rule at the end of this section exists to prevent — every needs-build task failing regardless of its own correctness, bailing before the PR step, and masquerading as done with no PR. **Do not "fix" this by folding `irc` into `rc`.** If integration failures should block, that is an operator policy change, not a tidy-up.
+     - **Why it runs before the sentinel is written.** The `.exit` write fires the `/wakeup` callback, and a green sentinel sends you straight to §Landing. A report-only stage placed after that would finish into a run that had already landed, so its result would never reach a comment. It costs the landing that much extra wall-clock, deliberately.
+     - **Why its status goes in `{task-id}.integration`, a separate file.** Two sentinels, two meanings: `.exit` gates, `.integration` informs. `rc` is captured *before* this stage runs and is not reassigned, so a red integration suite cannot turn a passing verify into a failing one. `137` is remapped here the same way as for `.exit`, since this stage is also a heavy test-binary link and OOM presents as 101.
+     - **Why `--tests` and not `--no-default-features`.** `--tests` reuses the default-feature artifacts the earlier stages just warmed; the no-default-features variant would be a cold full relink of the stage that already OOMs. The failure class here is a *runtime* test failure, which either configuration surfaces.
+     - **Why the gate includes `tests/`.** The changed-file filter admits `^(src|tests)/.*\.rs$`, so a task that edits a suite directly also gets it run. A docs- or data-only task skips the stage entirely and pays nothing.
    This is the *only* form that satisfies both constraints at once. The `&&` preserves the staged gate (test runs only if clippy passed) and short-circuits `$?` to clippy's exit code on failure, exactly as before; the split releases the slot between stages per §Cargo discipline rule 3. Wrapping the chain instead — `cargo-sem.sh bash -c 'cargo clippy && cargo test --lib'` — is the multi-cargo chain `cargo-sem.sh` refuses with **exit 64**, and it burns a dispatch round-trip every time. (That refusal recurred on essentially every verify because this step used to specify the wrapped form while rule 3 forbade it; the launch block is now the split form, so follow it verbatim and the guard stays quiet.) Do not launch the two as separate *background* jobs either — they'd serialize on the build lock and you'd lose the single-sentinel state model.
-6. **Schema-drift verification — `generate_schemas` tasks verify with DEFAULT features — never add `--no-default-features` locally.** The JSON-Schema output of `generate_schemas` is link-mode-independent, so the default (`dev`) profile — dynamic linking + mold + warm sccache — produces byte-identical `assets/schemas/` to CI's `--no-default-features` run, in minutes instead of a cold ~38-min build. Reproducing CI's link mode locally buys nothing and has repeatedly blown the run timeout (the 2h cap, hit twice). Canonical:
+6. **Schema-drift verification — `generate_schemas` tasks verify with DEFAULT features — never add `--no-default-features` locally.** (Scope: this rule is about `generate_schemas` and tests only. It does **not** contradict the `cargo clippy --no-default-features` stage in rule 5 — that prohibition is a *cost* argument about reproducing CI's link mode, and clippy is check-level, so no codegen and no link. Do not "reconcile" the two by deleting either.) The JSON-Schema output of `generate_schemas` is link-mode-independent, so the default (`dev`) profile — dynamic linking + mold + warm sccache — produces byte-identical `assets/schemas/` to CI's `--no-default-features` run, in minutes instead of a cold ~38-min build. Reproducing CI's link mode locally buys nothing and has repeatedly blown the run timeout (the 2h cap, hit twice). Canonical:
    ```sh
    sccache --start-server >/dev/null 2>&1 || true; "$HOME/code/paperclip/agents/architect/cargo-sem.sh" bash -c 'CARGO_INCREMENTAL=0 cargo run --bin generate_schemas' 2>&1 | tee /tmp/genschemas-{task-id}.txt
    git diff --exit-code assets/schemas/   # empty = no drift; commit the regen if non-empty
    ```
    If a task description tells you to run `generate_schemas`/tests with `--no-default-features`, ignore that flag and use the default profile — flag the substitution in your task comment.
 7. **Detached-build liveness — probe `/proc`, never trust a grep.** Deciding "is the detached `verifyrun-{task-id}` build still alive?" via `pgrep -af verifyrun-{id}` (or `ps | grep`) false-negatives intermittently (snapshot race / wrapper interference) — each false negative triggers a wasteful duplicate relaunch that then stacks on the flock. The reliable primitive is a direct pid probe: at launch the wrapper records its own PID into `$VERIFY_DIR/{id}.pid`, then check `test -d /proc/"$(cat "$VERIFY_DIR/{id}.pid")"` (true = alive → exit and wait). Do NOT use `kill -0` (the sandbox denies `kill`). Only relaunch when ALL of: sentinel absent, `pgrep -af cargo | grep verifyrun-{id}` empty, AND the log mtime is stale (not ~now). A build waiting on a busy `cargo-sem.sh` slot (both `/tmp/cargo-slot-{1,2}.lock` held) can sit 20–40 min showing only the startup `echo` — that is RUNNING, not dead.
+   - **Every sentinel is keyed by the PARENT task id, because the worktree is — so the launch also symlinks them under the `Verify:` subtask's own id (`$PAPERCLIP_ISSUE_IDENTIFIER`).** Without the aliases, anyone probing liveness by the subtask id (Coordinator's re-dispatch check does exactly that, since that is the row it iterates) finds no `.pid` and no `.exit` even while cargo is actively compiling, concludes "never started", and re-dispatches — which killed a live build and threw away ~50 min of progress under semaphore contention. Make either key work rather than relying on every reader knowing which id to use; the links are torn down with the sentinel in §Landing.
 8. **Wedged build-slot lock = sccache fd leak; `sccache --stop-server` to release (NOT slow cargo).** If every `cargo-sem.sh` proc is blocked in state `S` on a `/tmp/cargo-slot-{1,2}.lock`, `rustc` count ~0, and `grep FLOCK /proc/locks` shows a holder PID that `ps` says is DEAD (kept alive by `/proc/$(pgrep -x sccache)/fdinfo/*` → a slot lock), that slot is wedged — the "cargo's just slow, wait it out" rule does NOT apply. An under-lock cargo cold-started the sccache daemon, which inherited the slot's fd. Unblock with `sccache --stop-server` (standard CLI, safe when `rustc` count is 0). **The durable fix is now in place**: `~/.profile` pre-starts the sccache server at session init, outside any lock, so no build cold-starts it under a slot — this class should not recur. If it does, the daemon was killed and never restarted; restart it via a fresh login shell (or `sccache --start-server`), don't loop stop/starting.
 9. **Pipeline-wide `cargo` exit-101 "rustc X not supported by <packages>" = stale toolchain pin, escalate.** When check fails at *dependency resolution* (before compiling) with `rustc N.NN is not supported by the following packages: <dep>@ver requires rustc M.MM`, and there is NO error in your changed files, a dep-MSRV bump landed on main without the matching `rust-toolchain.toml` channel bump — main is internally inconsistent for ALL tasks. This is an operator/main-level fix (bump the pin, or revert the dep bump). Do NOT run the fix→relaunch loop (no code error to fix — it just re-hits the wall and burns quota) and do NOT land red; escalate via task comment.
 10. **Environment and base bootstrap — the detached build sets up its own environment *and its own base commit* — the `source`/`export`/`unset` and `git fetch`/`git rebase` statements at the head of the launch block are load-bearing, do not "simplify" them away.** The agent runner's shell is non-login and non-interactive, so it sources neither `~/.profile` (login shells only) nor `~/.bashrc` (early-returns when non-interactive). It inherits the **paperclip daemon's** environment, which is whatever the daemon was started with — and that is the trap: the daemon is long-lived, so its env is a snapshot of `~/.profile` from whenever it last restarted, not of `~/.profile` today. The same reasoning applies to the worktree's base commit, which is a snapshot of `origin/main` from whenever the branch was last synced.
@@ -201,10 +211,15 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 1. Step 0 precondition gate already passed (you're in the task worktree on the right branch). If no task assigned and no CI failures, exit immediately.
 2. **Check the sentinel FIRST — the §Detached launch state machine.** `VERIFY_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"; EXIT="$VERIFY_DIR/{task-id}.exit"`. Branch on its presence/value before touching cargo:
    - **absent + build running** (`pgrep -f verifyrun-{task-id}`) → exit the run (build in flight, a later wake lands it).
-   - **absent + no build** → launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run.
-   - **present, `0`** → cargo passed → go to *Identify your task's changed files* then §Landing.
+   - **absent + no build** → launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run. **Unless the cloud overflow lane applies — see §Cloud overflow lane below**, in which case launch that instead and exit the run. Everything downstream of this branch is identical either way: the cloud lane writes the same `{task-id}.exit` sentinel with the same vocabulary.
+   - **present, `0`** → cargo passed → **read `{task-id}.integration` (see below), then** go to *Identify your task's changed files* then §Landing.
+   - **`{task-id}.integration` — report-only, never a gate.** Written by the fourth stage (§Cargo discipline rule 5). Absent = the stage was skipped (no Rust under `src/` or `tests/` changed) or the gating stages failed, so there is nothing to report. `0` = integration suites passed; say nothing. **Non-zero = they failed, and you Land anyway** — this does not block the PR and you must not enter the fix loop for it. Post one comment on the task naming the failing tests from `{task-id}.integration.log` (`grep -E "^(test .* FAILED|failures:|---- .* stdout ----)"` and the `test result:` line), state whether any failing suite is in your changed-files list, and continue to §Landing in the same run. `137` means OOM, not a real failure — report it as inconclusive rather than as a broken suite.
+     - If a failing suite **is** in your changed-files list, it is yours: fix it before landing, as a normal in-scope failure.
+     - If it is **not**, it is a pre-existing break or another task's — comment it and land. Do not edit it; that is the same rule as `--all-targets` failures in files you did not touch.
    - **present, `96`, `97` or `98`** → **environment/base failure, NOT a build failure** (96 = cargo/sccache off PATH; 97 = worktree missing; 98 = could not put the branch on current `origin/main`). The code is very likely fine — cargo never ran. Do **not** enter the fix loop, do **not** edit Rust. Comment the sentinel value + the tail of `$LOG` and escalate to operator. See Cargo discipline §Environment and base bootstrap.
      - **`98` specifically**: the launch tried to put the branch on current `origin/main` and either the fetch failed or the rebase conflicted. A conflict is genuine work for the operator — do not try to force it. This sentinel exists because a build on a stale base produces **false reds against already-fixed code**, and a red that isn't yours is the most expensive kind: you cannot fix it, so every cycle spent on it is wasted.
+   - **present, `99`** → **the wrapper was signalled before cargo reported — INCONCLUSIVE, not a build failure.** Written by the wrapper's own signal trap, so the result is "we never found out", not "it failed". The usual cause is the server being restarted under it. Do **not** enter the fix loop and do **not** edit Rust: `rm -f "$EXIT"` and relaunch, exactly as for `137`. Twice running → escalate rather than relaunching a third time.
+     - **The trap exists because the old failure mode was silence.** A killed wrapper wrote nothing at all, and "no sentinel + dead pid" is indistinguishable from "still building" — Coordinator's sweep skipped those tasks every fire while the work stranded, and a re-dispatch re-paid the full ~3h compile. `99` is what turns that into a legible, actionable state. A SIGKILL still cannot be trapped; that is what the transient scope in the launch block is for.
    - **present, `137`** → **the build was OOM-killed, NOT a build failure.** 137 is 128+9: the launch found `signal: 9` in *this run's* log, meaning the OOM killer SIGKILLed rustc mid-compile. cargo reports that as `error: could not compile … (lib test)` and exits **101 — the same code a genuine test failure produces** — with no `error[Exxx]`, no failing test names, no `test result: FAILED`; the only tell is `(signal: 9, SIGKILL: kill)` buried in the `Caused by:` tail. It is remapped here precisely because, read as 101, it sends you hunting a bug that does not exist in your diff (that already cost a cycle on AA-2868). Your code is very likely fine. Do **not** enter the fix loop and do **not** edit Rust. `rm -f "$EXIT"` and relaunch: the `--test` compile of `src/lib.rs` is the heaviest unit in the build, so it dies when several verifies reach that stage at once, and a retry on a quieter box usually just passes. Killed twice running → escalate to operator rather than relaunching a third time. `signal: 15` (SIGTERM) is a *deliberate* reap and a different cause entirely — do not conflate them.
    - **present, `64`** → **`cargo-sem.sh` refused the invocation, NOT a build failure.** 64 is the wrapper's multi-cargo-chain guard (see Cargo discipline §One cargo per `cargo-sem.sh` call): the launch wrapped two cargo commands inside a single slot acquisition, so the wrapper rejected it and **cargo never ran**. The code is fine; the *command* is wrong. Do **not** enter the fix loop and do **not** edit Rust — that chases a compile error that does not exist and burns the 3-cycle budget on it. Re-read the launch block and confirm the `&&` sits *between* two `"$SEM"` invocations, never inside one, then `rm -f "$EXIT"` and relaunch. If the launch block is already in the split form and you still got 64, escalate to operator with the `Got:` line from `$LOG` — something is rewriting the command.
    - **present, any other non-zero** → cargo ran and failed → steps 3–6 (fix), then `rm -f "$EXIT"` and relaunch.
@@ -212,13 +227,95 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 4. Filter the verify `$LOG` to errors/warnings whose file path appears in your changed-files list. These are yours to fix. Errors in files you did not touch belong to another concurrent task — leave them alone (your task branch is isolated, but worktree state may carry stale build artifacts from a sibling — your changed-files filter handles this).
 5. Fix all of your filtered errors and warnings. **Zero warnings tolerance applies to your changed files only.** Don't fix unrelated warnings — that's another task's responsibility.
 6. After fixing: commit in-worktree, `rm -f "$EXIT"`, and **relaunch** the detached chain (the launch in *Check the sentinel FIRST*). The next wake re-evaluates the sentinel. Hard stop after 3 fix/relaunch cycles — comment with the remaining errors and `escalate to operator`.
-6.5. **Schema-drift check — any task touching `src/resources/`, not just schema-drift-labeled ones.** All 109 `*DataFile`/`JsonSchema`-derived types live under `src/resources/`, and the weekly-only `schema-drift` CI job (root `CLAUDE.md`) leaves a window where a routine enum/struct edit lands without its dependent `assets/schemas/*.json` regenerated (a recurring Reviewer pattern). Close it per-task: if `git diff --name-only main..HEAD` includes anything under `src/resources/`, run the same command as Cargo discipline §Schema-drift verification (default `dev` profile, never `--no-default-features`) once `cargo test --lib` is green:
+6.5. **Schema-drift check — ask the CI guard what is schema-relevant; do not judge it from the path.** The weekly-only `schema-drift` CI job (root `CLAUDE.md`) leaves a window where a routine enum/struct edit lands without its dependent `assets/schemas/*.json` regenerated (a recurring Reviewer pattern), so `scripts/check_schema_regen.py` runs per-change in the cheap `validate` job as the non-compiling approximation. **Run that same script against your own diff before Landing** — it is stdlib-only and does not compile anything:
     ```sh
-    sccache --start-server >/dev/null 2>&1 || true; "$HOME/code/paperclip/agents/architect/cargo-sem.sh" bash -c 'CARGO_INCREMENTAL=0 cargo run --bin generate_schemas' 2>&1 | tee /tmp/genschemas-{task-id}.txt
-    git diff --exit-code assets/schemas/   # empty = no drift; non-empty → git add assets/schemas/ && amend into your fix commit
+    git diff --name-only main..HEAD | python3 scripts/check_schema_regen.py
     ```
-    Sccache is already warm from the clippy/test run, so this is a cheap incremental link, not a cold rebuild. Commit any drift before Landing.
+    - **Exit 0** → nothing schema-relevant changed. Land.
+    - **Exit 1** → it lists the offending files. Run the regeneration (same command as Cargo discipline §Schema-drift verification — default `dev` profile, **never** `--no-default-features`) once `cargo test --lib` is green:
+      ```sh
+      sccache --start-server >/dev/null 2>&1 || true; "$HOME/code/paperclip/agents/architect/cargo-sem.sh" bash -c 'CARGO_INCREMENTAL=0 cargo run --bin generate_schemas' 2>&1 | tee /tmp/genschemas-{task-id}.txt
+      git diff --exit-code assets/schemas/
+      ```
+      **Non-empty** → real drift: `git add assets/schemas/` and amend it into your fix commit. **Empty** → the guard over-approximated and your edit provably cannot move a schema; put the literal token `[skip-schema-regen]` in the PR body you pass to `gh pr create` in §Landing. You have just *proved* the claim by regenerating, so it is an evidenced assertion, not a bypass — say so in one line of the PR body ("`generate_schemas` produces an empty diff; guard reached these files at 2 hops").
+
+    Sccache is already warm from the clippy/test run, so the regeneration is a cheap incremental link, not a cold rebuild.
+
+    > **Why the trigger is the script and not a path prefix.** This step used to fire only on `git diff --name-only main..HEAD` containing `src/resources/`. That is a strict *subset* of what the CI guard checks: the guard derives its roots from `src/bin/generate_schemas.rs`'s imports and then follows `use` edges two hops out, so it also claims files under `src/components/`, `src/systems/` and elsewhere. Two PRs stalled red on exactly that gap on 2026-08-02 (#684 offenders were `components/player.rs` + three `systems/` files, #685's were `combat/damage_system.rs` + `terrain_system.rs`) — the Architect correctly followed the old rule, saw no `src/resources/` change, skipped, and CI failed anyway. Both PRs were otherwise green, so this was the only thing blocking their merge. Running the guard removes the second, hand-maintained copy of "what counts as schema-relevant"; there is now one definition and CI owns it. **Do not re-narrow this trigger to a path prefix** — the prefix is what silently drifted out from under the guard.
 7. **When the sentinel reads `0`, your immediate next tool call is the §Landing block** — one atomic Bash invocation that commits any pending fix, pushes, opens the PR, and `rm -f`s the sentinel. Do NOT end the run between observing `0` and landing: the historical worst failure mode is committing/observing success and then stopping *before* push, stranding verified work with no PR. Landing is one block with no turn boundary inside it. The verify is not complete until Landing prints `PR confirmed for task/{task-id}`. (Note: because the build is detached, Landing usually runs on a *different, later* wake than the launch — that is expected and correct, not a strand.)
+
+## Cloud overflow lane
+
+**OFF unless `ARCHITECT_CLOUD_LANE=1` is set in your environment.** Unset means
+skip this section entirely and launch the local chain as always. The flag is the
+rollback: clearing it restores the previous behaviour with no other edit.
+
+When it is set, run the clippy/test pass on a cloud VM instead of taking a
+`cargo-sem.sh` slot. **This changes where verification runs, not who owns it** —
+you still rebase, fix, regenerate schemas (§6.5), commit, push and open the PR.
+The cloud session is read-only by construction: a landing that did not go through
+you bypasses the schema gate.
+
+Use it only when **all** hold:
+
+- Two or more tasks are waiting on you, so the queue — not this build — is what
+  the pipeline is stuck behind. Measure it; do not guess it from how busy the box
+  feels:
+
+  ```sh
+  curl -fsS "$PAPERCLIP_API_URL/api/companies/<companyId>/issues?limit=200" \
+    ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
+  | python3 -c 'import json,sys,os
+  xs = json.load(sys.stdin)
+  xs = xs if isinstance(xs, list) else xs.get("issues", xs.get("data", []))
+  me = os.environ["PAPERCLIP_AGENT_ID"]
+  print(sum(1 for i in xs
+            if i.get("assigneeAgentId") == me
+            and i.get("status") in ("in_review", "blocked")))'
+  ```
+
+  **Depth is assignee + status, NOT the pipeline label.** `needs-build` /
+  `data-only` are described in the project's `CLAUDE.md`, but `labels` and
+  `labelIds` come back empty on every issue in this instance — a label-based
+  filter silently counts zero and the lane would never fire. If labels are
+  populated later, add them as a *narrowing* filter on top of this count, not as
+  a replacement for it.
+- The branch is pushed. The VM clones the remote and never sees your worktree;
+  `cloud-verify.sh` refuses with `98` rather than verifying stale code.
+
+**A threshold of 2 is not a throttle — measured depth was 13.** So treat the
+count as a floor that stops the lane firing on an empty queue, not as something
+that will ration it. If every task starts going to the cloud and that is not what
+you want, raise the threshold rather than assuming the queue will fall below it.
+
+Launch it detached, exactly as you would the local chain:
+
+```sh
+CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
+( "$CV" watch "{task-id}" "task/{task-id}" >/dev/null 2>&1 & )
+```
+
+Then exit the run. `watch` polls to a terminal verdict, writes
+`{task-id}.exit`, and fires the same wakeup callback the local wrapper does, so
+the next wake reads the sentinel through the **unchanged** state machine above:
+`0` → Landing, non-zero → fix loop, `96`/`98` → environment/base, `99` →
+inconclusive, relaunch.
+
+Two things this does **not** buy, and misreading either wastes a cycle:
+
+- **No quota relief.** Cloud draws the same account rate limits. What you reclaim
+  is the build box's cores and memory. If the queue is short, waiting is cheaper
+  than offloading — the VM starts cold with no sccache, so a single cloud verify
+  is *slower* than a warm local one. This lane trades per-build latency for
+  parallelism, and it is only a win when something else is genuinely blocked.
+- **No verdict you can skip your own verification over.** It is triage. Its value
+  is that a *broken* branch goes back to the Worker without ever consuming a
+  cargo slot; a green one still gets verified locally before Landing.
+
+If the VM cannot publish its verdict you will get `99`, not a red. Do not read
+that as a build failure and do not edit Rust — escalate, it is an environment
+gap. The verdict travels as a git ref (`refs/cloud-verify/<task>/<sha>`), not a
+gist, precisely so it does not depend on `gh`, which the cloud image lacks.
 
 ## Landing: commit, push, and open the PR (ONE atomic block)
 
@@ -301,7 +398,24 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
     # the detached build, exit. A later wake re-evaluates the sentinel.
     echo "$((N + 1))" > "$FRESH"
     rm -f "$VERIFY_DIR/{task-id}.exit"
-    setsid bash -c 'S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"; mkdir -p "$S"; echo verifyrun-{task-id}; echo $$ > "$S/{task-id}.pid"; . "$HOME/.cargo/env" 2>/dev/null || true; export PATH="$HOME/.local/bin:$PATH"; unset CARGO_TARGET_DIR; command -v cargo >/dev/null && command -v sccache >/dev/null || { echo "ENV BROKEN: cargo/sccache still not on PATH after bootstrap — this is NOT a build failure, do not edit Rust; escalate to operator"; echo 96 > "$S/{task-id}.exit"; exit 96; }; cd "${PAPERCLIP_PROJECT}/.paperclip/worktrees/{task-id}" || { echo "ENV BROKEN: worktree missing or PAPERCLIP_PROJECT unset"; echo 97 > "$S/{task-id}.exit"; exit 97; }; git fetch -q origin main || { echo "STALE BASE: git fetch origin main failed — cannot confirm the build sits on current main"; echo 98 > "$S/{task-id}.exit"; exit 98; }; git rebase origin/main >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1; echo "STALE BASE: rebase onto current origin/main conflicts — operator must resolve"; echo 98 > "$S/{task-id}.exit"; exit 98; }; git rev-parse origin/main > "$S/{task-id}.base"; sccache --start-server >/dev/null 2>&1 || true; SEM="$HOME/code/paperclip/agents/architect/cargo-sem.sh"; L="$S/{task-id}.log"; LC0=$(wc -l < "$L" 2>/dev/null || echo 0); "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --all-targets && CARGO_SEM_CGU_DIV=2 "$SEM" env CARGO_INCREMENTAL=0 cargo test --lib; rc=$?; if [ "$rc" -ne 0 ] && tail -n +$((LC0+1)) "$L" 2>/dev/null | grep -q "signal: 9"; then rc=137; fi; echo $rc > "$S/{task-id}.exit"; curl -fsS -X POST "$PAPERCLIP_API_URL/api/agents/$PAPERCLIP_AGENT_ID/wakeup" -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" -d "{\"source\":\"automation\",\"triggerDetail\":\"callback\",\"reason\":\"verify-sentinel-ready\"}" >/dev/null 2>&1 || true' >> "$VERIFY_DIR/{task-id}.log" 2>&1 &
+    # The chain is built once and launched below. Keeping the body in a
+    # variable is not cosmetic: it has to be handed to two different launchers
+    # (transient scope, or bare setsid as the fallback) and a second copy would
+    # drift from this one.
+    LAUNCH='S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"; mkdir -p "$S"; echo verifyrun-{task-id}; echo $$ > "$S/{task-id}.pid"; rm -f "$S/{task-id}.exit"; trap ''[ -f "$S/{task-id}.exit" ] || echo 99 > "$S/{task-id}.exit"'' EXIT; trap ''echo "KILLED: wrapper took a signal before cargo reported — inconclusive, relaunch"; [ -f "$S/{task-id}.exit" ] || echo 99 > "$S/{task-id}.exit"; exit 99'' HUP INT TERM; A="$PAPERCLIP_ISSUE_IDENTIFIER"; [ -n "$A" ] && [ "$A" != "{task-id}" ] && for x in pid exit base log integration; do ln -sfn "$S/{task-id}.$x" "$S/$A.$x"; done; . "$HOME/.cargo/env" 2>/dev/null || true; export PATH="$HOME/.local/bin:$PATH"; unset CARGO_TARGET_DIR; command -v cargo >/dev/null && command -v sccache >/dev/null || { echo "ENV BROKEN: cargo/sccache still not on PATH after bootstrap — this is NOT a build failure, do not edit Rust; escalate to operator"; echo 96 > "$S/{task-id}.exit"; exit 96; }; cd "${PAPERCLIP_PROJECT}/.paperclip/worktrees/{task-id}" || { echo "ENV BROKEN: worktree missing or PAPERCLIP_PROJECT unset"; echo 97 > "$S/{task-id}.exit"; exit 97; }; git fetch -q origin main || { echo "STALE BASE: git fetch origin main failed — cannot confirm the build sits on current main"; echo 98 > "$S/{task-id}.exit"; exit 98; }; git rebase origin/main >/dev/null 2>&1 || { git rebase --abort >/dev/null 2>&1; echo "STALE BASE: rebase onto current origin/main conflicts — operator must resolve"; echo 98 > "$S/{task-id}.exit"; exit 98; }; git rev-parse origin/main > "$S/{task-id}.base"; sccache --start-server >/dev/null 2>&1 || true; SEM="$HOME/code/paperclip/agents/architect/cargo-sem.sh"; L="$S/{task-id}.log"; LC0=$(wc -l < "$L" 2>/dev/null || echo 0); "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --all-targets && CARGO_SEM_CGU_DIV=2 "$SEM" env CARGO_INCREMENTAL=0 cargo test --lib && { if git diff --name-only origin/main...HEAD | grep -qE "^src/.*\\.rs$"; then "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --no-default-features; else true; fi; }; rc=$?; if [ "$rc" -ne 0 ] && tail -n +$((LC0+1)) "$L" 2>/dev/null | grep -q "signal: 9"; then rc=137; fi; rm -f "$S/{task-id}.integration"; if [ "$rc" -eq 0 ] && git diff --name-only origin/main...HEAD | grep -qE "^(src|tests)/.*\\.rs$"; then CARGO_SEM_CGU_DIV=2 "$SEM" env CARGO_INCREMENTAL=0 cargo test --tests > "$S/{task-id}.integration.log" 2>&1; irc=$?; if [ "$irc" -ne 0 ] && grep -q "signal: 9" "$S/{task-id}.integration.log" 2>/dev/null; then irc=137; fi; echo $irc > "$S/{task-id}.integration"; fi; echo $rc > "$S/{task-id}.exit"; curl -fsS -X POST "$PAPERCLIP_API_URL/api/agents/$PAPERCLIP_AGENT_ID/wakeup" -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" -d "{\"source\":\"automation\",\"triggerDetail\":\"callback\",\"reason\":\"verify-sentinel-ready\"}" >/dev/null 2>&1 || true'
+    # `setsid` detaches the SESSION, not the CGROUP. The chain stays inside
+    # `paperclip.service`, so `systemctl restart` takes it down with the server
+    # (default `KillMode=control-group`) — nine in-flight verifies died at once
+    # that way, ~45 min of build across nine branches, and none of them lived
+    # long enough to write a sentinel. A transient scope reparents the chain out
+    # of the service cgroup, which is the only thing that makes the detachment
+    # mean what it says. Fall back to bare setsid where there is no user bus.
+    if systemd-run --user --scope --collect --quiet true >/dev/null 2>&1; then
+      systemd-run --user --scope --collect --quiet --unit="verifyrun-{task-id}" \
+        setsid bash -c "$LAUNCH" >> "$VERIFY_DIR/{task-id}.log" 2>&1 &
+    else
+      setsid bash -c "$LAUNCH" >> "$VERIFY_DIR/{task-id}.log" 2>&1 &
+    fi
     echo "origin/main advanced (freshness re-verify $((N + 1))/$FRESHNESS_CAP) — re-verifying against current main; a later wake lands it"
     exit 0
   fi
@@ -344,7 +458,10 @@ git ls-remote --exit-code --heads origin "task/{task-id}" >/dev/null \
   || { echo "NO REMOTE BRANCH task/{task-id} — push failed silently"; exit 1; }
 gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q . \
   || { echo "NO PR CREATED for task/{task-id} — run failed"; exit 1; }
-rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{task-id}.freshness" "$VERIFY_DIR/{task-id}.pid"   # clear sentinel + base + freshness counter so a stray re-wake won't re-land
+rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{task-id}.freshness" "$VERIFY_DIR/{task-id}.pid" "$VERIFY_DIR/{task-id}.integration" "$VERIFY_DIR/{task-id}.integration.log"
+[ -n "$PAPERCLIP_ISSUE_IDENTIFIER" ] && [ "$PAPERCLIP_ISSUE_IDENTIFIER" != "{task-id}" ] \
+  && rm -f "$VERIFY_DIR/$PAPERCLIP_ISSUE_IDENTIFIER".{pid,exit,base,log,integration}   # the subtask-keyed aliases (§Detached-build liveness)
+# clear sentinel + base + freshness counter + report-only integration result so a stray re-wake won't re-land or re-report
 echo "PR confirmed for task/{task-id}"
 ```
 
@@ -362,7 +479,7 @@ The Coordinator picks up the URL on its next sweep.
 
 ## Advisory smoke check (non-blocking, targeted)
 
-After Landing (the PR is open and confirmed), OPTIONALLY run the `bevy-rpg`
+After Landing (the PR is open and confirmed), OPTIONALLY run the project's
 headless smoke harness (`--smoke`, see the repo's `docs/SMOKE_TESTING.md`). It
 boots the real game headless on a software Vulkan adapter and catches boot-path
 panics that `cargo test --lib` never exercises — the lib unit tests run under

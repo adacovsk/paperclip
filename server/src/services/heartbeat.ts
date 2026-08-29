@@ -64,6 +64,19 @@ const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
+// Invocation source for runs whose work executes entirely outside this process,
+// with no adapter child to track: the Architect's detached `cargo-sem.sh` builds.
+// The wrapper opens the run when it wins a slot and closes it when the build
+// exits, which is the ONLY thing that settles such a run — see the reaper
+// exemption below for why this must never be reaped or retried.
+const DETACHED_INVOCATION_SOURCE = "detached_external";
+// Marker written on in-flight runs when the server is shutting down, *before* it
+// SIGTERMs their child processes. Without it the next boot's reaper can only say
+// "child pid N is no longer running", which reads like the child died on its own
+// and sent an investigation after OOM / SDK stream drops. The actual cause of
+// every clustered `process_lost` observed so far is us: a restart (a `tsx watch`
+// reload on any edited server file, or an operator restart) killing live runs.
+const SHUTDOWN_INTERRUPT_ERROR_CODE = "process_lost_shutdown";
 // Hard ceiling on `adapter.execute` so a hung adapter (child process never exits, never emits close)
 // can't wedge the awaiting promise indefinitely. The watchdog rejects the awaited promise; the
 // adapter's child process is terminated separately by the reaper. Tunable via env.
@@ -96,6 +109,34 @@ const CHAIN_WAKE_MIN_INTERVAL_MS = Math.max(
   0,
   Number(process.env.CHAIN_WAKE_MIN_INTERVAL_MS) || 5 * 60 * 1000,
 );
+
+/**
+ * Chain-wake candidate guard (AA-2966): exclude a task that is `in_review`
+ * behind a live child stage owned by a *different* agent.
+ *
+ * The parent is waiting on that child by definition, so re-waking the parent's
+ * owner cannot advance anything — the agent re-reads the branch, finds its own
+ * work already committed, writes a no-op, and exits. One Worker task absorbed
+ * 28 such wakes in three days (its own run log named it the "seventeenth
+ * identical dispatch"), and 147 of 200 Worker runs in that window were sub-40s
+ * no-ops.
+ *
+ * The two older guards cannot see this class: `ne(issues.id, issueId)` only
+ * blocks re-selecting the task just processed, and the no-progress guard only
+ * looks at the *triggering* run, which is often real work. The child's own
+ * `subtask.completed` callback is what legitimately re-wakes this parent.
+ */
+export function notWaitingOnForeignChildStage(agentId: string) {
+  return sql`NOT (
+    ${issues.status} = 'in_review'
+    AND EXISTS (
+      SELECT 1 FROM ${issues} AS child
+      WHERE child.parent_id = ${issues.id}
+        AND child.status NOT IN ('done', 'cancelled')
+        AND child.assignee_agent_id IS DISTINCT FROM ${agentId}
+    )
+  )`;
+}
 
 export interface RunWatchdog {
   promise: Promise<never>;
@@ -1080,16 +1121,21 @@ export function heartbeatService(db: Db) {
           )
         : 0;
 
+    // Context size is input + cached input, not input alone. On a resumed
+    // session the whole prior transcript is served from cache, so
+    // `inputTokens` stays in the low tens while `cachedInputTokens` climbs into
+    // the millions — measuring only the former left this arm permanently dead
+    // and let sessions grow without bound.
+    const latestContextTokens = latestRawUsage
+      ? latestRawUsage.inputTokens + latestRawUsage.cachedInputTokens
+      : 0;
+
     let reason: string | null = null;
     if (policy.maxSessionRuns > 0 && runs.length > policy.maxSessionRuns) {
       reason = `session exceeded ${policy.maxSessionRuns} runs`;
-    } else if (
-      policy.maxRawInputTokens > 0 &&
-      latestRawUsage &&
-      latestRawUsage.inputTokens >= policy.maxRawInputTokens
-    ) {
+    } else if (policy.maxRawInputTokens > 0 && latestContextTokens >= policy.maxRawInputTokens) {
       reason =
-        `session raw input reached ${formatCount(latestRawUsage.inputTokens)} tokens ` +
+        `session raw input reached ${formatCount(latestContextTokens)} tokens ` +
         `(threshold ${formatCount(policy.maxRawInputTokens)})`;
     } else if (policy.maxSessionAgeHours > 0 && sessionAgeHours >= policy.maxSessionAgeHours) {
       reason = `session age reached ${Math.floor(sessionAgeHours)} hours`;
@@ -1903,6 +1949,43 @@ export function heartbeatService(db: Db) {
     }
   }
 
+  /**
+   * Stamp every run whose child we are about to kill, so the loss is attributable.
+   *
+   * Call this from the shutdown handler BEFORE `killAllRunningProcesses`. The
+   * kill and the process exit that follows leave no trace in the run record;
+   * the next boot's reaper finds a dead pid and reports the generic
+   * "child pid N is no longer running", which is indistinguishable from an OOM
+   * or an SDK stream drop. Recording the signal here is what makes
+   * `process_lost` say *why* — and clustered losses (four in the 43 minutes
+   * around two merges that touched watched server files) are restarts, not
+   * child-process instability.
+   */
+  async function markRunsInterruptedByShutdown(signal: string) {
+    const runIds = Array.from(runningProcesses.keys());
+    for (const runId of runIds) {
+      const message = `Server shutting down (${signal}); this run's child process is being killed`;
+      try {
+        const updated = await setRunStatus(runId, "running", {
+          error: message,
+          errorCode: SHUTDOWN_INTERRUPT_ERROR_CODE,
+        });
+        if (updated) {
+          await appendRunEvent(updated, await nextRunEventSeq(updated.id), {
+            eventType: "lifecycle",
+            stream: "system",
+            level: "warn",
+            message,
+            payload: { signal, ...(updated.processPid ? { processPid: updated.processPid } : {}) },
+          });
+        }
+      } catch (err) {
+        logger.warn({ err, runId }, "failed to record shutdown interruption on run");
+      }
+    }
+    return runIds.length;
+  }
+
   async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = new Date();
@@ -1921,6 +2004,16 @@ export function heartbeatService(db: Db) {
 
     for (const { run, adapterType } of activeRuns) {
       if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
+
+      // Detached runs have no adapter child and are never in the in-memory maps,
+      // so every heuristic below is wrong for them by construction. Left in, a
+      // detached run is reaped the moment its pid is unobservable and — on a
+      // tracked-local-child adapter with a pid recorded — can satisfy
+      // `shouldRetry` and RE-DISPATCH THE AGENT for work that is running fine.
+      // Only the caller that launched the work knows when it is done, so only
+      // that caller settles these: a leaked row costs a stale pulse, a spurious
+      // retry costs a duplicate run of whatever was already in flight.
+      if (run.invocationSource === DETACHED_INVOCATION_SOURCE) continue;
 
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
@@ -1952,9 +2045,12 @@ export function heartbeatService(db: Db) {
       }
 
       const shouldRetry = tracksLocalChild && !!run.processPid && (run.processLossRetryCount ?? 0) < 1;
-      const baseMessage = run.processPid
-        ? `Process lost -- child pid ${run.processPid} is no longer running`
-        : "Process lost -- server may have restarted";
+      const interruptedByShutdown = run.errorCode === SHUTDOWN_INTERRUPT_ERROR_CODE;
+      const baseMessage = interruptedByShutdown
+        ? `Process lost -- the server shut down while this run was in flight and killed child pid ${run.processPid ?? "?"} (${run.error ?? "shutdown"})`
+        : run.processPid
+          ? `Process lost -- child pid ${run.processPid} is no longer running`
+          : "Process lost -- server may have restarted";
 
       let finalizedRun = await setRunStatus(run.id, "failed", {
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
@@ -3091,9 +3187,55 @@ export function heartbeatService(db: Db) {
                 logger.warn(
                   { issueId, agentId: agent.id, role: agent.role, runId: run.id, branch: branchToCheck, exitCode },
                   exitCode === 2
-                    ? "Layer-2 masquerade guard: task branch is not on origin (no PR landed) — withholding auto-done, holding in_review for re-dispatch"
+                    ? "Layer-2 masquerade guard: task branch is not on origin — holding in_review for re-dispatch"
                     : "Layer-2 masquerade guard: could not confirm task branch on origin (git error) — failing closed, holding in_review",
                 );
+              }
+
+              // Pushed is not landed. A Worker pushes on every successful run
+              // without merging anything, so `branchOnOrigin` alone marked tasks
+              // `done` whose commits lived only on `task/<id>` — and then fought
+              // the Coordinator audit in a flip/revert loop (AA-3297).
+              //
+              // `done` requires the branch to be reachable from the base ref.
+              // Fetch first: this repo is a long-lived worktree whose
+              // remote-tracking refs can be many merges stale, and a stale
+              // `origin/<base>` answers "not merged" for work that landed.
+              // Fails closed on any error, same as above — a withheld `done` is
+              // self-correcting via re-dispatch, a false `done` is silent loss.
+              const baseRef = executionWorkspace.repoRef ?? "main";
+              let branchMerged = false;
+              if (branchOnOrigin) {
+                try {
+                  await execFile("git", ["-C", repoForLsRemote, "fetch", "--quiet", "origin", baseRef], {
+                    timeout: 60_000,
+                  });
+                  await execFile(
+                    "git",
+                    [
+                      "-C",
+                      repoForLsRemote,
+                      "merge-base",
+                      "--is-ancestor",
+                      `origin/${branchToCheck}`,
+                      `origin/${baseRef}`,
+                    ],
+                    { timeout: 30_000 },
+                  );
+                  branchMerged = true;
+                } catch (err: unknown) {
+                  logger.info(
+                    {
+                      issueId,
+                      agentId: agent.id,
+                      runId: run.id,
+                      branch: branchToCheck,
+                      baseRef,
+                      exitCode: (err as { code?: number }).code,
+                    },
+                    "Layer-2 landing gate: branch is pushed but not reachable from the base ref — holding in_review until it merges",
+                  );
+                }
               }
 
               // Surface committed-but-unlanded work as in_review so the
@@ -3105,14 +3247,15 @@ export function heartbeatService(db: Db) {
               const nextStatus = resolveNoSkillCompletionStatus({
                 currentStatus: existingIssue.status,
                 branchOnOrigin,
+                branchMerged,
               });
               if (nextStatus) {
                 await issuesSvc.update(issueId, { status: nextStatus });
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, nextStatus },
                   nextStatus === "done"
-                    ? "auto-marked task done for agent without paperclip skill (branch confirmed on origin)"
-                    : "held task at in_review for agent without paperclip skill (branch not on origin — awaiting next stage / re-dispatch)",
+                    ? "auto-marked task done for agent without paperclip skill (branch merged into the base ref)"
+                    : "held task at in_review for agent without paperclip skill (not merged — awaiting next stage / re-dispatch)",
                 );
               } else if (existingIssue.status !== "in_review") {
                 logger.info(
@@ -3217,6 +3360,7 @@ export function heartbeatService(db: Db) {
                     eq(issues.assigneeAgentId, agent.id),
                     ne(issues.id, issueId),
                     inArray(issues.status, ["in_progress", "in_review", "todo"]),
+                    notWaitingOnForeignChildStage(agent.id),
                   ),
                 )
                 .orderBy(
@@ -4341,6 +4485,122 @@ export function heartbeatService(db: Db) {
     getRun,
 
     /**
+     * Open a run standing for work that executes outside this process.
+     *
+     * The Architect dispatches `cargo-sem.sh` detached and exits, so a verify
+     * that is compiling for hours holds no run at all: the issue row reads
+     * exactly like one that never started, and the `Live` pulse — which is just
+     * `live-runs` keyed by `contextSnapshot.issueId` — stays dark. The build
+     * state was only ever observable by hand, via `/proc` and the semaphore's
+     * lockfiles.
+     *
+     * This gives that work a row, so the existing UI lights up with no new
+     * surface. `processPid` is the wrapper's own pid, recorded for diagnosis
+     * only — nothing supervises it (see the reaper exemption).
+     */
+    async openDetachedRun(opts: {
+      companyId: string;
+      agentId: string;
+      issueId?: string | null;
+      pid?: number | null;
+      triggerDetail?: string | null;
+    }) {
+      const now = new Date();
+      const run = await db
+        .insert(heartbeatRuns)
+        .values({
+          companyId: opts.companyId,
+          agentId: opts.agentId,
+          invocationSource: DETACHED_INVOCATION_SOURCE,
+          triggerDetail: opts.triggerDetail ?? null,
+          status: "running",
+          startedAt: now,
+          processPid: opts.pid ?? null,
+          processStartedAt: opts.pid ? now : null,
+          contextSnapshot: opts.issueId ? { issueId: opts.issueId } : null,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      publishLiveEvent({
+        companyId: run.companyId,
+        type: "heartbeat.run.status",
+        payload: {
+          runId: run.id,
+          agentId: run.agentId,
+          status: run.status,
+          invocationSource: run.invocationSource,
+          triggerDetail: run.triggerDetail,
+          error: null,
+          errorCode: null,
+          startedAt: run.startedAt ? new Date(run.startedAt).toISOString() : null,
+          finishedAt: null,
+        },
+      });
+
+      return run;
+    },
+
+    /**
+     * Settle a detached run. Idempotent: a run already in a terminal state is
+     * returned untouched, so a wrapper that closes twice (trap plus normal exit)
+     * cannot rewrite a recorded outcome.
+     */
+    async finishDetachedRun(
+      runId: string,
+      opts: { exitCode?: number | null; error?: string | null },
+    ) {
+      const existing = await getRun(runId);
+      if (!existing) return null;
+      if (existing.invocationSource !== DETACHED_INVOCATION_SOURCE) return null;
+      if (existing.status !== "running" && existing.status !== "queued") return existing;
+
+      const exitCode = typeof opts.exitCode === "number" ? opts.exitCode : null;
+      const ok = exitCode === 0;
+      return await setRunStatus(runId, ok ? "succeeded" : "failed", {
+        finishedAt: new Date(),
+        exitCode,
+        error: ok ? null : (opts.error ?? `Detached command exited ${exitCode ?? "unknown"}`),
+      });
+    },
+
+    /**
+     * Cancel the detached runs attached to an issue, so their wrappers stop.
+     *
+     * A verify moved to `blocked` (branch conflicts with the base, typically)
+     * has a worthless result, but its build holds a semaphore slot until it
+     * finishes on its own, delaying every verify queued behind it.
+     *
+     * This does NOT signal anything. The server knows the wrapper's pid but not
+     * its process tree, and the wrapper is not a process-group leader, so
+     * killing from here would either miss the compiler or take out the agent's
+     * whole session. Instead the run is marked `cancelled` and the wrapper's own
+     * watcher — which does know its child — polls, sees it, and tears the build
+     * down locally.
+     */
+    async cancelDetachedRunsForIssue(issueId: string, reason: string) {
+      const open = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.invocationSource, DETACHED_INVOCATION_SOURCE),
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
+          ),
+        );
+
+      for (const { id } of open) {
+        await setRunStatus(id, "cancelled", {
+          finishedAt: new Date(),
+          error: reason,
+          errorCode: "detached_cancelled",
+        });
+      }
+      return open.map((row) => row.id);
+    },
+
+    /**
      * Restart an in-flight run's hard timeout from now.
      *
      * Called when a run's real work finally *starts* after queueing on
@@ -4471,6 +4731,8 @@ export function heartbeatService(db: Db) {
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
+
+    markRunsInterruptedByShutdown,
 
     resumeQueuedRuns,
 

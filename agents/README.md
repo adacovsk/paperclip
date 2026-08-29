@@ -1,6 +1,6 @@
 # Pipeline Roles
 
-Cross-role contract reference for the bevy-rpg agent pipeline. Each role's full spec lives in `{role}/INSTRUCTIONS.md`; this file is the matrix of who does what so they can't drift.
+Cross-role contract reference for the game project's agent pipeline. Each role's full spec lives in `{role}/INSTRUCTIONS.md`; this file is the matrix of who does what so they can't drift.
 
 ## Pipeline
 

@@ -1056,6 +1056,31 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     }
 
+    // A dead-end task must not keep a build slot. When a verify is blocked (its
+    // branch conflicts with the base) or cancelled, the detached build the
+    // Architect already launched is producing a result nobody will use, yet it
+    // occupies a build semaphore slot until it finishes on its own, delaying
+    // every verify queued behind it. Cancelling the run is what the wrapper's
+    // watcher polls for.
+    const statusChangedToDeadEnd =
+      existing.status !== issue.status &&
+      (issue.status === "blocked" || issue.status === "cancelled");
+    if (statusChangedToDeadEnd) {
+      heartbeat
+        .cancelDetachedRunsForIssue(issue.id, `Issue moved to ${issue.status}`)
+        .then((runIds) => {
+          if (runIds.length > 0) {
+            logger.info(
+              { issueId: issue.id, identifier: issue.identifier, runIds, status: issue.status },
+              "cancelled detached builds for dead-end issue",
+            );
+          }
+        })
+        .catch((err) =>
+          logger.warn({ err, issueId: issue.id }, "failed to cancel detached runs for issue"),
+        );
+    }
+
     const assigneeChanged = assigneeWillChange;
     const statusChangedFromBacklog =
       existing.status === "backlog" &&

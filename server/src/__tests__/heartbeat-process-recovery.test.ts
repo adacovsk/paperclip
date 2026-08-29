@@ -73,6 +73,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     includeIssue?: boolean;
     runErrorCode?: string | null;
     runError?: string | null;
+    invocationSource?: string;
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
@@ -118,7 +119,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       id: runId,
       companyId,
       agentId,
-      invocationSource: "assignment",
+      invocationSource: input?.invocationSource ?? "assignment",
       triggerDetail: "system",
       status: input?.runStatus ?? "running",
       wakeupRequestId,
@@ -176,6 +177,51 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakeup?.status).toBe("claimed");
   });
 
+  // A detached run's work lives outside this process, so a dead pid says nothing
+  // about the build. Reaping one is not a cosmetic wrong status: the retry path
+  // below would re-dispatch the agent and start a duplicate multi-hour build
+  // while the original is still compiling.
+  it("never reaps or retries a detached run, even with a dead pid", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "claude_local",
+      invocationSource: "detached_external",
+      processPid: 999_999_999,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(0);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("running");
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+  });
+
+  it("cancels an issue's detached runs so the wrapper can tear the build down", async () => {
+    const { runId, issueId } = await seedRunFixture({
+      adapterType: "claude_local",
+      invocationSource: "detached_external",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const cancelled = await heartbeat.cancelDetachedRunsForIssue(issueId, "Issue moved to blocked");
+    expect(cancelled).toEqual([runId]);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("cancelled");
+    expect(run?.errorCode).toBe("detached_cancelled");
+
+    // The wrapper's close must not overwrite a recorded cancellation with the
+    // exit code of the build it just killed.
+    await heartbeat.finishDetachedRun(runId, { exitCode: 143 });
+    expect((await heartbeat.getRun(runId))?.status).toBe("cancelled");
+  });
+
   it("queues exactly one retry when the recorded local pid is dead", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       processPid: 999_999_999,
@@ -207,6 +253,30 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
     expect(issue?.checkoutRunId).toBe(runId);
+  });
+
+  it("attributes the loss to the server shutdown that caused it", async () => {
+    const { runId } = await seedRunFixture({ processPid: 999_999_999 });
+    const heartbeat = heartbeatService(db);
+
+    runningProcesses.set(runId, { child: { kill: () => true } as never, graceSec: 1 });
+    const marked = await heartbeat.markRunsInterruptedByShutdown("SIGTERM");
+    expect(marked).toBe(1);
+    runningProcesses.delete(runId);
+
+    await heartbeat.reapOrphanedRuns();
+
+    const failedRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.errorCode).toBe("process_lost");
+    // The whole point: the record says the server killed it, not the bare
+    // "child pid N is no longer running" that reads as child instability.
+    expect(failedRun?.error).toContain("the server shut down");
+    expect(failedRun?.error).toContain("SIGTERM");
   });
 
   it("does not queue a second retry after the first process-loss retry was already used", async () => {

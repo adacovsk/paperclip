@@ -26,7 +26,7 @@
 # revision of this header claimed "peak build RSS ~2 GB; 24 GB free" and
 # concluded memory was a non-issue. That is stale by ~4x: measured with 3 slots
 # held, the two workspace-crate rustc alone were 7.8 GB (`--crate-name
-# rust_bevy_rpg src/main.rs`, 47 min in) and 4.1 GB (`src/lib.rs`) — 12 GB live,
+# <crate> src/main.rs`, 47 min in) and 4.1 GB (`src/lib.rs`) — 12 GB live,
 # 642 MB free of 31 GB, and into swap. The big linking rustc for this crate is
 # the outlier, not the dependency rustc (~0.2-0.3 GB each), so worst case scales
 # with SLOTS: 3 slots x ~8 GB is ~24 GB on a 31 GB box that also holds ~12 GB of
@@ -68,11 +68,11 @@
 # parallelism, which concurrent slots already supply at the machine level.
 #
 # CGU is exported as CARGO_PROFILE_DEV_CODEGEN_UNITS rather than committed to
-# bevy-rpg's Cargo.toml on purpose. It must NOT apply to a human's dev build:
+# the project's Cargo.toml on purpose. It must NOT apply to a human's dev build:
 # workspace crates compile incrementally at 256 units, and lowering that
 # coarsens rebuilds and slows the edit-compile-run loop. Fleet builds are
 # non-incremental, so they lose nothing. (Dependencies are a different case and
-# are capped in bevy-rpg's [profile.dev.package."*"] — cargo never builds them
+# are capped in the project's [profile.dev.package."*"] — cargo never builds them
 # incrementally, so the cap is free for everyone.)
 #
 # HOW FAIRNESS IS ENFORCED. Admission is a strict ticket queue, decoupled from
@@ -119,7 +119,8 @@
 # until the child exits. Do NOT rewrite this to `exec` into the command — that
 # drops the lock at exec and reintroduces unbounded concurrency. fd 7 = own
 # presence, fd 6 = ctl-lock (both released before the command runs); fd 4 = a
-# throwaway liveness probe (subshell-scoped).
+# throwaway liveness probe (subshell-scoped); fd 3 = the per-worktree mutex,
+# taken before any ticket is drawn and held for the same lifetime as fd 9.
 #
 # We deliberately do NOT `taskset`-pin slots to disjoint core sets (the old 2-slot
 # design pinned 0-3 / 4-7). On 4 cores that partitioning both fails to divide
@@ -138,59 +139,167 @@ NPROC="$(nproc 2>/dev/null || echo 4)"
 # distinct core ids from lscpu; fall back to nproc where lscpu is unavailable.
 PHYS="$(lscpu -p=core 2>/dev/null | grep -v '^#' | sort -u | grep -c '' 2>/dev/null)"
 [ "${PHYS:-0}" -ge 1 ] 2>/dev/null || PHYS="$NPROC"
-# Default slots: one build per physical core, minus one reserved for the OS,
-# sccache, and the Paperclip orchestration that share this box; floor of 2.
-# Default per-build job cap: logical cores spread across the slots, floor of 2 so
-# a build always makes reasonable progress. Default codegen units: one per
-# physical core, floor of 1 (1 is legal — it serializes codegen within a rustc,
-# it does not disable it). Explicit CARGO_SEM_* overrides any of the three.
-SLOTS="${CARGO_SEM_SLOTS:-$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))}"
-JOBS="${CARGO_SEM_JOBS:-$(( NPROC / SLOTS < 2 ? 2 : NPROC / SLOTS ))}"
-CGU="${CARGO_SEM_CGU:-$(( PHYS < 1 ? 1 : PHYS ))}"
-# Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
-# floored at 1, so a caller can say "this stage is the heavy one, give it less"
-# without embedding a number tuned to one machine. The test stage passes 2 (see
-# the Architect INSTRUCTIONS launch block): on this 4-core box that is 4 -> 2,
-# and on a 16-core box 16 -> 8 — the same *proportional* relief rather than a
-# crippling absolute. Divides an explicit CARGO_SEM_CGU too, so "half whatever
-# this box decided" holds however CGU was arrived at.
-CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
-[ "$CGU" -ge 1 ] || CGU=1
+# =========================== CAPACITY DERIVATION ============================
+#
+# DECLARE THE BUDGETS, DERIVE THE KNOBS — in that order, in this one block.
+#
+# The header above is emphatic that the lever is the PRODUCT, SLOTS x JOBS x
+# CGU. An earlier revision nonetheless derived all three *independently* from
+# core counts and then patched SLOTS for memory sixty lines further down. Two
+# defects followed from that shape, and both are structural rather than
+# mis-tuning:
+#
+#   1. ORDERING. JOBS was computed from SLOTS *before* the memory cap lowered
+#      SLOTS, so it described a slot count that no longer existed. Measured on
+#      this box: JOBS=2 (from 8/3) while 2 slots actually ran — the box
+#      simultaneously under-jobbed each build and over-threaded the machine.
+#
+#   2. THE PRODUCT WAS NEVER EXPRESSED. Nobody chose it; it fell out. This box
+#      landed on 3x2x4 = 24 threads on 4 physical cores (6x oversubscription),
+#      and 2x2x4 = 16 after the cap. Neither number was a decision, and the
+#      header's own bug report — 37 threads, desktop unusable — was the same
+#      defect one revision earlier. A quantity that is never named cannot be
+#      tuned, only overridden from outside, which is why every correction to
+#      this script arrived as a CARGO_SEM_* exception.
+#
+# So the inputs are now the two things the hardware actually bounds — a THREAD
+# budget and a MEMORY budget — and SLOTS/JOBS/CGU are consequences. SLOTS is
+# final before anything derives from it. The product is invariant by
+# construction, so hitting a different target means changing a budget, not
+# bolting on another exception.
+#
+# THREAD BUDGET. Default NPROC: do not run more compile threads than the
+# machine has hardware threads. Oversubscription past ~1x buys churn, cache
+# thrash and heat — and on a 15 W ULV part heat means throttling, so the
+# marginal thread makes the other builds slower. `nice -n19`/`ionice -c3`
+# already handle desktop priority; they do not make excess threads free.
+THREADS="${CARGO_SEM_THREADS:-$NPROC}"
+[ "$THREADS" -ge 1 ] 2>/dev/null || THREADS="$NPROC"
 
-# MEMORY CEILING — derived from measurement, never from a constant.
+# MEMORY BUDGET, and the slot ceiling that falls out of it.
 #
-# Every default above comes from core counts, but the header is explicit that
-# memory binds first ("3 slots x ~8 GB is ~24 GB on a 31 GB box"). A box with
-# these 4 cores and 8 GB would thrash on settings that are fine here; one with
-# 128 GB would never OOM at all. So slots are additionally capped by what this
-# machine can actually hold.
-#
-# The per-build figure is NOT hardcoded: `run()` records peak RSS of each build
+# The per-build figure is NOT hardcoded: run() records peak RSS of each build
 # via /usr/bin/time and keeps a monotonic high-water mark in $RSSF, so the
 # estimate is this box's own worst observed build. Until a build has been
-# measured the cap is simply inactive — an unmeasured machine keeps the
-# CPU-derived slots rather than accepting an invented number.
+# measured the memory ceiling is simply inactive — an unmeasured machine keeps
+# the CPU-derived slots rather than accepting an invented number.
 #
 # MemTotal, not MemAvailable: every caller must agree on capacity or they would
 # disagree about how many slot locks exist. MemTotal is stable; MemAvailable
 # moves as builds start, so deriving from it would let two concurrent callers
-# compute different SLOTS. The mark only ever rises, so the cap only ever
-# *lowers* slots — capacity shrinks, never grows, which is the safe direction
-# (a slot already held above the new ceiling drains and is simply not reused).
+# compute different SLOTS. The window file changes only when a build finishes,
+# so it is stable in the same sense — every caller reading it at a given moment
+# derives the same SLOTS, which is the invariant that matters.
 #
-# An explicit CARGO_SEM_SLOTS still wins: if the operator has said how many,
-# that is a decision, not an estimate.
+# A RECENT WINDOW, NOT AN ALL-TIME MAXIMUM. An earlier revision kept a single
+# monotonically-rising high-water mark, on the reasoning that capacity should
+# only ever shrink. That is not a safe direction, it is a one-way ratchet: a
+# single outlier build pins the ceiling forever, because nothing can ever lower
+# it again. Measured failure: one build recorded 10.90 GiB, which fixed
+# memslots at (31.06 GiB x 70%) / 10.90 GiB = 1 permanently. The queue went
+# strictly serial with two of three physical slots sitting idle and eleven
+# verifies waiting — a multi-day drain caused entirely by one stale number.
+#
+# So the estimate is the max over the last WINDOW recorded builds. Still
+# pessimistic (a max, not a mean — the ceiling must survive the worst build in
+# the window), still this machine's own measurements, but an outlier now ages
+# out after WINDOW builds instead of never. Do NOT restore the all-time
+# maximum: a ceiling that cannot fall is a ceiling that ends up wrong forever.
+#
+# NOT ALL OF MemTotal IS THE BUILD'S TO SPEND. This is a desktop, not a
+# dedicated build box: a browser, an editor, postgres and the Paperclip server
+# share it, plus the page cache that makes the builds themselves fast. Dividing
+# the WHOLE of MemTotal by the peak build handed every byte to cargo. Measured
+# failure: MemTotal 31.1 GiB / peak 9.35 GiB = 3, the CPU derivation was also
+# 3, so the ceiling lowered nothing and three slots were admitted at ~9.35 GiB
+# each = 28 GiB of rustc before the desktop got a byte. Result was a 35-minute
+# OOM storm — 14 oom-killer invocations, all 4 GiB of swap exhausted, rustc
+# killed twice at ~7.9 GiB, and a dozen browser processes taken as collateral
+# because they carry a higher oom_score_adj.
+#
+# Hence a PERCENTAGE of MemTotal. Still MemTotal-derived, so the "every caller
+# must agree" invariant holds — a percentage of a stable number is stable. The
+# default reserves ~30% (~9 GiB here) for everything that is not a build, sized
+# to what the desktop plus page cache was actually holding when the box went
+# over. Raising it toward 100 re-creates the storm; lowering it serializes
+# builds, which is the safe direction — swapping a build box is worse than
+# queueing it.
 RSSF="$D/cargo-sem.peak-rss"
 RSSL="$D/cargo-sem.rss.lock"
-if [ -z "${CARGO_SEM_SLOTS:-}" ]; then
+# How many recent builds the memory estimate looks back over. Small enough that
+# one outlier clears in a few builds, large enough that the ceiling is not set
+# by a single cheap incremental compile.
+RSSWIN="${CARGO_SEM_RSS_WINDOW:-5}"
+[ "$RSSWIN" -ge 1 ] 2>/dev/null || RSSWIN=5
+MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
+[ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
+
+# derive_limits — SLOTS, then JOBS x CGU, from the ceilings as they stand NOW.
+#
+# A FUNCTION, not a one-shot, because the memory ceiling it reads is designed to
+# move: `$RSSF` is a rolling window of recent builds, so `_peak` — and therefore
+# SLOTS — changes as builds finish. Resolving it once at launch meant a
+# long-lived waiter kept enforcing whatever ceiling was true when it started,
+# and a stale-low waiter at the FIFO head pinned every ticket behind it (the
+# strict no-overtake rule below means the queue does not run slow, it stops).
+#
+# Re-deriving inside the admission loop does not break the agreement the header
+# above requires. That invariant is "every caller reading at a given moment
+# derives the same SLOTS" — a property of the inputs (MemTotal is stable, and
+# the window file changes only when a build finishes), not of when the reading
+# happens. Callers converge on each other as the window moves rather than each
+# holding its own launch-time snapshot.
+#
+# JOBS and CGU are re-derived with it, deliberately: they are the per-slot
+# thread budget and are meaningless against a slot count that no longer exists.
+# Computing them from a stale SLOTS is the ordering bug the header records as
+# already having been made once.
+derive_limits() {
+  # SLOTS — the one quantity bounded by BOTH ceilings, so it resolves first.
+  # Cores: one build per physical core, less one reserved for the OS, sccache and
+  # the Paperclip orchestration sharing this box; floor of 2. Memory: how many
+  # worst-observed builds fit in the budget. The lower wins. An explicit
+  # CARGO_SEM_SLOTS is a decision, not an estimate, and beats both.
+  _cpuslots=$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))
+  _memslots="$_cpuslots"
   _memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
-  _peak=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); _peak="${_peak:-0}"
+  _peak=$(awk 'BEGIN{m=0} {gsub(/[^0-9]/,"")} $0!="" && $0+0>m {m=$0+0} END{print m}' "$RSSF" 2>/dev/null)
+  _peak="${_peak:-0}"
   if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
-    _memslots=$(( _memkb / _peak ))
+    _memslots=$(( (_memkb * MEMPCT / 100) / _peak ))
     [ "$_memslots" -ge 1 ] || _memslots=1
-    [ "$_memslots" -lt "$SLOTS" ] && SLOTS="$_memslots"
   fi
-fi
+  SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
+  [ "$SLOTS" -ge 1 ] 2>/dev/null || SLOTS=1
+
+  # JOBS x CGU — now, and only now, split the per-slot thread budget. Both
+  # multiply into the same product but cost memory differently: JOBS spawns
+  # additional whole rustc processes, CGU adds codegen threads inside one (more
+  # LLVM modules live at once). Splitting them evenly rather than loading either
+  # end keeps both the process count and the per-process footprint moderate.
+  # Floors of 1 apply to each; CGU=1 is legal and serializes codegen within a
+  # rustc rather than disabling it.
+  _per_slot=$(( THREADS / SLOTS ))
+  [ "$_per_slot" -ge 1 ] || _per_slot=1
+  _split=1
+  while [ $(( (_split + 1) * (_split + 1) )) -le "$_per_slot" ]; do _split=$(( _split + 1 )); done
+  JOBS="${CARGO_SEM_JOBS:-$_split}"
+  CGU="${CARGO_SEM_CGU:-$(( _per_slot / _split ))}"
+  [ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
+  [ "$CGU" -ge 1 ] 2>/dev/null || CGU=1
+
+  # Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
+  # floored at 1, so a caller can say "this stage is the heavy one, give it less"
+  # without embedding a number tuned to one machine. The test stage passes 2 (see
+  # the Architect INSTRUCTIONS launch block) for the same *proportional* relief on
+  # any box. Divides an explicit CARGO_SEM_CGU too, so "half whatever this box
+  # decided" holds however CGU was arrived at.
+  CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
+  [ "$CGU" -ge 1 ] || CGU=1
+}
+
+derive_limits
+
 CTL="$D/cargo-sem.ctl.lock"
 NEXT="$D/cargo-sem.next"
 SERV="$D/cargo-sem.serving"
@@ -228,6 +337,36 @@ if [ "${CARGO_SEM_ALLOW_CHAIN:-0}" != "1" ]; then
     printf '  Override with CARGO_SEM_ALLOW_CHAIN=1 only if you truly need one slot.\n' >&2
     printf '  Got: %s\n' "$*" >&2
     exit 64
+  fi
+fi
+
+# --- CPU must not be parked in a power-saving profile ---
+# `powerprofilesctl set performance` is RUNTIME state: it does not survive a
+# reboot, and power-profiles-daemon has already drifted this AC-powered box to
+# `power-saver` once on its own. Parked, every core pins at 800 MHz against a
+# 4.2 GHz ceiling — 19% — and every verify runs ~3.5x slow.
+#
+# That regression is silent, which is the whole problem. Nothing fails; wall
+# clock just creeps, and a build that should take 40 min takes 2h19m. It went
+# unnoticed for days, and was eventually found only by measuring the box while
+# chasing a different bug. So detect it here, where every Architect build passes.
+#
+# WARN, never block. A slow build is worth running; a build that refuses to start
+# because a laptop is on battery is not. The point is to make the cause visible
+# in the log the moment it costs time, instead of leaving wall-clock creep as the
+# only signal. Set CARGO_SEM_SKIP_EPP_CHECK=1 to silence (deliberate battery
+# operation), and prefer fixing persistence — a boot-time
+# `powerprofilesctl set performance`, or a systemd unit — over silencing.
+if [ "${CARGO_SEM_SKIP_EPP_CHECK:-0}" != "1" ] && command -v powerprofilesctl >/dev/null 2>&1; then
+  _profile="$(powerprofilesctl get 2>/dev/null || echo unknown)"
+  if [ "$_profile" != "performance" ]; then
+    _mhz="$(awk '/cpu MHz/{s+=$2==""?0:$4; n++} END{if(n)printf "%.0f", s/n}' /proc/cpuinfo 2>/dev/null)"
+    printf 'cargo-sem.sh: WARNING — power profile is "%s", not "performance" (avg core %s MHz).\n' \
+      "$_profile" "${_mhz:-?}" >&2
+    printf '  Builds run ~3.5x slow parked at 800 MHz, and nothing fails — the only\n' >&2
+    printf '  symptom is wall-clock creep, which took days to notice last time.\n' >&2
+    printf '  Fix:  powerprofilesctl set performance   (runtime only — make it persist)\n' >&2
+    printf '  Silence: CARGO_SEM_SKIP_EPP_CHECK=1\n' >&2
   fi
 fi
 
@@ -271,8 +410,10 @@ run() {
     rm -f "$rss"
     if [ -n "$m" ] && [ "$m" -gt 0 ] 2>/dev/null; then
       exec 8>"$RSSL"; flock 8
-      local prev; prev=$(cat "$RSSF" 2>/dev/null | tr -dc '0-9'); prev="${prev:-0}"
-      [ "$m" -gt "$prev" ] && printf '%s' "$m" > "$RSSF"
+      { awk '{gsub(/[^0-9]/," "); for(i=1;i<=NF;i++) print $i}' "$RSSF" 2>/dev/null; \
+        printf '%s\n' "$m"; } \
+        | awk 'NF' | tail -n "$RSSWIN" > "$RSSF.new" 2>/dev/null \
+        && mv -f "$RSSF.new" "$RSSF"
       flock -u 8; exec 8>&-
     fi
     return $rc
@@ -296,13 +437,63 @@ run() {
 # failed announce costs this run its extension, nothing more; do not make it
 # fatal, and do not move it before the slot is held — announcing while still
 # queued restarts the clock for a build that has not started.
+#
+# The API key is OPTIONAL, deliberately. The adapter injects PAPERCLIP_API_KEY
+# only for agents configured with the `paperclip` skill, so gating on it makes
+# this a silent no-op for any agent without that skill — which is the normal
+# configuration for a build-only agent, and turns the announce into dead code
+# exactly where it is needed. In Local Trusted Mode (loopback requests are the
+# operator) the call authenticates without a key. Send the header when a key IS
+# present; never gate on it.
+api_post() {
+  local path="$1" body="$2"
+  [ -n "${PAPERCLIP_API_URL:-}" ] || return 1
+  if [ -n "${PAPERCLIP_API_KEY:-}" ]; then
+    curl -fsS --max-time 5 -X POST "$PAPERCLIP_API_URL$path" \
+      -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+      -H "Content-Type: application/json" -d "$body" 2>/dev/null
+  else
+    curl -fsS --max-time 5 -X POST "$PAPERCLIP_API_URL$path" \
+      -H "Content-Type: application/json" -d "$body" 2>/dev/null
+  fi
+}
+
 announce_admission() {
-  [ -n "${PAPERCLIP_API_URL:-}" ] && [ -n "${PAPERCLIP_API_KEY:-}" ] &&
-    [ -n "${PAPERCLIP_RUN_ID:-}" ] || return 0
-  curl -fsS --max-time 5 -X POST \
-    "$PAPERCLIP_API_URL/api/heartbeat-runs/$PAPERCLIP_RUN_ID/watchdog-restart" \
-    -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-    -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
+  [ -n "${PAPERCLIP_RUN_ID:-}" ] || return 0
+  api_post "/api/heartbeat-runs/$PAPERCLIP_RUN_ID/watchdog-restart" '{}' >/dev/null || true
+}
+
+# --- make the detached build visible ---
+# The Architect dispatches this script and exits, so from the server's side a
+# build that runs for hours holds no run at all: the issue shows no `Live` pulse
+# and reads exactly like a task that never started — indistinguishable from the
+# lost-sentinel failure. Opening a run against the issue lights up the existing
+# UI (issue row, Kanban card, inbox) with no new surface to maintain.
+#
+# Same best-effort contract as announce_admission: the build is the point, the
+# telemetry is not. Every failure path returns success and DETACHED_RUN_ID stays
+# empty, which simply skips the close.
+DETACHED_RUN_ID=""
+
+open_detached_run() {
+  [ -n "${PAPERCLIP_AGENT_ID:-}" ] && [ -n "${PAPERCLIP_API_URL:-}" ] || return 0
+  local body out
+  body=$(printf '{"agentId":"%s","issueId":"%s","pid":%s,"triggerDetail":"%s"}' \
+    "$PAPERCLIP_AGENT_ID" "${PAPERCLIP_TASK_ID:-}" "$$" "$(printf '%s' "$*" | tr -d '"\\' | cut -c1-200)")
+  out=$(api_post "/api/heartbeat-runs/detached" "$body") || return 0
+  DETACHED_RUN_ID=$(printf '%s' "$out" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')
+}
+
+# Closed from an EXIT trap, so a SIGTERM'd or SIGKILL'd-parent build still
+# settles wherever the shell gets to run it. A build killed outright (the
+# service-restart case) leaves the run open — that is the honest reading, and
+# the reaper deliberately will not "tidy" it, since guessing here is what
+# re-dispatches a healthy build.
+close_detached_run() {
+  [ -n "$DETACHED_RUN_ID" ] || return 0
+  api_post "/api/heartbeat-runs/$DETACHED_RUN_ID/detached-finish" \
+    "$(printf '{"exitCode":%s}' "${1:-1}")" >/dev/null || true
+  DETACHED_RUN_ID=""
 }
 
 rd() { local v=0; [ -f "$1" ] && v=$(<"$1"); printf '%s' "${v:-0}"; }
@@ -341,6 +532,34 @@ acquire_slot() {
   return 1
 }
 
+# --- ONE build per worktree, enforced OUTSIDE the semaphore ---
+# Two cargo invocations against the same worktree cannot proceed in parallel:
+# cargo takes an exclusive lock on that worktree's `target/` directory, so the
+# second blocks until the first finishes. That is correct cargo behaviour and
+# not the bug. The bug is WHERE it blocks — if both have already been admitted,
+# each holds a semaphore slot while one of them makes no progress at all, so the
+# effective ceiling drops below SLOTS and the blocked one can burn its whole
+# wall-clock budget waiting (AA-3261).
+#
+# It presents as "verifies are slow" rather than as a deadlock, which is why it
+# was hard to see: nothing errors, nothing times out at the semaphore layer, and
+# both runs look admitted and healthy.
+#
+# Serializing per worktree here, BEFORE a ticket is drawn, moves that wait
+# outside the ticket queue: the second caller blocks holding no slot and drawing
+# no ticket, so it neither consumes capacity nor takes a queue position it
+# cannot use. Same self-healing property as every other lock in this script —
+# it is an flock, so a dead holder releases it.
+#
+# Keyed by the resolved cwd, which is the worktree cargo will build in. Callers
+# in different worktrees never contend.
+WTKEY="$(pwd -P | cksum | tr -d ' \t-')"
+exec 3>"$D/cargo-wt-$WTKEY.lock"
+if ! flock -n 3; then
+  printf 'cargo-sem.sh: another build holds this worktree; waiting outside the queue.\n' >&2
+  flock 3
+fi
+
 # --- draw a ticket and register presence atomically under the ctl-lock ---
 exec 6>"$CTL"; flock 6
 T=$(rd "$NEXT"); wr "$NEXT" $((T + 1))
@@ -355,6 +574,12 @@ DBG="${CARGO_SEM_DEBUG:+$D/cargo-sem.debug.log}"
 
 # --- wait for the front of the queue AND a free slot ---
 while true; do
+  # Re-read the ceilings every pass. A waiter can sit here for hours while builds
+  # around it finish and the memory window moves; without this it would keep
+  # contending against its launch-time SLOTS, and as FIFO head it would hold the
+  # low-water mark against everyone behind it (AA-5045).
+  derive_limits
+
   exec 6>"$CTL"; flock 6
   s=$(rd "$SERV")
   while [ "$s" -lt "$T" ] && ! alive "$s"; do rm -f "$WAIT.$s"; s=$((s + 1)); done
@@ -402,6 +627,67 @@ while true; do
   sleep "$POLL"                                            # front, but capacity full
 done
 
-run "$@"; rc=$?
+# Kill a build's whole process tree, deepest first.
+#
+# Walking /proc children is deliberate: the tree is
+# time -> nice -> ionice -> env -> cargo -> N rustc -> sccache, and killing only
+# the top leaves the compilers running — still holding memory and cores, which
+# is the entire cost we are trying to reclaim. Killing by process GROUP is not
+# an option either: this shell is not a group leader, so the group is the
+# agent's whole session and `kill -- -PGID` would take the agent down with the
+# build. Children first, parent last, so nothing re-parents mid-sweep.
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+# --- stop building for a task nobody is waiting on ---
+# A verify moved to `blocked` (branch conflicts with the base) has a worthless
+# result, but its build holds a slot until it finishes on its own, delaying
+# every build queued behind it.
+#
+# The server cannot do this itself — it knows this pid but not the tree below
+# it, and killing by group would hit the agent's session. So cancellation is a
+# flag the server sets and this watcher reads, and the teardown happens here
+# where the process tree is known.
+#
+# Poll interval is deliberately slow. A build runs for tens of minutes to hours;
+# reclaiming a slot 30s later than theoretically possible costs nothing, and a
+# tight loop against the API for every concurrent build would cost more than the
+# slot is worth.
+watch_for_cancel() {
+  local build_pid="$1" status
+  [ -n "$DETACHED_RUN_ID" ] && [ -n "${PAPERCLIP_API_URL:-}" ] || return 0
+  while kill -0 "$build_pid" 2>/dev/null; do
+    sleep "${CARGO_SEM_CANCEL_POLL:-30}"
+    status=$(curl -fsS --max-time 5 \
+      ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
+      "$PAPERCLIP_API_URL/api/heartbeat-runs/$DETACHED_RUN_ID" 2>/dev/null |
+      sed -n 's/.*"status":"\([a-z_]*\)".*/\1/p')
+    if [ "$status" = "cancelled" ]; then
+      printf 'cargo-sem.sh: build cancelled server-side; tearing down pid %s\n' "$build_pid" >&2
+      kill_tree "$build_pid"
+      return 0
+    fi
+  done
+}
+
+open_detached_run "$@"
+trap 'close_detached_run "${rc:-143}"' EXIT
+
+# The build runs as a background child so this shell stays free to watch for
+# cancellation. fd 9 (the slot lock) is inherited and also still held here, so
+# the slot is released only when BOTH have exited — the FD LIFETIME contract in
+# the header is unchanged.
+run "$@" & BUILD_PID=$!
+watch_for_cancel "$BUILD_PID" &
+WATCH_PID=$!
+
+wait "$BUILD_PID"; rc=$?
+kill "$WATCH_PID" 2>/dev/null || true
+close_detached_run "$rc"
 exec 9>&-
 exit "$rc"

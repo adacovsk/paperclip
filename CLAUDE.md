@@ -31,6 +31,17 @@ pnpm paperclipai doctor   # Health check (--repair to fix)
 
 Data: `~/.paperclip/instances/default/db/`. Reset: `rm -rf` that dir + `pnpm dev`.
 
+**`pnpm dev` runs the server under `tsx watch`, and every reload kills all
+in-flight agent runs.** Children are tracked, not detached, so the shutdown
+handler SIGTERMs them — editing or merging any watched server file mid-run
+discards that run's work (a 12-minute Worker run went this way; the retry
+re-pays the whole context load). It is the sole confirmed cause of clustered
+`process_lost` — the run record now names the signal, so check for
+`the server shut down` in the error before investigating OOM or the SDK.
+Serve a live pipeline from a built server (`pnpm build` + `pnpm --filter
+@paperclipai/server start`), and keep `pnpm dev` for development where losing
+a run is acceptable.
+
 ## Stack
 
 Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite, Tailwind v4, shadcn/ui, Radix, PGlite (dev) / Postgres (prod), pnpm 9.15+, Vitest, Playwright.
