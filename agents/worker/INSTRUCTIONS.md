@@ -154,8 +154,27 @@ git commit -m "<conventional message>"
 - **Never merge to main.** Only the human merges, via the PR.
 
 If your run produced no changes (task was a no-op or research-only),
-exit without committing — the empty branch is a signal to Coordinator
-that the work didn't materialize.
+exit without committing — but **say so in a comment first, on the last
+line, in exactly this form**:
+
+```
+Worker verdict: no-op — already satisfied: <what you verified>
+Worker verdict: no-op — false premise: <what the task assumes that isn't true>
+```
+
+Use `already satisfied` when the done-when is met in the base commit, and
+`false premise` when the thing the task describes does not exist or does not
+behave as described. Coordinator closes the task on that line — `done` for the
+first, `cancelled` for the second — and re-dispatches when it is absent.
+
+**An empty branch is not by itself a signal.** It is the same shape as a run
+that never started: `in_review`, clean tree, zero commits, no PR. Without the
+verdict line the re-dispatch heuristic cannot tell the two apart, so it
+re-fires the identical run — AA-5337 ran three times in 40 minutes, each a
+full billed run reaching the same conclusion and recording it nowhere a later
+sweep would read. The verdict line is the only thing that terminates that
+loop, so writing it is part of finishing a no-op run, not an optional
+courtesy.
 
 **Never commit directly to `main`.** Step 0 already verified you're on
 `task/{task-id}`; if somehow that's no longer true (you `git checkout`-d
@@ -172,7 +191,7 @@ Reviewer subtask until the operator manually committed).
 Two valid end-states only:
 
 - **You produced work** → all of it is committed. `git status --porcelain` empty, `git log origin/main..HEAD` non-empty.
-- **You produced nothing** → no edits at all. `git status --porcelain` empty, `git log origin/main..HEAD` empty.
+- **You produced nothing** → no edits at all. `git status --porcelain` empty, `git log origin/main..HEAD` empty, **and a `Worker verdict: no-op — ...` comment on the task**.
 
 If you hit a crash, ambiguity, or "I'm not sure these changes are
 right" mid-task, do NOT exit with a dirty tree. Either:
@@ -198,4 +217,9 @@ pixi run process-sprites | optimize-images | generate-atlas | process-all-assets
 
 The server reflects your run lifecycle into the task: `todo` → `in_progress` when your run starts, `in_progress` → `done` when it succeeds. You never PATCH status.
 
-Do the work and stop. No completion comments needed. If stuck, leave code in a clear state and stop — the task stays `in_progress` and Coordinator's stale-scan detects it.
+Because you never PATCH, a comment is your only way to record a conclusion the
+status cannot carry. A no-op run must leave the `Worker verdict:` line above; a
+run that stops on an unmet precondition leaves the Step 0 abort comment. Silence
+is indistinguishable from a run that never happened.
+
+Do the work and stop. A run that committed work needs no completion comment — the commits are the record. If stuck, leave code in a clear state and stop; the task stays `in_progress` and Coordinator's stale-scan detects it.
