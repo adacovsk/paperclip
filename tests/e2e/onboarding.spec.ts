@@ -130,7 +130,7 @@ test.describe("Onboarding wizard", () => {
     // about whether the issue has one. Read the body from the detail route.
     const taskDetailRes = await page.request.get(`${baseUrl}/api/issues/${task.id}`);
     expect(taskDetailRes.ok()).toBe(true);
-    const { issue: taskDetail } = await taskDetailRes.json();
+    const taskDetail = await taskDetailRes.json();
     expect(taskDetail.description).toContain(
       "You are the CEO. You set the direction for the company."
     );
