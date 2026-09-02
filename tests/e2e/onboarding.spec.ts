@@ -112,7 +112,7 @@ test.describe("Onboarding wizard", () => {
     const instructionsBundle = await instructionsBundleRes.json();
     expect(
       instructionsBundle.files.map((file: { path: string }) => file.path).sort()
-    ).toEqual(["AGENTS.md", "HEARTBEAT.md", "SOUL.md", "TOOLS.md"]);
+    ).toEqual(["AGENTS.md"]);
 
     const issuesRes = await page.request.get(
       `${baseUrl}/api/companies/${company.id}/issues`
@@ -124,10 +124,17 @@ test.describe("Onboarding wizard", () => {
     );
     expect(task).toBeTruthy();
     expect(task.assigneeAgentId).toBe(ceoAgent.id);
-    expect(task.description).toContain(
+
+    // The list projection nulls `description` on purpose (see `issueListColumns`
+    // in server/src/services/issues.ts) — a list row's NULL body says nothing
+    // about whether the issue has one. Read the body from the detail route.
+    const taskDetailRes = await page.request.get(`${baseUrl}/api/issues/${task.id}`);
+    expect(taskDetailRes.ok()).toBe(true);
+    const taskDetail = await taskDetailRes.json();
+    expect(taskDetail.description).toContain(
       "You are the CEO. You set the direction for the company."
     );
-    expect(task.description).not.toContain("github.com/paperclipai/companies");
+    expect(taskDetail.description).not.toContain("github.com/paperclipai/companies");
 
     if (!SKIP_LLM) {
       await expect(async () => {
