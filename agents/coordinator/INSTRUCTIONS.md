@@ -59,6 +59,17 @@ Human merges. You GC the worktree + branch.
      continues. Track a `Worker recovery: N` trailer; if the same dirty/0-commit state survives 2
      re-dispatches, `escalate to operator` (the recovery exception is not firing — likely a manual
      hand-commit is needed).
+   - Worker `in_review` but **tree clean with 0 commits** → the run reached its exit having
+     changed nothing. Read the task's comments for a `Worker verdict: no-op — ...` line
+     (worker INSTRUCTIONS §Committing your work). Present → close the task on it and create
+     no Reviewer subtask: `already satisfied` → `done`, `false premise` → `cancelled`, quoting
+     the line and the run id. **Do not re-dispatch a task carrying that line** — the verdict is
+     terminal, and re-firing buys the identical run at full cost. Absent → re-dispatch the
+     Worker **once**, tracking a `Worker no-op: N` trailer; if the second run also returns clean
+     with 0 commits and no verdict line, `escalate to operator` rather than firing a third.
+     This arm exists because clean/0-commit is otherwise indistinguishable from never-started
+     and had no bullet at all: AA-5337 was re-picked three times inside 40 minutes, each run
+     ~15-32s of billed Opus concluding the same no-op.
    - Reviewer done, `needs-build` → assign Architect on the same task branch (Architect runs cargo)
    - Reviewer done, `data-only` → Architect opens PR (no cargo), then mark parent done after merge
    - Architect `done` (branch confirmed on origin → PR exists) → mark parent done after PR merges
