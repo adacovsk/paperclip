@@ -852,6 +852,38 @@ export function issueRoutes(db: Db, storage: StorageService) {
     res.json({ ok: true });
   });
 
+  // `backlog` is a deferral status only for an assignee that will come back to the
+  // queue on its own. An agent woken by assignment has no such return path: the
+  // Planner's inbox reads `PAPERCLIP_TASK_ID`, then `in_progress`, then `todo`, and
+  // never `backlog`, so a task filed there and assigned to a cronless agent is
+  // undeliverable by construction — only a hand-promotion rescues it. AA-5221, the
+  // task reporting this, was itself filed at `backlog` and had to be promoted by
+  // hand; seven queued roadmap-prune tasks sat unreachable long enough that five
+  // were incidentally discharged by other work, each still costing a full
+  // premise-verification pass to establish. Deferral that nothing dequeues is not
+  // deferral, it is future re-verification cost.
+  //
+  // An explicit `status` from the caller always wins, `backlog` included — this
+  // only fills in the omitted case. Unassigned creates keep defaulting to
+  // `backlog`: nothing is waiting on them, and Coordinator's intake is their
+  // dequeue path.
+  async function resolveCreateStatus(
+    companyId: string,
+    assigneeAgentId: string | null | undefined,
+  ): Promise<string> {
+    if (!assigneeAgentId) return "backlog";
+    const companyRoutines = await routinesSvc.list(companyId);
+    const wakesItself = companyRoutines.some(
+      (routine) =>
+        routine.assigneeAgentId === assigneeAgentId
+        && routine.status === "active"
+        && routine.triggers.some(
+          (trigger) => trigger.enabled && trigger.kind === "schedule" && Boolean(trigger.cronExpression),
+        ),
+    );
+    return wakesItself ? "backlog" : "todo";
+  }
+
   router.post("/companies/:companyId/issues", validate(createIssueSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -888,8 +920,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     }
 
+    const status = req.body.status ?? (await resolveCreateStatus(companyId, req.body.assigneeAgentId));
+
     const issue = await svc.create(companyId, {
       ...req.body,
+      status,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
