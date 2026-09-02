@@ -22,10 +22,15 @@
 
 <br/>
 
-> **This is a fork.** `adacovsk/paperclip` has diverged substantially from
-> [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) and is developed
-> independently. Issues, discussions, and pull requests belong here, not upstream.
-> Upstream's docs site, Discord, and roadmap describe *their* build, not this one.
+> **This is a fork, and it is the one that has been left running.**
+> `adacovsk/paperclip` diverged from [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip)
+> by hundreds of commits in each direction and is developed independently. Most of
+> what is different here came out of operating a six-agent pipeline against a real
+> repository every night and fixing what broke — see
+> [What this fork adds](#what-this-fork-adds).
+>
+> File issues and pull requests here, not upstream. Upstream's docs site, Discord,
+> and roadmap describe *their* build.
 
 ## What is Paperclip?
 
@@ -156,6 +161,51 @@ Paperclip handles the hard orchestration details correctly.
 
 <br/>
 
+## What this fork adds
+
+Upstream builds the control plane. This fork is what that control plane looks like
+after months of being the thing that actually ships code, unattended, overnight.
+
+### A pipeline that exists, not an example
+
+[`agents/`](agents/) holds six role specs that run as a closed loop, with
+[`agents/README.md`](agents/README.md) as the cross-role contract — a permission
+matrix stating, per role, who may touch the roadmap, run the build, push, open a
+PR, or delete a branch. Nobody merges to `main` but the operator.
+
+```
+Planner       nightly   owns the roadmap; finds the gaps
+  Coordinator nightly   roadmap → tasks; allocates worktrees; advances stages
+    Worker    on assign implements; commits to task/{id}; never pushes
+    Reviewer  on assign polishes the changed files; never pushes
+    Architect on assign builds, fixes, pushes, opens the PR
+  Facilitator nightly   pipeline health; unblocks; sweeps stale branches
+```
+
+### Run-engine hardening
+
+Every item below is a failure this fork hit in production and then closed:
+
+| | |
+| --- | --- |
+| **No wedged queues.** | A per-run watchdog kills hung adapters, and `maxConcurrentRuns` is enforced by a durable per-agent advisory lock rather than in-process state. |
+| **No chain-wake livelock.** | Guards stop the server re-firing a no-skill agent onto the task it already holds, chain-waking a parent that is waiting on someone else's child stage, or looping with no progress. |
+| **Honest completion.** | Auto-done requires a merged PR, not merely a pushed branch, behind a fail-closed origin gate — an agent cannot declare itself finished by pushing. |
+| **Blocked means blocked.** | Completion-cascade promotion is an allowlist, so a task someone deliberately stopped (`blocked`, `backlog`, `cancelled`) is left where it is instead of drifting to `in_review`. |
+| **Builds outlive the run.** | Long compiles are detached and given a live run so the pulse keeps working, and are torn down when their task dies. |
+| **Diagnosable failures.** | A run that dies to server shutdown says so, so `process_lost` stops being mistaken for OOM. |
+| **Bounded queries.** | Run, issue, and activity lists are paginated, so the dashboard stays usable once the history is long. |
+
+### Security and cost
+
+Agent-facing routes are company-scoped end to end (import, approvals, activity,
+heartbeat); Bearer tokens are redacted from logs; the hardcoded JWT secret
+fallback is gone. The provider quota-windows subsystem was removed rather than
+maintained — weekly quota is surfaced through cost tracking instead, which is
+where operators were already looking.
+
+<br/>
+
 ## What Paperclip is not
 
 |                              |                                                                                                                      |
@@ -232,7 +282,11 @@ See [doc/DEVELOPING.md](doc/DEVELOPING.md) for the full development guide.
 
 <br/>
 
-## Roadmap
+## Upstream roadmap
+
+The list below is upstream's, kept for orientation. This fork does not track it —
+work here is driven by the pipeline in [`agents/`](agents/) and lands through
+[issues on this repo](https://github.com/adacovsk/paperclip/issues).
 
 - ✅ Plugin system (e.g. add a knowledge base, custom tracing, queues, etc)
 - ✅ Get OpenClaw / claw-style agent employees
