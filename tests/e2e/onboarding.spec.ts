@@ -112,7 +112,7 @@ test.describe("Onboarding wizard", () => {
     const instructionsBundle = await instructionsBundleRes.json();
     expect(
       instructionsBundle.files.map((file: { path: string }) => file.path).sort()
-    ).toEqual(["AGENTS.md", "HEARTBEAT.md", "SOUL.md", "TOOLS.md"]);
+    ).toEqual(["AGENTS.md"]);
 
     const issuesRes = await page.request.get(
       `${baseUrl}/api/companies/${company.id}/issues`
