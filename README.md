@@ -282,29 +282,6 @@ See [doc/DEVELOPING.md](doc/DEVELOPING.md) for the full development guide.
 
 <br/>
 
-## Upstream roadmap
-
-The list below is upstream's, kept for orientation. This fork does not track it —
-work here is driven by the pipeline in [`agents/`](agents/) and lands through
-[issues on this repo](https://github.com/adacovsk/paperclip/issues).
-
-- ✅ Plugin system (e.g. add a knowledge base, custom tracing, queues, etc)
-- ✅ Get OpenClaw / claw-style agent employees
-- ✅ companies.sh - import and export entire organizations
-- ✅ Easy AGENTS.md configurations
-- ✅ Skills Manager
-- ✅ Scheduled Routines
-- ✅ Better Budgeting
-- ⚪ Artifacts & Deployments
-- ⚪ CEO Chat
-- ⚪ MAXIMIZER MODE
-- ⚪ Multiple Human Users
-- ⚪ Cloud / Sandbox agents (e.g. Cursor / e2b agents)
-- ⚪ Cloud deployments
-- ⚪ Desktop App
-
-<br/>
-
 ## Community & Plugins
 
 Find Plugins and more at [awesome-paperclip](https://github.com/gsxdsm/awesome-paperclip)
