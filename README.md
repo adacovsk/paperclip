@@ -4,15 +4,14 @@
 
 <p align="center">
   <a href="#quickstart"><strong>Quickstart</strong></a> &middot;
-  <a href="https://paperclip.ing/docs"><strong>Docs</strong></a> &middot;
-  <a href="https://github.com/paperclipai/paperclip"><strong>GitHub</strong></a> &middot;
-  <a href="https://discord.gg/m4HZY7xNG3"><strong>Discord</strong></a>
+  <a href="doc/"><strong>Docs</strong></a> &middot;
+  <a href="https://github.com/adacovsk/paperclip"><strong>GitHub</strong></a> &middot;
+  <a href="https://github.com/paperclipai/paperclip"><strong>Upstream</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/paperclipai/paperclip/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
-  <a href="https://github.com/paperclipai/paperclip/stargazers"><img src="https://img.shields.io/github/stars/paperclipai/paperclip?style=flat" alt="Stars" /></a>
-  <a href="https://discord.gg/m4HZY7xNG3"><img src="https://img.shields.io/discord/000000000?label=discord" alt="Discord" /></a>
+  <a href="https://github.com/adacovsk/paperclip/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
+  <a href="https://github.com/paperclipai/paperclip"><img src="https://img.shields.io/badge/fork%20of-paperclipai%2Fpaperclip-lightgrey" alt="Fork of paperclipai/paperclip" /></a>
 </p>
 
 <br/>
@@ -22,6 +21,16 @@
 </div>
 
 <br/>
+
+> **This is a fork, and it is the one that has been left running.**
+> `adacovsk/paperclip` diverged from [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip)
+> by hundreds of commits in each direction and is developed independently. Most of
+> what is different here came out of operating a six-agent pipeline against a real
+> repository every night and fixing what broke — see
+> [What this fork adds](#what-this-fork-adds).
+>
+> File issues and pull requests here, not upstream. Upstream's docs site, Discord,
+> and roadmap describe *their* build.
 
 ## What is Paperclip?
 
@@ -40,10 +49,6 @@ It looks like a task manager — but under the hood it has org charts, budgets, 
 | **01** | Define the goal | _"Build the #1 AI note-taking app to $1M MRR."_                    |
 | **02** | Hire the team   | CEO, CTO, engineers, designers, marketers — any bot, any provider. |
 | **03** | Approve and run | Review strategy. Set budgets. Hit go. Monitor from the dashboard.  |
-
-<br/>
-
-> **COMING SOON: Clipmart** — Download and run entire companies with one click. Browse pre-built company templates — full org structures, agent configs, and skills — and import them into your Paperclip instance in seconds.
 
 <br/>
 
@@ -156,6 +161,51 @@ Paperclip handles the hard orchestration details correctly.
 
 <br/>
 
+## What this fork adds
+
+Upstream builds the control plane. This fork is what that control plane looks like
+after months of being the thing that actually ships code, unattended, overnight.
+
+### A pipeline that exists, not an example
+
+[`agents/`](agents/) holds six role specs that run as a closed loop, with
+[`agents/README.md`](agents/README.md) as the cross-role contract — a permission
+matrix stating, per role, who may touch the roadmap, run the build, push, open a
+PR, or delete a branch. Nobody merges to `main` but the operator.
+
+```
+Planner       nightly   owns the roadmap; finds the gaps
+  Coordinator nightly   roadmap → tasks; allocates worktrees; advances stages
+    Worker    on assign implements; commits to task/{id}; never pushes
+    Reviewer  on assign polishes the changed files; never pushes
+    Architect on assign builds, fixes, pushes, opens the PR
+  Facilitator nightly   pipeline health; unblocks; sweeps stale branches
+```
+
+### Run-engine hardening
+
+Every item below is a failure this fork hit in production and then closed:
+
+| | |
+| --- | --- |
+| **No wedged queues.** | A per-run watchdog kills hung adapters, and `maxConcurrentRuns` is enforced by a durable per-agent advisory lock rather than in-process state. |
+| **No chain-wake livelock.** | Guards stop the server re-firing a no-skill agent onto the task it already holds, chain-waking a parent that is waiting on someone else's child stage, or looping with no progress. |
+| **Honest completion.** | Auto-done requires a merged PR, not merely a pushed branch, behind a fail-closed origin gate — an agent cannot declare itself finished by pushing. |
+| **Blocked means blocked.** | Completion-cascade promotion is an allowlist, so a task someone deliberately stopped (`blocked`, `backlog`, `cancelled`) is left where it is instead of drifting to `in_review`. |
+| **Builds outlive the run.** | Long compiles are detached and given a live run so the pulse keeps working, and are torn down when their task dies. |
+| **Diagnosable failures.** | A run that dies to server shutdown says so, so `process_lost` stops being mistaken for OOM. |
+| **Bounded queries.** | Run, issue, and activity lists are paginated, so the dashboard stays usable once the history is long. |
+
+### Security and cost
+
+Agent-facing routes are company-scoped end to end (import, approvals, activity,
+heartbeat); Bearer tokens are redacted from logs; the hardcoded JWT secret
+fallback is gone. The provider quota-windows subsystem was removed rather than
+maintained — weekly quota is surfaced through cost tracking instead, which is
+where operators were already looking.
+
+<br/>
+
 ## What Paperclip is not
 
 |                              |                                                                                                                      |
@@ -180,7 +230,7 @@ npx paperclipai onboard --yes
 Or manually:
 
 ```bash
-git clone https://github.com/paperclipai/paperclip.git
+git clone https://github.com/adacovsk/paperclip.git
 cd paperclip
 pnpm install
 pnpm dev
@@ -232,25 +282,6 @@ See [doc/DEVELOPING.md](doc/DEVELOPING.md) for the full development guide.
 
 <br/>
 
-## Roadmap
-
-- ✅ Plugin system (e.g. add a knowledge base, custom tracing, queues, etc)
-- ✅ Get OpenClaw / claw-style agent employees
-- ✅ companies.sh - import and export entire organizations
-- ✅ Easy AGENTS.md configurations
-- ✅ Skills Manager
-- ✅ Scheduled Routines
-- ✅ Better Budgeting
-- ⚪ Artifacts & Deployments
-- ⚪ CEO Chat
-- ⚪ MAXIMIZER MODE
-- ⚪ Multiple Human Users
-- ⚪ Cloud / Sandbox agents (e.g. Cursor / e2b agents)
-- ⚪ Cloud deployments
-- ⚪ Desktop App
-
-<br/>
-
 ## Community & Plugins
 
 Find Plugins and more at [awesome-paperclip](https://github.com/gsxdsm/awesome-paperclip)
@@ -263,21 +294,15 @@ We welcome contributions. See the [contributing guide](CONTRIBUTING.md) for deta
 
 ## Community
 
-- [Discord](https://discord.gg/m4HZY7xNG3) — Join the community
-- [GitHub Issues](https://github.com/paperclipai/paperclip/issues) — bugs and feature requests
-- [GitHub Discussions](https://github.com/paperclipai/paperclip/discussions) — ideas and RFC
+- [GitHub Issues](https://github.com/adacovsk/paperclip/issues) — bugs and feature requests
+- [GitHub Discussions](https://github.com/adacovsk/paperclip/discussions) — ideas and RFC
+- [Upstream project](https://github.com/paperclipai/paperclip) — the codebase this fork started from
 
 <br/>
 
 ## License
 
-MIT &copy; 2026 Paperclip
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/image?repos=paperclipai/paperclip&type=date&legend=top-left)](https://www.star-history.com/?repos=paperclipai%2Fpaperclip&type=date&legend=top-left)
-
-<br/>
+MIT. Portions &copy; the upstream Paperclip authors; fork changes &copy; 2026 adacovsk.
 
 ---
 
