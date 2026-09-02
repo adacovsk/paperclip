@@ -1,0 +1,66 @@
+version: 2
+
+# Why this file exists, and what it does not change.
+#
+# Dependabot *security* updates were already running here without config — they
+# are the only workflow that executes on this fork at all, since `push` and
+# `pull_request` triggers produce no runs (measured: `pr.yml`, `e2e.yml` and
+# `refresh-lockfile.yml` each have zero runs in the fork's history, while
+# `dynamic/dependabot` and `workflow_dispatch` both succeed). *Version* updates
+# need this file, which is what was missing.
+#
+# The lockfile is the catch. A security bump edited `server/package.json` to
+# better-auth 1.6.23 and `refresh-lockfile.yml` never fired to sync
+# `pnpm-lock.yaml`, because its trigger is `push: master`. A clean
+# `--frozen-lockfile` install then failed outright, which is invisible to anyone
+# whose `node_modules` predates the drift. So after a Dependabot PR merges here,
+# either dispatch Refresh Lockfile by hand:
+#
+#     gh workflow run refresh-lockfile.yml --repo adacovsk/paperclip
+#
+# or run `pnpm install --no-frozen-lockfile` locally and commit the result.
+# Grouping below keeps that manual step rare rather than per-dependency.
+
+updates:
+  # Node dependencies. `directory: "/"` covers every pnpm workspace member —
+  # server, ui, cli, packages/* — through the root lockfile, so it does not need
+  # one entry per package.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # These move as a set; ungrouped they arrive as a dozen PRs per release,
+      # each needing its own lockfile sync.
+      better-auth:
+        patterns:
+          - "better-auth"
+          - "@better-auth/*"
+      drizzle:
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+      typescript-toolchain:
+        patterns:
+          - "typescript"
+          - "tsx"
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+      types:
+        patterns:
+          - "@types/*"
+
+  # GitHub Actions versions. The runner already warns that actions/checkout@v4,
+  # actions/setup-node@v4 and pnpm/action-setup@v4 target the deprecated Node 20.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Base images for Dockerfile and Dockerfile.onboard-smoke.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"

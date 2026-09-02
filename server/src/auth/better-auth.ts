@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import type { IncomingHttpHeaders } from "node:http";
 import { betterAuth } from "better-auth";
+import type { BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { toNodeHandler } from "better-auth/node";
 import type { Db } from "@paperclipai/db";
@@ -79,7 +80,10 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins?
   const publicUrl = process.env.PAPERCLIP_PUBLIC_URL ?? baseUrl;
   const isHttpOnly = publicUrl ? publicUrl.startsWith("http://") : false;
 
-  const authConfig = {
+  // Annotated rather than inferred: `betterAuth` returns `Auth<O>` for the exact
+  // options object it is handed, and `BetterAuthInstance` is `Auth<BetterAuthOptions>`.
+  // Without widening here, the narrow inferred `O` is not assignable to it.
+  const authConfig: BetterAuthOptions = {
     baseURL: baseUrl,
     secret,
     trustedOrigins: effectiveTrustedOrigins,
