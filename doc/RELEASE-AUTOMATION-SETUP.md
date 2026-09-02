@@ -7,6 +7,11 @@ This document covers the GitHub and npm setup required for the current Paperclip
 - npm trusted publishing via GitHub OIDC
 - protected release infrastructure in a public repository
 
+> **Fork caveat.** The `@paperclipai/*` npm scope belongs to the upstream project,
+> not to this fork. Trusted publishing from `adacovsk/paperclip` only works for
+> packages this fork actually owns on npm — configure a scope you control before
+> enabling stable publishes, or keep releases local.
+
 Repo-side files that depend on this setup:
 
 - `.github/workflows/release.yml`
@@ -44,7 +49,7 @@ For each package:
 
 1. open npm as an owner of the package
 2. go to the package settings / publishing access area
-3. add a trusted publisher for the GitHub repository `paperclipai/paperclip`
+3. add a trusted publisher for the GitHub repository `adacovsk/paperclip`
 
 ### 2.2. Add one trusted publisher entry per package
 
@@ -56,7 +61,7 @@ Configure:
 
 Repository:
 
-- `paperclipai/paperclip`
+- `adacovsk/paperclip`
 
 Environment name:
 

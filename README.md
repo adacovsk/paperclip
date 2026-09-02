@@ -4,15 +4,14 @@
 
 <p align="center">
   <a href="#quickstart"><strong>Quickstart</strong></a> &middot;
-  <a href="https://paperclip.ing/docs"><strong>Docs</strong></a> &middot;
-  <a href="https://github.com/paperclipai/paperclip"><strong>GitHub</strong></a> &middot;
-  <a href="https://discord.gg/m4HZY7xNG3"><strong>Discord</strong></a>
+  <a href="doc/"><strong>Docs</strong></a> &middot;
+  <a href="https://github.com/adacovsk/paperclip"><strong>GitHub</strong></a> &middot;
+  <a href="https://github.com/paperclipai/paperclip"><strong>Upstream</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/paperclipai/paperclip/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
-  <a href="https://github.com/paperclipai/paperclip/stargazers"><img src="https://img.shields.io/github/stars/paperclipai/paperclip?style=flat" alt="Stars" /></a>
-  <a href="https://discord.gg/m4HZY7xNG3"><img src="https://img.shields.io/discord/000000000?label=discord" alt="Discord" /></a>
+  <a href="https://github.com/adacovsk/paperclip/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
+  <a href="https://github.com/paperclipai/paperclip"><img src="https://img.shields.io/badge/fork%20of-paperclipai%2Fpaperclip-lightgrey" alt="Fork of paperclipai/paperclip" /></a>
 </p>
 
 <br/>
@@ -22,6 +21,11 @@
 </div>
 
 <br/>
+
+> **This is a fork.** `adacovsk/paperclip` has diverged substantially from
+> [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) and is developed
+> independently. Issues, discussions, and pull requests belong here, not upstream.
+> Upstream's docs site, Discord, and roadmap describe *their* build, not this one.
 
 ## What is Paperclip?
 
@@ -40,10 +44,6 @@ It looks like a task manager — but under the hood it has org charts, budgets, 
 | **01** | Define the goal | _"Build the #1 AI note-taking app to $1M MRR."_                    |
 | **02** | Hire the team   | CEO, CTO, engineers, designers, marketers — any bot, any provider. |
 | **03** | Approve and run | Review strategy. Set budgets. Hit go. Monitor from the dashboard.  |
-
-<br/>
-
-> **COMING SOON: Clipmart** — Download and run entire companies with one click. Browse pre-built company templates — full org structures, agent configs, and skills — and import them into your Paperclip instance in seconds.
 
 <br/>
 
@@ -180,7 +180,7 @@ npx paperclipai onboard --yes
 Or manually:
 
 ```bash
-git clone https://github.com/paperclipai/paperclip.git
+git clone https://github.com/adacovsk/paperclip.git
 cd paperclip
 pnpm install
 pnpm dev
@@ -263,21 +263,15 @@ We welcome contributions. See the [contributing guide](CONTRIBUTING.md) for deta
 
 ## Community
 
-- [Discord](https://discord.gg/m4HZY7xNG3) — Join the community
-- [GitHub Issues](https://github.com/paperclipai/paperclip/issues) — bugs and feature requests
-- [GitHub Discussions](https://github.com/paperclipai/paperclip/discussions) — ideas and RFC
+- [GitHub Issues](https://github.com/adacovsk/paperclip/issues) — bugs and feature requests
+- [GitHub Discussions](https://github.com/adacovsk/paperclip/discussions) — ideas and RFC
+- [Upstream project](https://github.com/paperclipai/paperclip) — the codebase this fork started from
 
 <br/>
 
 ## License
 
-MIT &copy; 2026 Paperclip
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/image?repos=paperclipai/paperclip&type=date&legend=top-left)](https://www.star-history.com/?repos=paperclipai%2Fpaperclip&type=date&legend=top-left)
-
-<br/>
+MIT. Portions &copy; the upstream Paperclip authors; fork changes &copy; 2026 adacovsk.
 
 ---
 
