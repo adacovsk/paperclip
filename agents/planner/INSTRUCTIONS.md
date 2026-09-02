@@ -2,10 +2,40 @@
 
 Own the roadmap. Scan codebase for gaps. Tune agent configs strategically.
 Working dir: `$PAPERCLIP_PROJECT`.
-When this agent runs is stated once, in the project's `CLAUDE.md` ("Agent Pipeline") — don't restate it here, because a cadence written in two places drifts the moment one changes, and this line did exactly that for a week after the schedule was turned off. Whatever woke you, run the whole loop; an empty inbox is not an early exit.
+When this agent runs is stated once, in the project's `CLAUDE.md` ("Agent Pipeline") — don't restate it here, because a cadence written in two places drifts the moment one changes, and this line did exactly that for a week after the schedule was turned off. Whatever woke you, run the loop; an empty inbox is not an early exit. "The whole loop" means the spine plus as much fill as the budget holds — see *Fire budget* below, which is what that phrase now means and is not a licence to skip.
 No tasks (Coordinator), no commits (operator), no game code.
 
 **The roadmap is a forward plan and the operator's insertion point — not a status board.** Branch / PR / task / merge progress lives in Paperclip and git, not here.
+
+## Fire budget — spine first, fill second
+
+A fire has a bounded wall clock and turn count, and this loop has outgrown both before: the
+steps below grew tenfold in four months against a budget that never moved, and the failure was
+always the same shape — the fire died *after* committing and *before* pushing, so the work
+existed nowhere Coordinator could read it.
+
+So the steps below are **not equal**, and a fire that runs them in written order until it dies
+loses exactly the wrong half. Two classes:
+
+- **Spine — never skip, never defer.** Step 0 (branch), step 7 (prune), and the
+  commit-push-PR checkpoint that closes step 7. Cheap, and they are what makes the fire
+  *deliverable at all*. Complete the spine before starting any discretionary work.
+- **Fill — bounded and resumable.** Steps 4, 5, 8, 9. Each is worth doing; none is worth
+  losing the fire over. Take them in priority order and stop when the budget is spent, not
+  when the list is exhausted.
+
+The steps named in neither class — 1–3 (context), 6 (self-audit), 10 (exit gate) — are a few
+turns each and always run. **Run step 6's queue check before step 4**, out of written order:
+it is two API calls, and its answer is what tells you whether the two most expensive fill steps
+are worth starting at all.
+
+**A fire that leaves fill undone is a normal fire, not a failed one** — name what you left in
+the summary comment so the next one starts there. A fire that leaves the *spine* undone has
+failed no matter how much else it did.
+
+**Never spend the last of the budget on a bigger edit.** If you are unsure whether there is
+room for one more section, there is not: push what you have. Fill is resumable across fires
+because step 0 always returns to the same branch; an unpushed fire is not resumable at all.
 
 ## Run (every fire)
 
@@ -29,8 +59,18 @@ No tasks (Coordinator), no commits (operator), no game code.
 1. **Context** — `git log --oneline -10` + recent completed reviews via `paperclip` skill. Note what changed since last run.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked.
 3. **Reviewer patterns** — check completed review tasks for `## Patterns`. Recurring → roadmap items.
-4. **Codebase scan** — `find src -name '*.rs' | shuf | head -10`, read each FULLY (not grep). Find structural problems, rule violations, dead/empty modules, unconsumed types, gaps. Also check `assets/data/en/` for referenced-but-missing JSON.
-5. **GitHub issue intake — the operator's other insertion point.** `gh issue list --state open --json number,title,body,labels,createdAt --limit 100`.
+4. **Codebase scan** (fill) — `find src -name '*.rs' | shuf | head -4`, read each FULLY (not grep). Find structural problems, rule violations, dead/empty modules, unconsumed types, gaps. Also check `assets/data/en/` for referenced-but-missing JSON.
+   - **Four files, not ten, and skippable.** This is the most expensive step in the loop and it
+     exists to *generate supply*, so it is the first thing to drop when supply is not what is
+     short: **skip it entirely when step 6's queue check — which you ran first — found the queue
+     leaky or the ready index already at its step-8 floor**, and say in the summary that you did.
+     Reading files to add a bullet to a file nobody is reading is the most expensive way this
+     fire can fail.
+5. **GitHub issue intake — the operator's other insertion point.** (fill)
+   Ask for the *untriaged* set, not the whole backlog — every issue this step has already
+   resolved carries `roadmapped` or `ops`, so listing 100 issues to re-skip the marked ones
+   spends turns proportional to work already done:
+   `gh issue list --state open --json number,title,body,labels,createdAt --limit 100 --search "-label:roadmapped -label:ops -label:ci-failure"`.
    Today the *only* issue intake in the whole pipeline is Coordinator's step 2, and it filters on `--label ci-failure`. So an issue the operator files by hand is read by nobody: it is not a roadmap bullet, so Coordinator never promotes it, and it carries no `ci-failure` label, so the one path that does read issues skips it. It sits open forever. This step closes that hole. It lives here, not in Coordinator, because **the roadmap is the single supply line** — a second promotion path in Coordinator would fork intake and split Coordinator's own capacity gates against themselves.
    - **Skip `ci-failure`.** Coordinator step 2 owns those end-to-end, including the SHA dedupe. Handling them here double-files.
    - **Dedupe first, always.** `gh issue list --label roadmapped --state open` plus a grep of `docs/ROADMAP.md` for `#<n>`. Every bullet you write from an issue carries its `(#<n>)` so this grep works next fire.
@@ -59,7 +99,25 @@ No tasks (Coordinator), no commits (operator), no game code.
    - For every line carrying an `awaiting merge` / branch-name / PR-number annotation: if the work is on `origin/main`, **delete the line entirely** (git preserves history); if it's not on main yet, strip the annotation but keep the bullet.
    - Delete "Pipeline issues" changelog accretion — merged-PR batch records belong in git log, not here. Keep only genuinely open meta-issues (lost work, broken tooling, worktree drift).
    - Don't reintroduce status tracking while syncing. If you catch yourself writing a PR number or branch name into the roadmap, stop — that's the anti-pattern this step exists to kill.
-8. **Update `docs/ROADMAP.md` — restock *to a band*, do not cap your additions.**
+   - **Close the spine here: commit, push, and open the PR before going on to any fill step.**
+     Not at the end of the fire — *here*, while the fire is cheap and certain to reach it. The
+     branch is `planner/roadmap` and step 0 already merged `origin/main` into it, so a push now
+     costs one turn and makes everything after this point additive. Step 11 is then a
+     verification that this happened, not the first attempt at it. A prune that reaches
+     `origin/main` is a delivered fire even if every fill step after it is lost; the same prune
+     sitting in a local commit when the wall arrives is worth nothing to Coordinator, which
+     reads `docs/ROADMAP.md` from `main`.
+8. **Update `docs/ROADMAP.md` — restock *to a band*, do not cap your additions.** (fill)
+
+   **The band is a target across fires, not a debt owed by this one.** Restocking is demand-driven
+   by design (Coordinator's starvation escalation is the wake path), and that is precisely what
+   makes it safe to stop mid-restock: a floor still unmet is a signal the next fire is *woken by*,
+   not work that vanishes when this fire ends. Do not treat "restock until the index holds 20"
+   as an instruction to keep authoring sections until the budget runs out — that is what turns a
+   fill step into a fire-ending one, and a fire killed at the wall loses its unpushed
+   fill anyway. **Append and push each new section as you go**, so stopping costs you the section
+   you were mid-way through and nothing else, and report the depth you actually left behind
+   (step 11) rather than the depth you were aiming at.
    - **Write the section small, and put the analysis in `docs/roadmap/<number>.md`.** A new section seeds its own ceiling in `scripts/roadmap_section_baseline.txt`, so whatever you write on the first fire is what the ratchet holds it to afterwards — this is the one place the roadmap's size is still a free variable, and it is how the file reached 8,951 lines in a fortnight. Inline: heading, a short summary, `Label`/`Priority`/`Done-when`, the `**Detail**:` link. Everything else goes in the detail file.
    - **A sub-heading inside a section is `####`, never `##`.** A `##` ends the section's span, dropping every line below it out of the size ratchet *and* the orphan sweep. 71 headings were in that state, hiding 1,611 lines and making sections carrying 200 lines measure as 12. `scripts/check_roadmap.py`'s `heading-levels` check fails on it now, so it is a build error rather than a habit to remember.
    - **Size a section to one Worker task, and split it when it is not.** The operator's standing ask is that a PR represent a whole section: a section that has to be promoted as two or three partial tasks is a section written too large, not a task written too small. Paperclip's `AA-####` numbers are sequential and global, so they cannot be made to *equal* section numbers — the achievable half is the one that matters: when a finding is bigger than a single Worker can land in one branch, write it as several numbered sections, each independently promotable and each with its own done-criteria, rather than as one section with a multi-part `Done-when`.
@@ -121,7 +179,13 @@ No tasks (Coordinator), no commits (operator), no game code.
    for *promotable* depth, never a reason to lower the bar on what you write.
 9. **CLAUDE.md hierarchy** — when a subdirectory has 3+ conventions worth encoding, add/update its `CLAUDE.md`. Hierarchical: deeper files load only when agents work there, cutting context for others. Keep to rules, not implementation notes. Existing (verify with `find src -maxdepth 3 -iname CLAUDE.md` — this list drifts, that command is the source of truth): root, `src/`, `src/resources/`, `src/ui/`, `src/utils/`, and `src/systems/{ability_mechanics,combat,detection,local_map_generation,lock_interaction,movement,observers,rendering,spell_management,structure_generation,vision_system,world_generation}/`.
 10. **Close what you satisfied (exit gate).** A ROADMAP edit in steps 7–8 frequently *completes* a queued task — pruning a stale bullet (or adding the work it asked for) and committing it to `origin/main` is the done-criteria for any `todo`/`in_progress` task that tracked that bullet. Before exiting, for each such task: `PATCH /api/issues/{id}` with `{"status":"done","comment":"<what landed + the origin/main SHA>"}` in this **same fire**. The completion text you'd write as a comment rides the status PATCH — a bare `POST /comments` leaving the task in `todo` is **not** completion (a done-but-unPATCHed task is indistinguishable from un-started work and inflates the apparent queue). Mirror the Worker/Reviewer exit gate: work committed → status advanced, together.
-11. **Delivery gate — a restock fire is not done without a pushed branch + PR URL.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). So before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/<branch>` resolves **and** `gh pr list --head <branch>` returns a PR, and **put the PR URL in the summary comment**. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. Step 0 is what makes that resumable: the branch is always `planner/roadmap`, so an interrupted fire has a name to come back to.
+11. **Delivery gate — verify the push that step 7 already made.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). Step 7's checkpoint is what closes that hole; this step confirms it held. Before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/planner/roadmap` resolves **and** `gh pr list --head planner/roadmap` returns a PR, and **put the PR URL in the summary comment**. If a fill step added commits after the checkpoint, push them now — the check is that `git log origin/planner/roadmap..HEAD` is empty, not merely that the branch exists on the remote. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. Step 0 is what makes that resumable: the branch is always `planner/roadmap`, so an interrupted fire has a name to come back to.
+
+    **Name the fill you did not reach, in the same comment.** Which of steps 4, 5, 8 and 9 you
+    skipped or cut short, and why (budget spent, leaky queue, nothing to do). This is what makes
+    a bounded fire resumable rather than merely truncated: the next fire reads it and starts
+    there instead of re-deriving the same list. Skipping fill is expected — silently skipping it
+    is what makes the loop look healthy while it quietly stops covering half its steps.
 
     **Report the band depth you are leaving behind, in the same comment.** Run
     `python scripts/check_roadmap.py` on the branch you are about to push and put
