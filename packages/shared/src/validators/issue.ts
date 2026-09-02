@@ -42,7 +42,12 @@ export const createIssueSchema = z.object({
     .nullable(),
   title: z.string().min(1),
   description: z.string().optional().nullable(),
-  status: z.enum(ISSUE_STATUSES).optional().default("backlog"),
+  // No default here on purpose. `backlog` is only a deferral for an assignee
+  // that comes back on its own, so the right default depends on the assignee's
+  // trigger config — which this schema cannot see. The create route resolves it
+  // (server/src/routes/issues.ts); an explicit status from the caller always
+  // wins, and the `backlog` column default still covers non-HTTP callers.
+  status: z.enum(ISSUE_STATUSES).optional(),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   assigneeAgentId: z.string().uuid().optional().nullable(),
   assigneeUserId: z.string().optional().nullable(),
