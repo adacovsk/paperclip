@@ -54,12 +54,13 @@
 #   CGU   = physical cores      (a 4x cut from cargo's 16; floor of 1)
 # each floored as noted. On this 4-core/8-thread box: 3 slots x 2 jobs x 4 units.
 # MEMORY IS ALSO A DERIVED CEILING, not just a warning in this header. SLOTS is
-# additionally capped by MemTotal divided by the worst build RSS this box has
-# actually recorded (run() measures every build with /usr/bin/time and keeps a
-# monotonic high-water mark). Nothing here is a guessed constant: an unmeasured
-# machine keeps the CPU-derived slots, and the cap only ever *lowers* them. That
-# is what makes these settings portable to a box with the same cores and a third
-# of the RAM, which the CPU-only derivation above would happily thrash.
+# additionally capped by (MemTotal x MEMPCT) / MEM_PER_BUILD — two declared
+# numbers, so the cap is known before the first build rather than discovered
+# after one. It only ever *lowers* the CPU-derived count. An earlier revision
+# derived the divisor from measured peak RSS over a rolling window; that made
+# the ceiling a moving, reactive target and is documented as a defect in the
+# memory-budget block below. Portability is unchanged — a box with the same
+# cores and a third of the RAM declares its own MEM_PER_BUILD.
 #
 # Override via CARGO_SEM_SLOTS / CARGO_SEM_JOBS / CARGO_SEM_CGU; raising SLOTS
 # toward the logical-core count on this chip is expected to be slower, not faster
@@ -178,33 +179,47 @@ THREADS="${CARGO_SEM_THREADS:-$NPROC}"
 
 # MEMORY BUDGET, and the slot ceiling that falls out of it.
 #
-# The per-build figure is NOT hardcoded: run() records peak RSS of each build
-# via /usr/bin/time and keeps a monotonic high-water mark in $RSSF, so the
-# estimate is this box's own worst observed build. Until a build has been
-# measured the memory ceiling is simply inactive — an unmeasured machine keeps
-# the CPU-derived slots rather than accepting an invented number.
+# TWO DECLARED NUMBERS, NO MEASUREMENT IN THE LOOP. The budget is a percentage
+# of MemTotal; the per-build cost is a constant. SLOTS follows from dividing
+# one by the other, and is therefore known before the first build of the day
+# rather than discovered after one.
+#
+# WHY NOT DERIVE THE DIVISOR FROM MEASURED RSS — this was the previous design
+# and it is the defect this section replaces. run() measured every build's peak
+# RSS and the ceiling was MemTotal x MEMPCT divided by the max over a rolling
+# window of recent builds. Three things were wrong with it, and they compound:
+#
+#   1. IT MEASURED A MOVING TARGET. Peak RSS is a property of the *command*,
+#      not the machine. Measured on this box within one hour: four builds at
+#      ~4.0 GiB and one at 11.5 GiB, a 3x spread, because `cargo test --lib
+#      --no-run` also links test harnesses while `cargo clippy` does not. The
+#      cap therefore swung between 5 and 1 depending on which command types
+#      happened to occupy the window — a quantity with no hardware meaning.
+#   2. IT WAS REACTIVE, SO IT COULD NOT PREVENT THE FIRST THRASH. The ceiling
+#      only tightened after a large build had been recorded, and forgot it
+#      WINDOW builds later. Measured: three 6-7 GiB compiles were admitted
+#      concurrently while the window held only ~4 GiB entries, drove the box
+#      20 GiB into swap, and earlyoom killed four rustc over six hours -- one
+#      roughly every hour, each one a verify that had to start over. Builds
+#      churned for ~20 hours without producing a verdict.
+#   3. A SINGLE OUTLIER STILL MOVED THE CAP HARD. The window bounded how *long*
+#      an outlier persisted, not how much it distorted. One 11.5 GiB entry took
+#      memslots to 1 immediately; before the window existed, a 10.90 GiB entry
+#      pinned it at 1 permanently and drained the queue for days with two of
+#      three slots idle.
+#
+# So the divisor is now declared. MEM_PER_BUILD states the worst command type's
+# cost, not the average and not the last one observed, because the ceiling has
+# to survive whatever is admitted next. Portability is unaffected: a different
+# box declares a different number, and the recorded peaks below are what tell
+# you which number to declare. What changes is that the recording no longer
+# feeds back into the live cap.
 #
 # MemTotal, not MemAvailable: every caller must agree on capacity or they would
 # disagree about how many slot locks exist. MemTotal is stable; MemAvailable
 # moves as builds start, so deriving from it would let two concurrent callers
-# compute different SLOTS. The window file changes only when a build finishes,
-# so it is stable in the same sense — every caller reading it at a given moment
-# derives the same SLOTS, which is the invariant that matters.
-#
-# A RECENT WINDOW, NOT AN ALL-TIME MAXIMUM. An earlier revision kept a single
-# monotonically-rising high-water mark, on the reasoning that capacity should
-# only ever shrink. That is not a safe direction, it is a one-way ratchet: a
-# single outlier build pins the ceiling forever, because nothing can ever lower
-# it again. Measured failure: one build recorded 10.90 GiB, which fixed
-# memslots at (31.06 GiB x 70%) / 10.90 GiB = 1 permanently. The queue went
-# strictly serial with two of three physical slots sitting idle and eleven
-# verifies waiting — a multi-day drain caused entirely by one stale number.
-#
-# So the estimate is the max over the last WINDOW recorded builds. Still
-# pessimistic (a max, not a mean — the ceiling must survive the worst build in
-# the window), still this machine's own measurements, but an outlier now ages
-# out after WINDOW builds instead of never. Do NOT restore the all-time
-# maximum: a ceiling that cannot fall is a ceiling that ends up wrong forever.
+# compute different SLOTS. Two constants divided into a stable number are
+# stable in the same sense, and now trivially so.
 #
 # NOT ALL OF MemTotal IS THE BUILD'S TO SPEND. This is a desktop, not a
 # dedicated build box: a browser, an editor, postgres and the Paperclip server
@@ -217,22 +232,27 @@ THREADS="${CARGO_SEM_THREADS:-$NPROC}"
 # killed twice at ~7.9 GiB, and a dozen browser processes taken as collateral
 # because they carry a higher oom_score_adj.
 #
-# Hence a PERCENTAGE of MemTotal. Still MemTotal-derived, so the "every caller
-# must agree" invariant holds — a percentage of a stable number is stable. The
-# default reserves ~30% (~9 GiB here) for everything that is not a build, sized
-# to what the desktop plus page cache was actually holding when the box went
-# over. Raising it toward 100 re-creates the storm; lowering it serializes
-# builds, which is the safe direction — swapping a build box is worse than
-# queueing it.
+# Hence a PERCENTAGE of MemTotal. The default reserves ~30% (~9 GiB here) for
+# everything that is not a build, sized to what the desktop plus page cache was
+# actually holding when the box went over. Raising it toward 100 re-creates the
+# storm; lowering it serializes builds, which is the safe direction — swapping a
+# build box is worse than queueing it.
 RSSF="$D/cargo-sem.peak-rss"
 RSSL="$D/cargo-sem.rss.lock"
-# How many recent builds the memory estimate looks back over. Small enough that
-# one outlier clears in a few builds, large enough that the ceiling is not set
-# by a single cheap incremental compile.
+# How many recent builds to KEEP for reporting. This no longer feeds the cap —
+# it is the evidence you read when deciding whether MEM_PER_BUILD is still the
+# right declaration for this box.
 RSSWIN="${CARGO_SEM_RSS_WINDOW:-5}"
 [ "$RSSWIN" -ge 1 ] 2>/dev/null || RSSWIN=5
 MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 [ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
+# Declared worst-case peak RSS of one build, in kB. 8 GiB: the workspace-crate
+# rustc has been observed between 6 and 11.5 GiB depending on command, and this
+# sits above the common case without letting the test-harness outlier serialize
+# the queue. On this box that yields (31.06 GiB x 70%) / 8 GiB = 2 slots.
+# Raise it only with recorded peaks in hand — $RSSF is exactly that record.
+MEM_PER_BUILD="${CARGO_SEM_MEM_PER_BUILD:-8388608}"
+[ "$MEM_PER_BUILD" -ge 1 ] 2>/dev/null || MEM_PER_BUILD=8388608
 
 # derive_limits — SLOTS, then JOBS x CGU, from the ceilings as they stand NOW.
 #
@@ -263,10 +283,8 @@ derive_limits() {
   _cpuslots=$(( PHYS - 1 < 2 ? 2 : PHYS - 1 ))
   _memslots="$_cpuslots"
   _memkb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
-  _peak=$(awk 'BEGIN{m=0} {gsub(/[^0-9]/,"")} $0!="" && $0+0>m {m=$0+0} END{print m}' "$RSSF" 2>/dev/null)
-  _peak="${_peak:-0}"
-  if [ "${_memkb:-0}" -gt 0 ] && [ "$_peak" -gt 0 ] 2>/dev/null; then
-    _memslots=$(( (_memkb * MEMPCT / 100) / _peak ))
+  if [ "${_memkb:-0}" -gt 0 ] 2>/dev/null; then
+    _memslots=$(( (_memkb * MEMPCT / 100) / MEM_PER_BUILD ))
     [ "$_memslots" -ge 1 ] || _memslots=1
   fi
   SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
@@ -393,10 +411,15 @@ command -v sccache >/dev/null 2>&1 && sccache --start-server >/dev/null 2>&1 || 
 # It also records what the build actually cost in memory. `/usr/bin/time -f %M`
 # reports peak RSS of the largest single child, which is exactly the figure that
 # matters here: the outlier linking rustc, not the ~0.2-0.3 GB dependency ones.
-# The value feeds the memory slot cap above as a monotonic high-water mark, so
-# the ceiling is derived from this machine's own builds rather than a constant
-# guessed for one box. Strictly best-effort: no `/usr/bin/time`, no measurement,
-# and the cap simply stays off. Never allowed to affect the build's exit status.
+#
+# THIS RECORD IS EVIDENCE, NOT AN INPUT. It does not feed SLOTS — MEM_PER_BUILD
+# is declared, for the reasons in the memory-budget block above. What it does is
+# tell you when that declaration has gone stale: a build that exceeds it warns,
+# and $RSSF keeps the last RSSWIN peaks so the next person to touch the constant
+# is choosing from measurements rather than guessing. Do NOT reconnect it to the
+# cap; a ceiling that moves under running builds is the defect this replaced.
+# Strictly best-effort: no `/usr/bin/time`, no measurement, and nothing is lost
+# but the warning. Never allowed to affect the build's exit status.
 run() {
   local rss="$D/.rss.$$" rc=0
   if [ -x /usr/bin/time ]; then
@@ -409,6 +432,10 @@ run() {
     local m; m=$(tail -n1 "$rss" 2>/dev/null | tr -dc '0-9')
     rm -f "$rss"
     if [ -n "$m" ] && [ "$m" -gt 0 ] 2>/dev/null; then
+      if [ "$m" -gt "$MEM_PER_BUILD" ] 2>/dev/null; then
+        printf 'cargo-sem.sh: build peaked at %s kB, above the declared MEM_PER_BUILD of %s kB; SLOTS may be too high for this workload.\n' \
+          "$m" "$MEM_PER_BUILD" >&2
+      fi
       exec 8>"$RSSL"; flock 8
       { awk '{gsub(/[^0-9]/," "); for(i=1;i<=NF;i++) print $i}' "$RSSF" 2>/dev/null; \
         printf '%s\n' "$m"; } \

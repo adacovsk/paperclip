@@ -140,40 +140,41 @@ PY
 # shrink the recorded peak while the second waits. A waiter that re-derives is
 # admitted immediately; one that does not waits for the first to finish.
 echo
-echo "Checking that a queued waiter picks up a widened memory ceiling..."
+echo "Checking that the slot ceiling ignores recorded peak RSS..."
+# The cap is (MemTotal x MEMPCT) / MEM_PER_BUILD — two declared numbers. The
+# $RSSF window is evidence for choosing MEM_PER_BUILD, never an input to the
+# derivation, so its contents must not move SLOTS. This replaces a test that
+# rewrote $RSSF mid-run and asserted a queued waiter was admitted when the
+# ceiling widened; that behaviour was the moving, reactive target the declared
+# constant exists to remove, and the old test passes vacuously against it.
 MEMDIR="$(mktemp -d)"
-: > "$MEMDIR/events.log"
 MEMKB=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo)
-# One "build" claims 70% of RAM, so (MemTotal * 70/100) / peak == 1 slot.
-printf '%s\n' "$(( MEMKB * 70 / 100 ))" > "$MEMDIR/cargo-sem.peak-rss"
 
-(
-  export CARGO_SEM_DIR="$MEMDIR" CARGO_SEM_POLL="0.05"
-  unset CARGO_SEM_SLOTS
-  export DIR="$MEMDIR" LOG="$MEMDIR/events.log" HOLD="6"
-  mkdir -p "$MEMDIR/a" "$MEMDIR/b"
-  ( cd "$MEMDIR/a" && "$SEM" bash -c 'work' _ ) &
-  sleep 1
-  ( cd "$MEMDIR/b" && "$SEM" bash -c 'work' _ ) &
-  # Second is now queued behind a 1-slot ceiling. Widen it: a cheap recent build
-  # drops the window's peak, so the derivation now fits several.
-  sleep 1
-  printf '%s\n' "$(( MEMKB / 1000 ))" > "$MEMDIR/cargo-sem.peak-rss"
-  wait
-)
+derive_slots() {
+  # Echo the SLOTS the script derives, via the debug log's admission line:
+  # THREADS = SLOTS x JOBS x CGU, so SLOTS = THREADS / (jobs x cgu).
+  local dir; dir="$(mktemp -d)"
+  printf '%s\n' "$1" > "$dir/cargo-sem.peak-rss"
+  ( export CARGO_SEM_DIR="$dir" CARGO_SEM_DEBUG=1; unset CARGO_SEM_SLOTS
+    "$SEM" true >/dev/null 2>&1 )
+  local line; line=$(grep -o 'jobs=[0-9]* cgu=[0-9]*' "$dir/cargo-sem.debug.log" 2>/dev/null | head -1)
+  local j c; j=${line#jobs=}; j=${j%% *}; c=${line##*cgu=}
+  local threads; threads=$(nproc 2>/dev/null || echo 4)
+  rm -rf "$dir"
+  [ -n "${j:-}" ] && [ -n "${c:-}" ] && [ "$j" -gt 0 ] && [ "$c" -gt 0 ] \
+    && echo $(( threads / (j * c) )) || echo "?"
+}
 
-python3 - "$MEMDIR/events.log" <<'PY'
-import sys, re
-starts = []
-for line in open(sys.argv[1]):
-    m = re.match(r'(START|END)\s+pid=\d+ t=([\d.]+)', line)
-    if m and m[1] == 'START':
-        starts.append(float(m[2]))
-starts.sort()
-ok = len(starts) == 2 and (starts[1] - starts[0]) < 5.0
-gap = f"{starts[1] - starts[0]:.2f}s" if len(starts) == 2 else "n/a"
-print(f"second admission came {gap} after the first (must be < 5s; the first build holds 6s)")
-print("RESULT:", "PASS" if ok else "FAIL")
-sys.exit(0 if ok else 1)
-PY
+# A window of small builds previously derived many slots; one huge entry
+# previously collapsed it to 1. Both must now give the same declared answer.
+small=$(derive_slots "$(( MEMKB / 1000 ))")
+huge=$(derive_slots "$(( MEMKB * 70 / 100 ))")
+echo "SLOTS with a cheap-build window = $small; with a RAM-sized outlier = $huge (must match)"
+if [ "$small" = "$huge" ] && [ "$small" != "?" ]; then
+  echo "RESULT: PASS"
+else
+  echo "RESULT: FAIL"
+  rm -rf "$MEMDIR"
+  exit 1
+fi
 rm -rf "$MEMDIR"
