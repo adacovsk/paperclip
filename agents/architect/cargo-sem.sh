@@ -51,8 +51,9 @@
 # All three defaults derive from the CPU, none are hardcoded:
 #   SLOTS = physical cores - 1  (reserve one for OS/sccache/orchestration)
 #   JOBS  = logical cores / SLOTS
-#   CGU   = physical cores      (a 4x cut from cargo's 16; floor of 1)
-# each floored as noted. On this 4-core/8-thread box: 3 slots x 2 jobs x 4 units.
+#   CGU   = 16, declared       (cargo's non-incremental default; floor CGU_FLOOR)
+# each floored as noted. On this 4-core/8-thread box: 2 slots x 2 jobs x 16 units.
+# CGU is not part of the thread product — see the JOBS x CGU block for why.
 # MEMORY IS ALSO A DERIVED CEILING, not just a warning in this header. SLOTS is
 # additionally capped by (MemTotal x MEMPCT) / MEM_PER_BUILD — two declared
 # numbers, so the cap is known before the first build rather than discovered
@@ -64,9 +65,11 @@
 #
 # Override via CARGO_SEM_SLOTS / CARGO_SEM_JOBS / CARGO_SEM_CGU; raising SLOTS
 # toward the logical-core count on this chip is expected to be slower, not faster
-# (measure before trusting a bigger number). If the box still thrashes, CGU is
-# the cheapest lever to drop next (2, then 1) — it costs single-build codegen
-# parallelism, which concurrent slots already supply at the machine level.
+# (measure before trusting a bigger number). If the box still thrashes, drop
+# SLOTS or JOBS — NOT CGU. This line used to name CGU as "the cheapest lever to
+# drop next (2, then 1)"; measured on this box, CGU=1 cost 123 min and 11.5 GiB
+# against CGU=16 at 67 min and 7.2 GiB for the same build. Lowering CGU makes a
+# build slower AND larger, because one codegen unit is one undivided LLVM module.
 #
 # CGU is exported as CARGO_PROFILE_DEV_CODEGEN_UNITS rather than committed to
 # the project's Cargo.toml on purpose. It must NOT apply to a human's dev build:
@@ -253,6 +256,11 @@ MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 # Raise it only with recorded peaks in hand — $RSSF is exactly that record.
 MEM_PER_BUILD="${CARGO_SEM_MEM_PER_BUILD:-8388608}"
 [ "$MEM_PER_BUILD" -ge 1 ] 2>/dev/null || MEM_PER_BUILD=8388608
+# Lowest codegen-unit count any stage may be reduced to. 8: measured, CGU=1 cost
+# 2x the wall clock and 4.3 GiB more peak RSS than CGU=16 on this crate, so the
+# low end of this knob is where builds get slow enough to be OOM-killed.
+CGU_FLOOR="${CARGO_SEM_CGU_FLOOR:-8}"
+[ "$CGU_FLOOR" -ge 1 ] 2>/dev/null || CGU_FLOOR=8
 
 # derive_limits — SLOTS, then JOBS x CGU, from the ceilings as they stand NOW.
 #
@@ -290,21 +298,38 @@ derive_limits() {
   SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
   [ "$SLOTS" -ge 1 ] 2>/dev/null || SLOTS=1
 
-  # JOBS x CGU — now, and only now, split the per-slot thread budget. Both
-  # multiply into the same product but cost memory differently: JOBS spawns
-  # additional whole rustc processes, CGU adds codegen threads inside one (more
-  # LLVM modules live at once). Splitting them evenly rather than loading either
-  # end keeps both the process count and the per-process footprint moderate.
-  # Floors of 1 apply to each; CGU=1 is legal and serializes codegen within a
-  # rustc rather than disabling it.
+  # JOBS carries the per-slot thread budget. CGU does NOT — see below.
+  #
+  # This block used to split the budget evenly between the two on the model that
+  # SLOTS x JOBS x CGU is a thread count. MEASURED, and the model is wrong for
+  # the CGU factor: codegen workers draw from cargo's jobserver, so CGU sets how
+  # many LLVM modules the crate is *divided into*, not how many threads run at
+  # once. A CGU=16 build was observed with two rustc at 50-65% CPU, not sixteen
+  # threads. Treating CGU as a thread multiplier therefore bought no thread
+  # relief and cost double on both axes that matter:
+  #
+  #   cargo test --lib --no-run, warm target, same box, same JOBS=2:
+  #     CGU=1     123 min    11.5 GiB peak RSS
+  #     CGU=16     67 min     7.2 GiB peak RSS
+  #
+  # Both directions follow from the same fact. One codegen unit means the whole
+  # crate is one LLVM module: nothing to parallelise, and the entire module live
+  # at once. The header's old advice — "if the box still thrashes, CGU is the
+  # cheapest lever to drop next (2, then 1)" — is exactly backwards, and it is
+  # what put builds at 1-2 units where they took ~2 hours and peaked high enough
+  # for earlyoom to reap them mid-compile. Do not restore it.
+  #
+  # So CGU is declared at cargo's own non-incremental default and JOBS takes the
+  # whole per-slot budget. JOBS remains the memory-expensive lever (each job is
+  # another whole rustc), which is why it, not CGU, is what the budget bounds.
   _per_slot=$(( THREADS / SLOTS ))
   [ "$_per_slot" -ge 1 ] || _per_slot=1
   _split=1
   while [ $(( (_split + 1) * (_split + 1) )) -le "$_per_slot" ]; do _split=$(( _split + 1 )); done
   JOBS="${CARGO_SEM_JOBS:-$_split}"
-  CGU="${CARGO_SEM_CGU:-$(( _per_slot / _split ))}"
+  CGU="${CARGO_SEM_CGU:-16}"
   [ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
-  [ "$CGU" -ge 1 ] 2>/dev/null || CGU=1
+  [ "$CGU" -ge 1 ] 2>/dev/null || CGU=16
 
   # Stage-relative cut. CARGO_SEM_CGU_DIV divides whatever CGU resolved to above,
   # floored at 1, so a caller can say "this stage is the heavy one, give it less"
@@ -313,6 +338,13 @@ derive_limits() {
   # any box. Divides an explicit CARGO_SEM_CGU too, so "half whatever this box
   # decided" holds however CGU was arrived at.
   CGU=$(( CGU / ${CARGO_SEM_CGU_DIV:-1} ))
+  # ...but never below CGU_FLOOR. The divisor exists to make a heavy stage
+  # proportionally lighter, and under the old thread model driving it toward 1
+  # looked like relief. It is not: 1-2 units is where the 123-minute, 11.5 GiB
+  # builds above came from, and the test stage's CGU_DIV=2 is precisely what
+  # produced them. Keep the knob — a caller asking for proportionally less is
+  # still meaningful — but stop it landing in the range the measurement rejects.
+  [ "$CGU" -ge "$CGU_FLOOR" ] 2>/dev/null || CGU="$CGU_FLOOR"
   [ "$CGU" -ge 1 ] || CGU=1
 }
 

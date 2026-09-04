@@ -142,39 +142,73 @@ PY
 echo
 echo "Checking that the slot ceiling ignores recorded peak RSS..."
 # The cap is (MemTotal x MEMPCT) / MEM_PER_BUILD — two declared numbers. The
-# $RSSF window is evidence for choosing MEM_PER_BUILD, never an input to the
-# derivation, so its contents must not move SLOTS. This replaces a test that
-# rewrote $RSSF mid-run and asserted a queued waiter was admitted when the
-# ceiling widened; that behaviour was the moving, reactive target the declared
-# constant exists to remove, and the old test passes vacuously against it.
-MEMDIR="$(mktemp -d)"
-MEMKB=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo)
-
-derive_slots() {
-  # Echo the SLOTS the script derives, via the debug log's admission line:
-  # THREADS = SLOTS x JOBS x CGU, so SLOTS = THREADS / (jobs x cgu).
+# $RSSF window is evidence for choosing MEM_PER_BUILD, never an input, so its
+# contents must not move SLOTS.
+#
+# Measured by OBSERVED CONCURRENCY, not by arithmetic on the debug line. An
+# earlier version of this check inferred SLOTS as THREADS/(jobs x cgu), which
+# silently became 8/(2x16)=0 once CGU stopped being part of the thread product —
+# and then passed on 0 == 0. Counting how many builds actually run at once
+# cannot go vacuous that way.
+peak_conc_for_window() {
   local dir; dir="$(mktemp -d)"
   printf '%s\n' "$1" > "$dir/cargo-sem.peak-rss"
-  ( export CARGO_SEM_DIR="$dir" CARGO_SEM_DEBUG=1; unset CARGO_SEM_SLOTS
-    "$SEM" true >/dev/null 2>&1 )
-  local line; line=$(grep -o 'jobs=[0-9]* cgu=[0-9]*' "$dir/cargo-sem.debug.log" 2>/dev/null | head -1)
-  local j c; j=${line#jobs=}; j=${j%% *}; c=${line##*cgu=}
-  local threads; threads=$(nproc 2>/dev/null || echo 4)
+  : > "$dir/events.log"
+  ( export CARGO_SEM_DIR="$dir" CARGO_SEM_POLL="0.05" DIR="$dir" LOG="$dir/events.log" HOLD="3"
+    unset CARGO_SEM_SLOTS
+    mkdir -p "$dir/w1" "$dir/w2" "$dir/w3" "$dir/w4"
+    for w in w1 w2 w3 w4; do ( cd "$dir/$w" && "$SEM" bash -c 'work' _ ) & done
+    wait ) >/dev/null 2>&1
+  python3 - "$dir/events.log" <<'EOF'
+import sys, re
+ev = []
+for line in open(sys.argv[1]):
+    m = re.match(r'(START|END)\s+pid=\d+ t=([\d.]+)', line)
+    if m: ev.append((float(m[2]), 1 if m[1] == 'START' else -1))
+ev.sort()
+cur = peak = 0
+for _, d in ev:
+    cur += d; peak = max(peak, cur)
+print(peak)
+EOF
   rm -rf "$dir"
-  [ -n "${j:-}" ] && [ -n "${c:-}" ] && [ "$j" -gt 0 ] && [ "$c" -gt 0 ] \
-    && echo $(( threads / (j * c) )) || echo "?"
 }
 
-# A window of small builds previously derived many slots; one huge entry
-# previously collapsed it to 1. Both must now give the same declared answer.
-small=$(derive_slots "$(( MEMKB / 1000 ))")
-huge=$(derive_slots "$(( MEMKB * 70 / 100 ))")
-echo "SLOTS with a cheap-build window = $small; with a RAM-sized outlier = $huge (must match)"
-if [ "$small" = "$huge" ] && [ "$small" != "?" ]; then
+MEMKB=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo)
+small=$(peak_conc_for_window "$(( MEMKB / 1000 ))")
+huge=$(peak_conc_for_window "$(( MEMKB * 70 / 100 ))")
+echo "peak concurrency with a cheap-build window = $small; with a RAM-sized outlier = $huge (must match, and be >= 1)"
+if [ "$small" = "$huge" ] && [ "${small:-0}" -ge 1 ] 2>/dev/null; then
   echo "RESULT: PASS"
 else
   echo "RESULT: FAIL"
-  rm -rf "$MEMDIR"
   exit 1
 fi
-rm -rf "$MEMDIR"
+
+echo
+echo "Checking that CGU stays at or above CGU_FLOOR..."
+# CGU is declared (16) and is NOT part of the SLOTS x JOBS thread product.
+# CARGO_SEM_CGU_DIV makes a heavy stage proportionally lighter, but must not
+# drive CGU into the range the benchmark rejects: measured on this crate,
+# CGU=1 cost 123 min / 11.5 GiB against CGU=16 at 67 min / 7.2 GiB, and the
+# test stage's CGU_DIV=2 is what produced the 1-2 unit builds.
+cgu_for() {
+  local dir; dir="$(mktemp -d)"
+  ( export CARGO_SEM_DIR="$dir" CARGO_SEM_DEBUG=1; unset CARGO_SEM_SLOTS
+    [ -n "${1:-}" ] && export CARGO_SEM_CGU_DIV="$1"
+    "$SEM" true ) >/dev/null 2>&1
+  local line; line=$(grep -o 'cgu=[0-9]*' "$dir/cargo-sem.debug.log" 2>/dev/null | head -1)
+  rm -rf "$dir"
+  echo "${line#cgu=}"
+}
+base=$(cgu_for ""); div2=$(cgu_for 2); div99=$(cgu_for 99)
+floor="${CARGO_SEM_CGU_FLOOR:-8}"
+echo "CGU base=$base  CGU_DIV=2 -> $div2  CGU_DIV=99 -> $div99  (floor $floor)"
+if [ "${base:-0}" -ge "$floor" ] 2>/dev/null \
+   && [ "${div2:-0}" -ge "$floor" ] 2>/dev/null \
+   && [ "${div99:-0}" -ge "$floor" ] 2>/dev/null; then
+  echo "RESULT: PASS"
+else
+  echo "RESULT: FAIL"
+  exit 1
+fi
