@@ -64,9 +64,23 @@ Human merges. You GC the worktree + branch.
      (worker INSTRUCTIONS §Committing your work). Present → close the task on it and create
      no Reviewer subtask: `already satisfied` → `done`, `false premise` → `cancelled`, quoting
      the line and the run id. **Do not re-dispatch a task carrying that line** — the verdict is
-     terminal, and re-firing buys the identical run at full cost. Absent → re-dispatch the
+     terminal, and re-firing buys the identical run at full cost.
+     **Absent from the comments is not absent from the run — read `resultJson` before re-dispatching.**
+     A Worker that reaches a defensible conclusion and never calls `/api/` writes it to the run,
+     not to a comment, and comment-absence alone bought four full-price identical re-dispatches
+     ([AA-6705](/AA/issues/AA-6705)). Fetch the run named by the task's `executionRunId`, or the
+     newest `GET /api/companies/{companyId}/heartbeat-runs?limit=60` row whose
+     `contextSnapshot.issueId` matches, then `GET /api/heartbeat-runs/{runId}` and read
+     `resultJson.result`. (`/api/agents/:id/runs` 404s — the route is **company-scoped**; that
+     404 is what previously read as "no run history exists". `GET /api/heartbeat-runs/{runId}/log`
+     returns the full tool-call transcript when the result is ambiguous.) A run that
+     `succeeded` with `exitCode: 0` and a substantive `resultJson.result` **is** the verdict:
+     close the task on it exactly as if the comment line were present, quoting the result and
+     the run id. Only a run with `status: failed`, a non-null `signal`, or a null `resultJson`
+     is a genuine silent run — then re-dispatch the
      Worker **once**, tracking a `Worker no-op: N` trailer; if the second run also returns clean
-     with 0 commits and no verdict line, `escalate to operator` rather than firing a third.
+     with 0 commits and no verdict in either the comments or `resultJson`, `escalate to operator`
+     rather than firing a third.
      This arm exists because clean/0-commit is otherwise indistinguishable from never-started
      and had no bullet at all: AA-5337 was re-picked three times inside 40 minutes, each run
      ~15-32s of billed Opus concluding the same no-op.
