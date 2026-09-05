@@ -309,11 +309,29 @@ For each parent `{task-id}`:
    made every task read as "no sentinel".) No sentinel, or non-zero → do NOT
    land; the Architect must (re-)run cargo. Before concluding a build is dead,
    probe it the way the Architect does: alive if
-   `test -d /proc/"$(cat "$VERIFY_DIR/{task-id}.pid")"`, or if
-   `pgrep -af cargo | grep verifyrun-{task-id}` matches, or if
+   `test -d /proc/"$(cat "$VERIFY_DIR/{task-id}.pid")"`, or if `{task-id}`
+   appears in the wrapper census below, or if
    `{task-id}.log` has a recent mtime — a build queued behind a busy
    `cargo-sem.sh` slot can show nothing but its startup line for 20–40 minutes
    and is RUNNING. Re-dispatch per the step 3 cap only when all three say dead.
+
+   > **Take the census once, for every id — never `pgrep`/`grep` per task.** A
+   > per-id probe matches the *probing shell*, because that shell's own command
+   > line contains the pattern, so a build that does not exist reports live. In a
+   > `for` loop it is worse: the loop shell's argv holds *every* id, so an entire
+   > sweep reads as fully alive and nothing is ever re-dispatched. This is the
+   > `.pid` failure arrived at from the opposite side — `.pid` calls live builds
+   > dead (cross-symlinked twins), a per-id grep calls dead builds live.
+   >
+   > ```sh
+   > ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+' | sort -u
+   > ```
+   >
+   > Require one-or-more digits, not `[0-9]*`. With `*` the pattern matches zero
+   > digits against the literal `verifyrun-AA-[0-9]*` in the pipeline's own argv
+   > and the census grows a phantom bare `verifyrun-AA-` row — 10 of them,
+   > measured on this box. Membership in that one set is the liveness answer for
+   > every task in the sweep.
 2. **Committed + ahead gate.** Worktree clean (`git -C
    .paperclip/worktrees/{task-id} status --porcelain` empty) AND ahead of
    `origin/main` (`git rev-list --count origin/main..HEAD` > 0). If clean
