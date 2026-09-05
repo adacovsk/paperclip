@@ -225,10 +225,36 @@ can weigh it against everything else. Three reasons it is not yours to do inline
 - **Size alone is not a defect.** 79 of 596 `.rs` files are over 1000 lines, so the
   threshold selects an eighth of the tree and cannot mean "all of these are wrong".
   The ones worth splitting are those where the length tracks *several unrelated
-  concerns* sharing a file. A long file doing one thing thoroughly — a test module, a
-  single exhaustive `match`, a generated table — is fine, and `tests/` is expected to
-  be long. Name the concerns you would separate; if you cannot name them, there is no
-  split to make.
+  concerns* sharing a file; a long file doing one thing thoroughly — a single
+  exhaustive `match`, a generated table — is fine. Name the concerns you would
+  separate; if you cannot name them, there is no split to make.
+
+### `tests/` splits too, and is usually the better candidate
+
+Do **not** exempt a file for living under `tests/`. The four largest files in the repo
+are test modules, and they are also the *least* contended — measured across the live
+worktrees, no test file had more than one branch in it while `active_modifiers.rs` had
+five. Biggest and safest at once, so they are where this rule pays off first.
+
+The seams are already named: the big test files are a stack of inline
+`mod <name>_tests { ... }` blocks — `tests/combat_systems.rs` is 5983 lines holding
+**39** of them. One block becomes one file, so the author has already made the naming
+decision and the move is mechanical.
+
+**The layout is different from `src/`, and getting it wrong is silent.** Cargo builds
+one integration-test binary per *file* directly under `tests/`, so `foo/mod.rs` is not
+the pattern here:
+
+```
+tests/foo.rs                 ->   tests/foo/main.rs        (the target, still named `foo`)
+    mod alpha_tests { .. }   ->   tests/foo/alpha_tests.rs (declared `mod alpha_tests;`)
+```
+
+Subdirectories under `tests/` are **not** compiled as their own targets — that is why
+`tests/common/mod.rs` works — so the submodule files do not become stray test
+binaries. Keep the module names byte-identical: a test's full path is its filter, so
+renaming a block silently breaks `cargo test <filter>` and anything selecting tests by
+name.
 
 **The one case you may do it inline**: the task already restructures that file, the
 move is mechanical, and no public path changes because `mod.rs` re-exports what the
