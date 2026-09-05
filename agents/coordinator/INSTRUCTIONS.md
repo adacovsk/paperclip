@@ -213,16 +213,48 @@ its Architect immediately:
 - Assignment-wake fires the Architect within seconds.
 - Coordinator moves on. Cargo runtime is the Architect's problem.
 
-If multiple `needs-build` tasks queue up at once, dispatch all their
-Architects in the same fire — the rest queue. Each Architect builds in
+**Cap concurrent verifies at 2x the semaphore's ceiling; leave the surplus
+undispatched.** Read the ceiling, never assume it:
+
+```sh
+SLOTS=$(cat /tmp/cargo-sem.slots 2>/dev/null || echo 2)
+LIVE=$(ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+' | sort -u | wc -l)
+# dispatch only while  $LIVE  <  2 * $SLOTS
+```
+
+`cargo-sem.sh` publishes its derived `SLOTS` on every run; the census is the
+same one §Landing sweep step 1 uses. Surplus `needs-build` tasks stay
+`in_review` and **undispatched**, and a later fire picks them up as builds
+drain — that queue is a Coordinator-side list, not 20 live wrappers.
+
+**Why a cap at all, when the semaphore already bounds concurrency.** It bounds
+what *runs*; nothing bounded what was *handed to it*. Measured: 30 open verify
+subtasks and 29 live wrappers against 2 slots, a FIFO 37 tickets deep, and a
+queue head that had waited **19h01m** for 15m of CPU. Each verify takes up to
+four slot acquisitions (clippy, `test --lib`, `clippy --no-default-features`,
+`test --tests`), so 30 verifies is ~120 acquisitions — a multi-day drain.
+Throughput does not improve past the cap, it *degrades*: cold dependency
+rebuilds contend for sccache, whose Rust hit rate was measured decaying under
+exactly this load. The pipeline meanwhile reports healthy on every cheap probe
+— moving log mtimes, busy slots, live scopes — which is why this ran for so
+long unnoticed.
+
+**Do not restore "dispatch all their Architects in the same fire".** That line
+lived here and is what licensed the 30. Dispatching everything was safe only
+under the old blocking-Architect model where a queued run cost nothing; with
+detached builds each dispatch is a live wrapper holding a worktree lock and a
+ticket. Each Architect builds in
 its **own per-worktree `target/`** (the runtime no longer exports a
 shared `CARGO_TARGET_DIR`, since fixed), so there is
 **no shared cargo build lock** to serialize them. Concurrency is instead
 bounded by a **FIFO N-slot build semaphore** (`agents/architect/cargo-sem.sh`,
 supersedes an earlier raw-flock pair and, before that, a
 machine-wide mutex) that wraps the whole clippy+test chain. Its ceiling
-is `CARGO_SEM_SLOTS`, defaulting to **physical cores − 1** (= 3 on this
-4-physical-core / 8-thread ULV box; floor 2), with each build separately
+is `CARGO_SEM_SLOTS`, defaulting to the **lower** of physical cores − 1 and a
+declared memory budget — `(MemTotal x 70%) / 8 GiB per build`. On this
+4-physical-core / 31 GB box that is `min(3, 2)` = **2**, not 3: memory binds
+first, and this line said 3 for long enough to matter. Read
+`/tmp/cargo-sem.slots` for the live value rather than re-deriving it here, with each build separately
 job-capped (`CARGO_BUILD_JOBS`, default logical/slots, floor 2 → 2 here)
 so N builds × their job cap stays under the real core count. Slots are
 **not** core-pinned (the old 2-slot design's `taskset` partitioning was

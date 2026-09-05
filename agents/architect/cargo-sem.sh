@@ -298,6 +298,16 @@ derive_limits() {
   SLOTS="${CARGO_SEM_SLOTS:-$(( _memslots < _cpuslots ? _memslots : _cpuslots ))}"
   [ "$SLOTS" -ge 1 ] 2>/dev/null || SLOTS=1
 
+  # PUBLISH THE CEILING. The number is derived here from hardware the caller
+  # cannot see, and the layer that decides how much work to hand us — Coordinator's
+  # verify dispatch — has no other way to learn it. Left unpublished it gets
+  # guessed, and the guess goes stale exactly when it matters: the "physical
+  # cores - 1" figure quoted in Coordinator's INSTRUCTIONS said 3 while the memory
+  # budget had already lowered this to 2, so a cap built on the quoted number
+  # would license 50% more in-flight builds than the box can admit. Best-effort:
+  # a read-only /tmp must not fail a build.
+  printf '%s\n' "$SLOTS" > "$D/cargo-sem.slots" 2>/dev/null || true
+
   # JOBS carries the per-slot thread budget. CGU does NOT — see below.
   #
   # This block used to split the budget evenly between the two on the model that
