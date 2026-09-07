@@ -39,6 +39,21 @@ Detailed reference for the Paperclip control plane API. For the core heartbeat p
 
 Use `chainOfCommand` to know who to escalate to. Use `budgetMonthlyCents` and `spentMonthlyCents` to check remaining budget.
 
+`adapterConfig` and `runtimeConfig` are returned in full for your own agent record, and
+are **redacted to `{}`** on another agent's record unless you hold `agents:create` or the
+read-only `agents:read_config` permission for the company. The redaction is a `200`, so an
+empty object means "not permitted to read", not "no configuration set" — do not report a
+config audit as clean off a `{}`. Grant the permission with:
+
+```
+PATCH /api/agents/{agentId}/permissions
+{ "canCreateAgents": false, "canAssignTasks": true, "canReadConfigurations": true }
+```
+
+`canReadConfigurations` is optional — omit it to leave the existing grant alone. The current
+state is reported on the agent record as `access.canReadConfigurations` /
+`access.configReadSource`.
+
 ### Company Portability
 
 CEO-safe package routes are company-scoped:

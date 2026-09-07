@@ -242,6 +242,146 @@ describe("agent permission routes", () => {
     expect(res.body.access.taskAssignSource).toBe("explicit_grant");
   });
 
+  it("redacts agent configuration for an agent actor holding neither config permission", async () => {
+    mockAccessService.hasPermission.mockResolvedValue(false);
+
+    const app = createApp({
+      type: "agent",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      companyId,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.adapterConfig).toEqual({});
+    expect(res.body.runtimeConfig).toEqual({});
+  });
+
+  it("returns agent configuration to an agent actor holding only agents:read_config", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: { instructionsFilePath: "/agents/facilitator/INSTRUCTIONS.md" },
+      runtimeConfig: { heartbeat: { sessionCompaction: { enabled: true } } },
+    });
+    mockAccessService.hasPermission.mockImplementation(
+      async (_companyId: string, _type: string, _id: string, key: string) =>
+        key === "agents:read_config",
+    );
+
+    const app = createApp({
+      type: "agent",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      companyId,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.adapterConfig.instructionsFilePath).toBe("/agents/facilitator/INSTRUCTIONS.md");
+    expect(res.body.runtimeConfig.heartbeat.sessionCompaction.enabled).toBe(true);
+  });
+
+  it("does not let agents:read_config stand in for agents:create on a write route", async () => {
+    mockAccessService.hasPermission.mockImplementation(
+      async (_companyId: string, _type: string, _id: string, key: string) =>
+        key === "agents:read_config",
+    );
+
+    const app = createApp({
+      type: "agent",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      companyId,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agents`)
+      .send({ name: "Builder", role: "engineer", adapterType: "process", adapterConfig: {} });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("grants agents:read_config when the permissions patch enables it", async () => {
+    const app = createApp({
+      type: "operator",
+      userId: "operator-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, canReadConfigurations: true });
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId,
+      "agent",
+      agentId,
+      "agents:read_config",
+      true,
+      "operator-user",
+    );
+  });
+
+  it("leaves the agents:read_config grant untouched when the field is omitted", async () => {
+    const app = createApp({
+      type: "operator",
+      userId: "operator-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true });
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalledWith(
+      companyId,
+      "agent",
+      agentId,
+      "agents:read_config",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("reports the config-read grant on agent detail", async () => {
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      {
+        id: "grant-2",
+        companyId,
+        principalType: "agent",
+        principalId: agentId,
+        permissionKey: "agents:read_config",
+        scope: null,
+        grantedByUserId: "operator-user",
+        createdAt: new Date("2026-03-19T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+      },
+    ]);
+
+    const app = createApp({
+      type: "operator",
+      userId: "operator-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.access.canReadConfigurations).toBe(true);
+    expect(res.body.access.configReadSource).toBe("explicit_grant");
+  });
+
   it("keeps task assignment enabled when agent creation privilege is enabled", async () => {
     mockAgentService.updatePermissions.mockResolvedValue({
       ...baseAgent,
