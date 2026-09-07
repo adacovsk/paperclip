@@ -70,21 +70,35 @@ Diff live `adapterConfig.promptTemplate` + `instructionsFilePath` content agains
 
 ### 7. Stale branch sweep
 
-`git fetch origin --prune`, then `gh api -X GET /repos/<owner>/<repo>/branches --paginate`. For each `task/AA-*`:
+`git fetch origin --prune`, then `gh api -X GET /repos/<owner>/<repo>/branches --paginate`. For
+**every remote branch other than `main`** — not just `task/AA-*`: `planner/*`, `op/*`, `claude/*`
+and `economy/*` all strand the same way, and the `task/AA-*` glob made 12 of 23 unmerged remote
+branches invisible to this sweep. Two of them (`planner/restock-0807d`, `planner/restock-0808c`)
+sat stranded 18 days and were found only by walking `git worktree list` by hand.
 
 | Case | Condition | Action |
 |---|---|---|
 | 1 | Tip is ancestor of `origin/main` | `git push origin --delete` |
 | 2 | Tip not ancestor, but `git diff main...<branch>` empty (squash dup) | `git push origin --delete` |
-| 3 | Unique commits + linked task `done`/`cancelled` | Followup to Coordinator with SHA + subject + diff stat. Do NOT delete. |
-| 4 | Unique commits + linked task `in_progress`/`todo` | Leave |
-| 5 | No linked task (operator branch) idle >14d | Mention in report. Do NOT delete. |
+| 3 | Unique commits + linked task `done`/`cancelled`, **or an open PR that is merged/closed** | Followup to Coordinator with SHA + subject + diff stat. Do NOT delete. |
+| 4 | Unique commits + linked task `in_progress`/`todo`, **or an open PR** | Leave |
+| 5 | No linked task and no PR, idle >14d | Mention in report. Do NOT delete. |
 
-Auto-delete only cases 1 & 2. Never force-push.
+**Resolving the "linked task" for a non-`task/` branch.** `planner/*`, `op/*` and `claude/*`
+carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/AA-1234` returns
+nothing and every such branch falls to case 5. Resolve them through the PR instead:
+`gh pr list --head <branch> --state all --limit 1 --json number,state,mergedAt` — a merged PR is
+case 1's evidence even when the tip is not an ancestor (squash merges), an open PR is case 4, and
+only a branch with neither a linked task nor any PR is genuinely case 5.
+
+Auto-delete only cases 1 & 2. Never force-push. **Case 1 and 2 are safe to widen** because both
+delete only branches whose commits are provably on `origin/main`; the cases that could lose work
+(3, 4, 5) are all report-only, so widening the glob cannot destroy anything the narrow glob
+protected.
 
 ### 7b. Stranded local-commit sweep
 
-§7 sweeps `gh api /branches` — **remote only** — so a commit that was made locally and never pushed is invisible to it. That is the commit-without-push class, and it recurs. Add a **local** pass:
+§7 sweeps `gh api /branches` — **remote only**, and now across every non-`main` branch — so a commit that was made locally and never pushed is still invisible to it. That is the commit-without-push class, and it recurs. Add a **local** pass:
 
 ```sh
 git -C "$BEVY_RPG" fetch origin --prune
