@@ -31,6 +31,7 @@ import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
+import { shouldWakeNextMover } from "./stage-completion-wake.js";
 import {
   buildWorkspaceReadyComment,
   cleanupExecutionWorkspaceArtifacts,
@@ -3270,12 +3271,30 @@ export function heartbeatService(db: Db) {
                 );
               }
 
-              // Wake the next mover so the pipeline advances regardless of
-              // whether this stage landed: the parent's assignee if this is a
-              // subtask, otherwise the company Coordinator for a top-level task
-              // (which has no parent to roll up into).
+              // Wake the next mover so the pipeline advances: the parent's
+              // assignee if this is a subtask, otherwise the company Coordinator
+              // for a top-level task (which has no parent to roll up into).
+              //
+              // Gated on the run having actually moved the task. See
+              // shouldWakeNextMover for why an unconditional wake here storms the
+              // Coordinator — it fires on the same exits the branch above has just
+              // finished logging as having advanced nothing.
               let wakeTargetAgentId: string | null = null;
-              if (existingIssue.parentId) {
+              const wakeNextMover = shouldWakeNextMover({
+                currentStatus: existingIssue.status,
+                nextStatus,
+              });
+              if (!wakeNextMover) {
+                logger.info(
+                  {
+                    issueId,
+                    agentId: agent.id,
+                    runId: run.id,
+                    heldStatus: existingIssue.status,
+                  },
+                  "suppressed stage-completion wake (nothing advanced and the status is outside the promotion allowlist)",
+                );
+              } else if (existingIssue.parentId) {
                 const parentIssue = await issuesSvc.getById(existingIssue.parentId);
                 wakeTargetAgentId = parentIssue?.assigneeAgentId ?? null;
               } else {
@@ -3825,6 +3844,12 @@ export function heartbeatService(db: Db) {
       agent.status === "terminated" ||
       agent.status === "pending_approval"
     ) {
+      // Record the drop before throwing. This used to throw with no row written
+      // anywhere, which is what made a swallowed assignment invisible: the task
+      // kept its assignee and status, the agent looked healthy, and no error was
+      // recorded on either side. `selectAssignmentsToReplayOnResume` recovers the
+      // work on resume; this row is how anyone sees that it was dropped at all.
+      await writeSkippedRequest(`agent.${agent.status}`);
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
     }
 

@@ -190,6 +190,48 @@
 # CARGO_SEM_POLL.
 #
 # Usage: cargo-sem.sh <command> [args...]
+
+# --- RUN FROM A PRIVATE SNAPSHOT (do not remove; this is not a style choice) ---
+# bash does not slurp a script. It reads incrementally and remembers a byte
+# OFFSET into the open file. Rewrite this file in place and every running
+# instance resumes at its old offset inside the NEW bytes, landing mid-token:
+#
+#   cargo-sem.sh: line 575: syntax error near unexpected token `&&'
+#
+# while `bash -n cargo-sem.sh` on the same file is clean. The semaphore was never
+# broken — the file moved underneath live readers. Every wrapper blocked on the
+# queue is a long-lived bash reading this file, and the queue routinely holds
+# 8-10 wrappers for tens of minutes, so ONE edit can decapitate the whole verify
+# queue at once. Worse, the wrapper dies without writing its exit sentinel, which
+# the landing sweep reads as "the run never started" rather than "was killed" —
+# so the diagnosis costs a fire on top of the lost build. (Observed: commit
+# 221dc905f, which lost AA-4871's build and needed a re-dispatch on AA-4898.)
+#
+# So: copy ourselves to a temp file, re-exec from it, and immediately unlink the
+# copy. bash holds the open fd, so an unlinked file still reads correctly and
+# disappears on exit — the running instance is then reading bytes that NOTHING
+# can rewrite, and the file on disk can be edited freely at any time.
+#
+# This must stay the FIRST executable statement: any code above it is still read
+# from the mutable file. Keep the block itself short for that reason.
+if [ -z "${CARGO_SEM_PINNED:-}" ]; then
+  _sem_snap="$(mktemp "${TMPDIR:-/tmp}/cargo-sem.XXXXXXXX" 2>/dev/null)" || _sem_snap=""
+  if [ -n "$_sem_snap" ] && cat -- "$0" > "$_sem_snap" 2>/dev/null; then
+    CARGO_SEM_PINNED="$_sem_snap"
+    export CARGO_SEM_PINNED
+    exec bash "$_sem_snap" "$@"
+  fi
+  # mktemp or the copy failed. Run unpinned rather than failing the build: an
+  # in-place edit during this run is a risk, being unable to build at all is a
+  # certainty. Announce it so a syntax error here is not misread as a real one.
+  [ -n "$_sem_snap" ] && rm -f -- "$_sem_snap"
+  printf 'cargo-sem: WARNING could not snapshot %s; running unpinned (an in-place edit will kill this run)\n' "$0" >&2
+else
+  # Second entry, reading from the snapshot. bash already holds the fd, so
+  # unlinking now is safe and makes the copy self-cleaning even on SIGKILL.
+  rm -f -- "$CARGO_SEM_PINNED"
+fi
+
 set -u
 
 D="${CARGO_SEM_DIR:-/tmp}"

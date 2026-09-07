@@ -52,7 +52,36 @@ Human merges. You GC the worktree + branch.
      rejects a concurrent duplicate even if your skip-check races (see §Stage-subtask dedupe).
    - Worker `in_review` but **tree dirty with 0 commits** on `task/{task-id}` (`git -C
      .paperclip/worktrees/{task-id} status --porcelain` non-empty **and** `git log origin/main..HEAD`
-     empty) → a Worker run died mid-work. This is **not** an exit-gate violation and **not** a
+     empty) **and no agent is currently running against that worktree** → a Worker run died mid-work.
+
+     **Check liveness before concluding death.** A dirty tree means "somebody is editing right now"
+     at least as often as it means "somebody died", and repository state alone cannot tell them
+     apart. Probe first, exactly as §Landing sweep already does for builds:
+
+     ```sh
+     # 1. Any task on this issue or its subtasks holding a live run?
+     #    activeRun non-null, or executionRunId set with executionLockedAt recent.
+     # 2. Any process cwd'd into the worktree?
+     for p in /proc/[0-9]*; do
+       [ "$(readlink -f $p/cwd 2>/dev/null)" = "$(readlink -f .paperclip/worktrees/{task-id})" ] \
+         && echo "LIVE $(basename $p) $(tr '\0' ' ' < $p/cmdline | cut -c1-120)"
+     done
+     # 3. Recent mtime on the dirty files — edits inside the last few minutes are a live writer.
+     ```
+
+     If any probe says live, **do nothing**: leave the subtask alone, leave the status alone, and
+     re-check next fire. The Landing sweep's own note applies verbatim here — *absence of a
+     subtask-keyed sentinel is evidence of nothing*.
+
+     This is not hypothetical. At 10:41Z one fire probed `.paperclip/worktrees/AA-4193`, saw 14
+     modified files + 1 commit, concluded the Worker had died, cancelled Reviewer subtask AA-4201
+     and re-dispatched the Worker. Those 14 files were the **Reviewer's own in-flight edits** —
+     AA-4201 posted its review ~70s later and the parent landed as PR #784. The outcome was benign
+     only because the Reviewer ignored the cancellation; against an agent that honours it, the same
+     misdiagnosis destroys uncommitted work, and the re-dispatch races the live run inside one
+     worktree (AA-3261 is the deadlock that follows).
+
+     Once liveness is ruled out: This is **not** an exit-gate violation and **not** a
      done-without-PR case: do NOT create a Reviewer subtask (its Step 0 rebase fails on unstaged
      changes) and do NOT mark done. Re-dispatch the Worker once — its Step 0 recovery exception
      (worker INSTRUCTIONS) commits the debris with a `Stage: worker (recovered)` trailer and
@@ -546,7 +575,26 @@ fire (look at `updatedAt > {your_last_fire_timestamp}` filtered to
 parents):
 
 1. Look up the task's expected branch: `task/{identifier}`.
-2. Check for a PR via `gh pr list --head task/{identifier} --state all --limit 1 --json number,state,mergedAt`.
+2. Check for a PR. **Do not key this to the head branch name alone.** Try the head first, then
+   fall back to an identifier search, and take the first hit:
+
+   ```sh
+   gh pr list --head "task/{identifier}" --state all --limit 1 --json number,state,mergedAt,headRefName
+   # empty? the work may have landed on a differently-named head — recovery branches do:
+   gh pr list --search "{identifier}" --state all --limit 5 --json number,state,mergedAt,headRefName
+   ```
+
+   When the operator recovers stranded work it lands on `op/recover-{identifier}`, not on
+   `task/{identifier}`, and the head-only lookup returns nothing for the very task the PR exists to
+   rescue. The task then either gets re-opened — spawning a duplicate Worker run against work that
+   is already recovered and awaiting merge — or is left `done` while its work is provably not on
+   `main`. Three tasks (AA-4719, AA-4740, AA-4810) sat `done` with open `op/recover-*` PRs, and the
+   only thing that caught it was the operator noticing the PRs by hand.
+
+   **A PR found under any head counts.** The head name is a naming convention, not evidence; the
+   identifier in the title or body is what ties a PR to a task. If the search returns several,
+   prefer an open or merged one over a closed-unmerged one, and record which head you matched so
+   the next fire can see why.
 3. Three valid outcomes:
    - PR exists and `mergedAt != null` → leave task `done`.
    - PR exists and `OPEN` → **demote the task to `in_review`** and comment
