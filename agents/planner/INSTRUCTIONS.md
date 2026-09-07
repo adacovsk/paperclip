@@ -1,7 +1,7 @@
 # Planner
 
 Own the roadmap. Scan codebase for gaps. Tune agent configs strategically.
-Working dir: `$PAPERCLIP_PROJECT`.
+Working dir: `${PAPERCLIP_PROJECT}-planner`, the dedicated worktree holding `planner/roadmap` — step 0 puts you there. `$PAPERCLIP_PROJECT` itself is the *shared* checkout that every other agent uses; never run a branch or commit command against it.
 When this agent runs is stated once, in the project's `CLAUDE.md` ("Agent Pipeline") — don't restate it here, because a cadence written in two places drifts the moment one changes, and this line did exactly that for a week after the schedule was turned off. Whatever woke you, run the loop; an empty inbox is not an early exit. "The whole loop" means the spine plus as much fill as the budget holds — see *Fire budget* below, which is what that phrase now means and is not a licence to skip.
 No tasks (Coordinator), no commits (operator), no game code.
 
@@ -42,19 +42,31 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
 0. **Branch — one, reused. Do this before reading anything.** You write the roadmap from `planner/roadmap` and from no other branch. Never mint a per-fire name.
 
     ```bash
-    git fetch origin --prune
+    git -C "$PAPERCLIP_PROJECT" fetch origin --prune
+
+    # The branch lives in its OWN worktree, so every git below names it with -C.
+    # A bare `git checkout` runs wherever the fire happened to start — the shared
+    # checkout — and see the warning under this block for what that does.
+    WT="${PAPERCLIP_PROJECT}-planner"
+    [ -d "$WT" ] || git -C "$PAPERCLIP_PROJECT" worktree add "$WT" planner/roadmap \
+                 || git -C "$PAPERCLIP_PROJECT" worktree add "$WT" -b planner/roadmap origin/main
+
     if gh pr list --head planner/roadmap --state open --json number -q '.[].number' | grep -q .; then
-        git checkout planner/roadmap && git merge --no-edit origin/main   # PR still open — append to it
+        git -C "$WT" merge --no-edit origin/main   # PR still open — append to it
     else
-        git checkout -B planner/roadmap origin/main                       # PR merged, or first fire — recreate
+        git -C "$WT" reset --hard origin/main      # PR merged, or first fire — recreate
     fi
+
+    cd "$WT"   # every later step reads and writes here, never the shared checkout
     ```
 
-    The `else` is what gives you a fresh branch exactly when the last one landed, so the name is stable forever and the content never trails `main`. `merge`, not `rebase`: replaying a roadmap edit fails where the merge succeeds, and a failed replay strands the fire, not the file.
+    The `else` is what gives you a fresh branch exactly when the last one landed, so the name is stable forever and the content never trails `main`. `merge`, not `rebase`: replaying a roadmap edit fails where the merge succeeds, and a failed replay strands the fire, not the file. `reset --hard` rather than `checkout -B` because the worktree already holds the branch — resetting it in place is the same result without ever naming the branch from outside.
+
+    **`-C "$WT"` on every line is the whole point of this block, not styling.** Without it the two arms fail in opposite directions and the dangerous one is the arm that *works*. The `if` arm dies on `fatal: 'planner/roadmap' is already used by worktree at ...` and strands the fire, which is loud and harmless. The `else` arm used `checkout -B`, which does **not** honour that guard: the shared checkout silently steals the branch, and the dedicated worktree's index is left frozen at the old tree with every intervening commit staged as a deletion. A later fire running a bare `git commit` there commits those deletions. This recurred five times; the worst instance held 21 files staged and 584 deletions, enough to revert five merged PRs.
 
     **Why this is a rule and not a preference.** A name minted per fire produces parallel writer branches, and two of them collide on the index exactly as a task branch does — neither side is wrong, so the conflict has no correct resolution after the fact. → [why parallel writer branches cannot be reconciled](rationale/one-writer-branch.md)
 
-    `scripts/check_roadmap_writer.py` enforces it at pre-push: a `planner/*` branch other than `planner/roadmap` that touches `docs/ROADMAP.md` or `docs/roadmap/` fails. Left the shared checkout on your branch and a red appears somewhere unrelated? That is the same defect from the other end — return the checkout to `main` when you are done.
+    `scripts/check_roadmap_writer.py` enforces it at pre-push: a `planner/*` branch other than `planner/roadmap` that touches `docs/ROADMAP.md` or `docs/roadmap/` fails. There is no longer anything to "put back" at the end of a fire — step 0 never touches the shared checkout, so it cannot leave it on your branch.
 
 1. **Context** — `git log --oneline -10` + recent completed reviews via `paperclip` skill. Note what changed since last run.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked.
