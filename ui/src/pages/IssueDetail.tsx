@@ -32,7 +32,6 @@ import { Identity } from "../components/Identity";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { Separator } from "@/components/ui/separator";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -48,7 +47,6 @@ import {
   Hexagon,
   ListTree,
   MessageSquare,
-  MoreHorizontal,
   Paperclip,
   Repeat,
   SlidersHorizontal,
@@ -204,7 +202,6 @@ export function IssueDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const { pushToast } = useToast();
-  const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("comments");
@@ -825,28 +822,6 @@ export function IssueDetail() {
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
 
-            <Popover open={moreOpen} onOpenChange={setMoreOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon-xs" className="shrink-0">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </PopoverTrigger>
-            <PopoverContent className="w-44 p-1" align="end">
-              <button
-                className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
-                onClick={() => {
-                  updateIssue.mutate(
-                    { hiddenAt: new Date().toISOString() },
-                    { onSuccess: () => navigate("/issues/all") },
-                  );
-                  setMoreOpen(false);
-                }}
-              >
-                <EyeOff className="h-3 w-3" />
-                Hide this Issue
-              </button>
-            </PopoverContent>
-            </Popover>
           </div>
         </div>
 
