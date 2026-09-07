@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, companies, heartbeatRuns } from "@paperclipai/db";
+import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   agentSkillSyncSchema,
@@ -44,6 +44,9 @@ import {
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
 } from "../services/index.js";
+import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import { selectAssignmentsToReplayOnResume } from "../services/resume-wake-replay.js";
+import { logger } from "../middleware/logger.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertOperator, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { findServerAdapter, listAdapterModels, detectAdapterModel } from "../adapters/index.js";
@@ -1853,6 +1856,48 @@ export function agentRoutes(db: Db) {
       entityType: "agent",
       entityId: agent.id,
     });
+
+    // Re-fire the assignments the pause swallowed. A wake aimed at a paused agent
+    // throws in `enqueueWakeup` and is never replayed, so every task assigned
+    // during the pause window is stranded with `activeRun = null` and
+    // `executionRunId = null` — indistinguishable from one that is legitimately
+    // queued. See `selectAssignmentsToReplayOnResume` for why this reconciles
+    // from issue state rather than replaying stored wake records.
+    const assignedIssues = await db
+      .select({
+        id: issuesTable.id,
+        status: issuesTable.status,
+        assigneeAgentId: issuesTable.assigneeAgentId,
+        executionRunId: issuesTable.executionRunId,
+      })
+      .from(issuesTable)
+      .where(and(eq(issuesTable.companyId, agent.companyId), eq(issuesTable.assigneeAgentId, agent.id)));
+
+    const toReplay = selectAssignmentsToReplayOnResume(assignedIssues, agent.id);
+    if (toReplay.length > 0) {
+      const actorId = req.actor.userId ?? "operator";
+      // Detached, so the resume response does not wait on N dispatches — the same
+      // `void queueIssueAssignmentWakeup(...)` convention the issue routes use.
+      // Sequential *inside* the loop, though: each wake mints a run, and firing a
+      // batch concurrently is how one operator click leaves the queue 11 deep.
+      void (async () => {
+        for (const issue of toReplay) {
+          await queueIssueAssignmentWakeup({
+            heartbeat,
+            issue,
+            reason: "agent_resumed",
+            mutation: "agent.resumed",
+            contextSource: "agent.resumed",
+            requestedByActorType: "user",
+            requestedByActorId: actorId,
+          });
+        }
+        logger.info(
+          { agentId: agent.id, replayed: toReplay.length, issueIds: toReplay.map((i) => i.id) },
+          "replayed assignment wakes stranded by the pause window",
+        );
+      })();
+    }
 
     res.json(agent);
   });
