@@ -54,6 +54,11 @@ PATCH /api/agents/{agentId}/permissions
 state is reported on the agent record as `access.canReadConfigurations` /
 `access.configReadSource`.
 
+`agents:read_config` grants **reads only**, and one route in this area is deliberately not a
+read: `POST /api/companies/{companyId}/adapters/{type}/test-environment` resolves the
+adapterConfig you send it through the secrets service and reports what an adapter makes of
+the result, so it still requires `agents:create`.
+
 ### Company Portability
 
 CEO-safe package routes are company-scoped:

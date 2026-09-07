@@ -122,11 +122,21 @@ export function agentRoutes(db: Db) {
       : [];
     const hasExplicitTaskAssignGrant = grants.some((grant) => grant.permissionKey === "tasks:assign");
     // Mirrors agentCanReadConfigurations, which is the gate that actually runs.
+    // All THREE of its accepting cases must appear here, including an explicit
+    // agents:create grant: reporting `false` for a principal the gate lets
+    // through is the same silent divergence this field was added to remove, and
+    // it is the direction a config audit reads as "not evaluated" while the
+    // reads it is second-guessing were in fact permitted.
+    //
     // Note the CEO role is deliberately absent: it confers task assignment and
     // agent edits, but not config reads on other agents.
     const configRead = canCreateAgents(agent)
       ? { canReadConfigurations: true, configReadSource: "agent_creator" as const }
-      : grants.some((grant) => grant.permissionKey === "agents:read_config")
+      : grants.some(
+            (grant) =>
+              grant.permissionKey === "agents:read_config" ||
+              grant.permissionKey === "agents:create",
+          )
         ? { canReadConfigurations: true, configReadSource: "explicit_grant" as const }
         : { canReadConfigurations: false, configReadSource: "none" as const };
 
@@ -743,7 +753,20 @@ export function agentRoutes(db: Db) {
     async (req, res) => {
       const companyId = req.params.companyId as string;
       const type = req.params.type as string;
-      await assertCanReadConfigurations(req, companyId);
+      // NOT assertCanReadConfigurations, and this is the one route in the group
+      // where that distinction is load-bearing. Every other caller of that gate
+      // is a GET; this one takes a caller-supplied adapterConfig, runs it
+      // through resolveAdapterConfigForRuntime — which dereferences stored
+      // company secrets — and hands the resolved values to an adapter probe
+      // that echoes config back in its diagnostics. Reaching it is therefore
+      // not a read of configuration, it is the power to make the server resolve
+      // a secret of your choosing and describe the result.
+      //
+      // agents:read_config exists so an auditing agent can diff live config
+      // against its on-disk source without write authority. Letting it through
+      // here would make the permission's name a lie the first time it is
+      // granted, so this route keeps the bar it had before that key existed.
+      await assertCanCreateAgentsForCompany(req, companyId);
 
       const adapter = findServerAdapter(type);
       if (!adapter) {
