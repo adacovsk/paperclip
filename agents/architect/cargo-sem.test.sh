@@ -212,3 +212,62 @@ else
   echo "RESULT: FAIL"
   exit 1
 fi
+
+echo
+echo "Checking that a chain's next stage outranks waiters that have not started (AA-3129)..."
+# The defect: each stage of a verify is a separate call, so releasing the slot
+# sent the chain to the BACK and half-finished work lost to work that had not
+# started. With one slot, a two-stage chain, and two competitors arriving while
+# stage 1 builds, the fix is visible as the admission SEQUENCE: the chain's
+# second stage must be admitted before either competitor.
+chain_seq() {
+  local dir; dir="$(mktemp -d)"
+  mkdir -p "$dir/chain" "$dir/b" "$dir/c"
+  ( export CARGO_SEM_DIR="$dir" CARGO_SEM_DEBUG=1 CARGO_SEM_SLOTS=1 \
+           CARGO_SEM_POLL=0.05 CARGO_SEM_RESUME="$1"
+    ( cd "$dir/chain" && "$SEM" sleep 1 && "$SEM" sleep 0.2 ) &
+    sleep 0.3; ( cd "$dir/b" && "$SEM" sleep 0.2 ) &   # both arrive while stage 1
+    sleep 0.1; ( cd "$dir/c" && "$SEM" sleep 0.2 ) &   # still holds the only slot
+    wait ) >/dev/null 2>&1
+  grep -oE '^admit(-resume)?' "$dir/cargo-sem.debug.log" 2>/dev/null | tr '\n' ' '
+  rm -rf "$dir"
+}
+on="$(chain_seq 1)"; off="$(chain_seq 0)"
+echo "resume lane on : $on"
+echo "resume lane off: $off"
+# On: stage 2 is second. Off: nothing uses the lane and stage 2 is last.
+if [ "$on" = "admit admit-resume admit admit " ] && [ "$off" = "admit admit admit admit " ]; then
+  echo "RESULT: PASS"
+else
+  echo "RESULT: FAIL"
+  exit 1
+fi
+
+echo
+echo "Checking that the resume lane is bounded by hops and by the marker's grace..."
+# A lane that always wins starves the one below it, so a chain may use it only
+# CARGO_SEM_RESUME_MAX times; and a marker older than the grace window means the
+# chain ended, so the next cargo from that worktree is a new arrival.
+hop_seq() {
+  local dir; dir="$(mktemp -d)"
+  mkdir -p "$dir/wt"
+  ( export CARGO_SEM_DIR="$dir" CARGO_SEM_DEBUG=1 CARGO_SEM_SLOTS=1 \
+           CARGO_SEM_POLL=0.05 CARGO_SEM_RESUME_MAX="$1" CARGO_SEM_RESUME_GRACE="$2"
+    cd "$dir/wt"
+    "$SEM" true && { [ -n "$3" ] && sleep "$3"; "$SEM" true; } \
+                && { [ -n "$3" ] && sleep "$3"; "$SEM" true; } ) >/dev/null 2>&1
+  grep -c '^admit-resume' "$dir/cargo-sem.debug.log" 2>/dev/null || true
+  rm -rf "$dir"
+}
+capped="$(hop_seq 1 30 '')"      # 3 stages, 1 hop allowed  -> exactly 1 resume
+uncapped="$(hop_seq 4 30 '')"    # 3 stages, 4 hops allowed -> 2 resumes
+expired="$(hop_seq 4 1 1.5)"     # marker lapses between stages -> 0 resumes
+echo "hops capped at 1 -> $capped resume admissions (want 1)"
+echo "hops capped at 4 -> $uncapped resume admissions (want 2)"
+echo "marker expired   -> $expired resume admissions (want 0)"
+if [ "$capped" = "1" ] && [ "$uncapped" = "2" ] && [ "$expired" = "0" ]; then
+  echo "RESULT: PASS"
+else
+  echo "RESULT: FAIL"
+  exit 1
+fi
