@@ -25,7 +25,7 @@ Human merges. You GC the worktree + branch.
 ## Run (do all steps every fire)
 
 0. Resolve agent IDs (`GET /agents`). Cache Worker/Reviewer/Architect. Every task/subtask MUST set `assigneeAgentId` — unassigned = invisible.
-0a. **Close superseded routine fires.** Your own routine tasks (`Coordinator routine <date> fire <n>`) never close themselves. A fire that waits hours behind a deep callback queue can time out before it ever runs, stranding the task it checked out. → [the three that sat for hours](rationale/superseded-routine-fires.md) You are the current fire by definition, so any *older* routine task still `in_progress` is dead. PATCH each to `cancelled`. One short comment naming the superseding fire, or none at all when the run queue is deep — the status is the load-bearing part, and each comment costs another wake into the queue you are trying to drain.
+0a. **Close superseded routine fires.** Your own routine tasks (`Coordinator routine <date> fire <n>`) never close themselves. A fire that waits hours behind a deep callback queue can time out before it ever runs, stranding the task it checked out. → [why a stalled fire cannot close its own task](rationale/superseded-routine-fires.md) You are the current fire by definition, so any *older* routine task still `in_progress` is dead. PATCH each to `cancelled`. One short comment naming the superseding fire, or none at all when the run queue is deep — the status is the load-bearing part, and each comment costs another wake into the queue you are trying to drain.
 1. Inbox (`GET /agents/me/inbox-lite`). If `PAPERCLIP_TASK_ID` set, handle first. Empty is normal.
 2. CI: `gh issue list --label ci-failure --state open --json number,title,body` from the project checkout. For each issue not already mapped to an active AA task (search existing task titles for the commit SHA mentioned in the issue body):
    a. Create AA-<n> titled `ci-fix: <commit-sha>`, label `ci-failure`, status `todo`.
@@ -38,7 +38,7 @@ Human merges. You GC the worktree + branch.
    b. Allocate the worktree from **the PR's head branch**, not `origin/main` — the bump only exists on the PR branch, so a main-rooted worktree compiles the old versions and reports a meaningless green.
    c. Assign Architect. It runs cargo against the worktree and comments the result on the PR; it does **not** merge — dependency bumps stay an operator decision.
    Scoped to manifest changes rather than to a bot actor, so a hand-edited dependency is covered too.
-   **Why this exists**: this step replaces the `pull_request` trigger that was removed to conserve Actions minutes. A bump is not a task, so no agent otherwise ever builds it. **Do not drop this step without restoring that trigger** — deleting both leaves dependency bumps verified by nobody. → [the bump that broke main for five days](rationale/dependency-bump-intake.md)
+   **Why this exists**: this step replaces the `pull_request` trigger that was removed to conserve Actions minutes. A bump is not a task, so no agent otherwise ever builds it. **Do not drop this step without restoring that trigger** — deleting both leaves dependency bumps verified by nobody. → [why nothing else ever builds a bump](rationale/dependency-bump-intake.md)
 3. Advance completed stages (dispatch Architect synchronously — see §Architect dispatch).
    **Stage-completion signals (post server Layer-2 gate, `heartbeat.ts`):** a no-skill
    agent (Worker, Architect) only reaches `done` when its branch is **on origin**; if not
@@ -71,7 +71,7 @@ Human merges. You GC the worktree + branch.
 
      If any probe says live, **do nothing**: leave the subtask alone, leave the status alone, and
      re-check next fire. The Landing sweep's own note applies verbatim here — *absence of a
-     subtask-keyed sentinel is evidence of nothing*. → [the review this misdiagnosis cancelled](rationale/dirty-tree-is-not-a-dead-run.md)
+     subtask-keyed sentinel is evidence of nothing*. → [why state alone cannot tell live from dead](rationale/dirty-tree-is-not-a-dead-run.md)
 
 
 
@@ -104,7 +104,7 @@ Human merges. You GC the worktree + branch.
      Worker **once**, tracking a `Worker no-op: N` trailer; if the second run also returns clean
      with 0 commits and no verdict in either the comments or `resultJson`, `escalate to operator`
      rather than firing a third.
-     This arm exists because clean/0-commit is otherwise indistinguishable from never-started, and had no bullet at all. → [the task re-picked three times in 40 minutes](rationale/clean-tree-no-op-verdict.md)
+     This arm exists because clean/0-commit is otherwise indistinguishable from never-started, and had no bullet at all. → [why a no-op is indistinguishable from a failed dispatch](rationale/clean-tree-no-op-verdict.md)
    - Reviewer done, `needs-build` → assign Architect on the same task branch (Architect runs cargo)
    - Reviewer done, `data-only` → Architect opens PR (no cargo), then mark parent done after merge
    - Architect `done` (branch confirmed on origin → PR exists) → mark parent done after PR merges
@@ -127,22 +127,22 @@ Human merges. You GC the worktree + branch.
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
 5. Promote backlog → `todo` if <2 Worker tasks active. PATCH must set `assigneeAgentId`. **Allocate a worktree** for each task you promote (see §Worktree allocation below).
    - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because the second one's merge conflict is billed to the operator as a hand-merge.
-     **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges. → [the six hand-merges this cost](rationale/contended-edit-surface.md)
-   - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it. → [what those fixes were](rationale/contention-is-a-file-defect.md)
+     **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges. → [why shared surfaces finish later, not sooner](rationale/contended-edit-surface.md)
+   - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it. → [why contention is removed rather than scheduled around](rationale/contention-is-a-file-defect.md)
    - **When several branches are already conflicting on one file, ask the operator to merge them in a deliberate order** — resolve the contended file once and rebase the rest onto that result. Six blind three-way merges of the same hunk produce six divergent resolutions; do not park them as independent operator work.
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
 8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged.
 9. **Roadmap intake** — promote concrete top-level bullet items from `docs/ROADMAP.md` into the backlog. The vague version of this step ("stock backlog ≥5") used to no-op repeatedly because Coordinator would re-read the same top items each fire and skip them as "already considered". Be concrete:
    a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status in todo, in_progress, backlog)` and `inflight = count(in_review parents that are still waiting on the Architect)`.
-      - **Count only tasks that are actually dispatchable, or this gate measures the wrong pool.** `ready` exists to answer *"is there un-started work a Worker could pick up?"* — so exclude any task no Worker will ever be handed. Concretely: **skip unassigned tasks** (your own step 0 says unassigned = invisible; a task nothing can dispatch is not queue depth) and skip platform/pipeline/host bugs, which are Facilitator's and are routinely parked for weeks. → [the 39 undispatchable tasks that skipped intake](rationale/ready-counts-dispatchable-only.md)
+      - **Count only tasks that are actually dispatchable, or this gate measures the wrong pool.** `ready` exists to answer *"is there un-started work a Worker could pick up?"* — so exclude any task no Worker will ever be handed. Concretely: **skip unassigned tasks** (your own step 0 says unassigned = invisible; a task nothing can dispatch is not queue depth) and skip platform/pipeline/host bugs, which are Facilitator's and are routinely parked for weeks. → [why undispatchable work is not queue depth](rationale/ready-counts-dispatchable-only.md)
       - Symptom to recognise: `ready` is large, `in_progress` is **0**, and Worker has nothing active. That combination means the queue is deep in name only — recount it with the exclusions above before skipping intake.
       - If `ready ≥ 5` → skip roadmap intake entirely; the un-started queue is already deep.
       - Else if `ready + inflight ≥ 8` → scan and promote **`data-only` items only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. Architect-bound parents serialize on the cargo lock, so promoting more `needs-build` work lengthens that queue without adding throughput, while `data-only` work skips Architect entirely and still flows.
-      - **`inflight` is not "everything `in_review`".** Count a parent only if it is genuinely queued for or running a build: it has an open Architect verify subtask, or a build slot held against its worktree. An `in_review` parent whose PR is already open is waiting on a **human merge**, not on the Architect — it consumes no build capacity, and counting it throttles intake on an idle resource. This gate exists to protect the cargo lock, so measure the cargo lock. → [the fire where every slot was free](rationale/inflight-measures-the-cargo-lock.md)
+      - **`inflight` is not "everything `in_review`".** Count a parent only if it is genuinely queued for or running a build: it has an open Architect verify subtask, or a build slot held against its worktree. An `in_review` parent whose PR is already open is waiting on a **human merge**, not on the Architect — it consumes no build capacity, and counting it throttles intake on an idle resource. This gate exists to protect the cargo lock, so measure the cargo lock. → [why in_review is the wrong thing to count](rationale/inflight-measures-the-cargo-lock.md)
       - **Do not "simplify" this by folding `inflight` into the first gate.** `inflight` throttles `needs-build`; it never blocks intake outright. → [why a single combined gate starves supply](rationale/two-gates-not-one.md)
    b. **Cursor — the scan region is `## Active fronts`, not the phase bodies.** Read the last "Roadmap intake cursor" line from your previous routine task's comment trailer (format: `Roadmap intake cursor: ROADMAP.md:<line-number>`). If absent, or if it points below the end of `## Active fronts`, start at the `## Active fronts` heading.
-      **Why this is the anchor and the phase headers are not.** Everything the Planner writes *for promotion* is in the `## Active fronts` index at the top of the file: one top-level bullet per front, `**§N.NNN**` prefixed, each pointing at the section that specs it. Anchoring below that index scans past the entire supply and never comes back — which reads as a supply shortage and wastes a Planner fire when escalated as one. → [the fires this cost](rationale/roadmap-index-is-the-anchor.md)
+      **Why this is the anchor and the phase headers are not.** Everything the Planner writes *for promotion* is in the `## Active fronts` index at the top of the file: one top-level bullet per front, `**§N.NNN**` prefixed, each pointing at the section that specs it. Anchoring below that index scans past the entire supply and never comes back — which reads as a supply shortage and wastes a Planner fire when escalated as one. → [why the index is the only promotable region](rationale/roadmap-index-is-the-anchor.md)
       The index is deliberately terse — a bullet is a pointer, not the spec. Follow the `§N.NNN` to its section before promoting; the section (and its `**Detail**:` file) is what goes in the task body, per (c).
    c. **Scan forward** from the cursor. Match top-level Markdown bullets: lines beginning in column 0 with `- ` followed by content. Indented sub-bullets (lines starting with `  - ` or deeper) are part of their parent item; do NOT promote them as standalone tasks.
       For each candidate top-level bullet:
@@ -329,38 +329,23 @@ errors. Just observe its outcome on the next fire.
 
 ### No integration worktree
 
-The previous design merged all queued tasks into a single integration
-tree to amortize cargo across them. Removed: it inverted dependencies
-(Coordinator waiting on cargo) and conflated unrelated tasks' errors.
-Each Architect verifies its own task branch in isolation now.
+Each Architect verifies its own task branch in isolation. Do not reintroduce a shared integration tree. → [why amortising cargo across tasks failed](rationale/no-integration-worktree.md)
 
 ## Landing sweep (Coordinator owns the LAND step)
 
-The Architect "detached-verify-never-LANDs" bug recurred across many runs because every point-fix kept the
-LAND step (push + open PR) *inside* the same flaky Architect run: cargo
-runs green, then the run is starved by turn/wall-clock/session budget
-and dies before pushing, so committed cargo-green work strands off
-origin and an operator drain is needed again.
-
-**The structural constraint (per CLAUDE.md "recurring churn is a missing
-constraint"): decouple LAND from the verify run.** Coordinator fires on
-a reliable routine and cannot be starved mid-cargo — so Coordinator owns
-landing. The Architect's only job is now: rebase if needed, run cargo,
-fix, commit. It MAY still try to push/PR; the sweep is idempotent and
-harmless if it already did.
+**Coordinator owns the LAND step, not the Architect.** The Architect's job is: rebase
+if needed, run cargo, fix, commit. It MAY still try to push and open the PR; this sweep
+is idempotent and harmless if it already did.
+→ [why landing cannot live inside the verify run](rationale/land-decoupled-from-verify.md)
 
 Run this sweep every fire, for every Verify subtask that is `in_review`
 with assignee = Architect (and as the FIRST action in the step-3 stranded
 branch handler).
 
 > **`{task-id}` here is the PARENT task's id — the one the worktree is named
-> after — never the `Verify:` subtask's own id.** Worktrees are allocated per
-> parent (§Worktree allocation) and the Architect runs inside one, so every
-> artifact it writes is keyed by the parent: the sentinel files, the branch,
-> the `verifyrun-` process tag. Probing `AA-<subtask>.pid` / `.exit` therefore
-> finds nothing *even for a build that is actively compiling*, which reads as
-> "never started" and invites a re-dispatch. A live verify killed this way loses everything it had compiled, and under a contended semaphore that is the expensive kind of loss: the replacement build queues again from the back. **Absence of a subtask-keyed sentinel is evidence
-> of nothing.** Resolve the parent id first, then run the sweep with it.
+> after — never the `Verify:` subtask's own id.** **Absence of a subtask-keyed
+> sentinel is evidence of nothing.** Resolve the parent id first, then run the
+> sweep with it. → [why the two ids diverge](rationale/sentinels-are-keyed-by-parent.md)
 
 For each parent `{task-id}`:
 
@@ -377,12 +362,8 @@ For each parent `{task-id}`:
    and is RUNNING. Re-dispatch per the step 3 cap only when all three say dead.
 
    > **Take the census once, for every id — never `pgrep`/`grep` per task.** A
-   > per-id probe matches the *probing shell*, because that shell's own command
-   > line contains the pattern, so a build that does not exist reports live. In a
-   > `for` loop it is worse: the loop shell's argv holds *every* id, so an entire
-   > sweep reads as fully alive and nothing is ever re-dispatched. This is the
-   > `.pid` failure arrived at from the opposite side — `.pid` calls live builds
-   > dead (cross-symlinked twins), a per-id grep calls dead builds live.
+> per-id probe matches the *probing shell*, so a build that does not exist
+> reports live. → [why a per-id probe cannot work](rationale/census-not-per-id-grep.md)
    >
    > ```sh
    > ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+' | sort -u
