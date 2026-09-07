@@ -38,7 +38,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
 
       - name: Validate Dockerfile deps stage
         run: |
@@ -88,6 +88,18 @@ jobs:
             pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile
           fi
 
+      # The Node version is single-sourced in .nvmrc. Inlining it per workflow
+      # is what let refresh-lockfile.yml and e2e.yml sit on 20 while everything
+      # that verified their output ran 24 — so the lockfile was generated on one
+      # major and checked on another, silently, for as long as nobody diffed
+      # eleven `node-version:` lines against each other.
+      - name: Node version is single-sourced
+        run: |
+          if grep -rn '^[[:space:]]*node-version:' .github/workflows/; then
+            echo "::error::Use 'node-version-file: .nvmrc' instead of inlining a version."
+            exit 1
+          fi
+
   verify:
     needs: [policy]
     runs-on: ubuntu-latest
@@ -105,7 +117,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
@@ -143,7 +155,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
