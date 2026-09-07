@@ -37,7 +37,7 @@ Steps 1 & 2 scan `todo`/`in_progress`/`blocked`; nothing else scans `in_review`.
 
 `GET /issues?status=in_review,in_progress`. Flag any task that is **assigned** (`assigneeAgentId` set) but has **no live run** — `activeRun` false and either no `executionRunId` or a stale `executionLockedAt` — and `updatedAt` older than ~2h. That combination means the assignment wake was missed (or fired into a dead session); the agent is idle and nothing will re-wake it on its own.
 
-**Remedy — re-fire the wake by *changing the assignee*, not by commenting.** `wakeOnDemand` triggers on an assignee **change**, so re-assigning the *same* agent is a no-op, and a re-dispatch *comment* does nothing at all (that is the §4 comment-without-PATCH failure mode applied to wakes — the historical trap here). You must make the assignee value actually change: **unassign (set `assigneeAgentId` to null), then re-assign the original agent** (null → agent). Do **not** change `status` — `in_review` is already correct. After the toggle, confirm a fresh `executionRunId` / `executionLockedAt` appears within ~30s; if it does, the stage is moving. If no run starts even after the toggle, *then* it is a genuine rotation/config bug — file it (§3).
+**Remedy — re-fire the wake by *changing the assignee*, not by commenting.** `wakeOnDemand` triggers on an assignee **change**, so re-assigning the *same* agent is a no-op and a re-dispatch *comment* does nothing at all. → [why a comment cannot re-fire a wake](rationale/assignee-toggle-not-a-comment.md) You must make the assignee value actually change: **unassign (set `assigneeAgentId` to null), then re-assign the original agent** (null → agent). Do **not** change `status` — `in_review` is already correct. After the toggle, confirm a fresh `executionRunId` / `executionLockedAt` appears within ~30s; if it does, the stage is moving. If no run starts even after the toggle, *then* it is a genuine rotation/config bug — file it (§3).
 
 The parent Worker task that spawned a stalled Review/Verify child is usually itself `in_review` waiting on that child — re-dispatching the child is enough; it advances on its own once the child completes. Toggle the child, not the parent.
 
@@ -85,7 +85,7 @@ sat stranded 18 days and were found only by walking `git worktree list` by hand.
 | 5 | No linked task and no PR, idle >14d | Mention in report. Do NOT delete. |
 
 **Resolving the "linked task" for a non-`task/` branch.** `planner/*`, `op/*` and `claude/*`
-carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/AA-1234` returns
+carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/<task-id>` returns
 nothing and every such branch falls to case 5. Resolve them through the PR instead:
 `gh pr list --head <branch> --state all --limit 1 --json number,state,mergedAt` — a merged PR is
 case 1's evidence even when the tip is not an ancestor (squash merges), an open PR is case 4, and

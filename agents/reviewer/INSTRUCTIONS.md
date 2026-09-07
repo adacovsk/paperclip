@@ -111,7 +111,7 @@ Review tasks live in `in_review` status (not `todo`). Coordinator creates them w
 
 ### Remove only
 - Pure echo: `// foo bar` immediately above `let foo = bar()` where the comment adds zero information
-- Stale task refs: `// added for #123`, `// fix from PR-456`, `// tmp: from sprint planning`
+- Stale task refs: `// added for a PR`, `// fix from PR-456`, `// tmp: from sprint planning` <!-- privacy-ok: invented example of a stale comment, not a real ref -->
 - Commented-out code blocks
 - Comments that contradict the current code (these get *fixed*, not deleted — only delete if the comment is fundamentally about an old design)
 
@@ -162,15 +162,11 @@ git commit -m "refactor: <concise description>" -m "..." -m "Stage: reviewer"
 ```
 
 - Stage specific files; never `git add -A`
-- **Never stage `docs/ROADMAP.md` or `docs/roadmap/`.** The roadmap has a single writer (the
-  Planner), who deletes sections and rewrites the index several times a day. A
-  `task/AA-*` branch that also writes it conflicts by construction, and the
-  landing sweep reads any conflict as "needs operator merge" — AA-4724 was
-  parked that way with the roadmap as its *only* conflicting path. Report what
-  landed on the Paperclip task; the Planner prunes the bullet from merged-PR
-  evidence. `scripts/check_roadmap_writer.py` fails the branch if you do — it
-  covers `docs/roadmap/` too, which is the same document stored one file per
-  section rather than a separate reference tree.
+- **Never stage `docs/ROADMAP.md` or `docs/roadmap/`.** The roadmap has a single
+  writer (the Planner); a task branch that also writes it conflicts by
+  construction. Report what landed on the Paperclip task instead.
+  `scripts/check_roadmap_writer.py` fails the branch if you do.
+  → [why a task branch cannot co-write it](rationale/never-stage-the-roadmap.md)
 - Multiple commits OK if the polish has natural sub-units (one for `SystemParam` extraction, one for helper migration, etc.)
 - Use the `Stage: reviewer` trailer so the audit trail is clear
 - If your review found nothing to fix, exit without committing — the
@@ -233,11 +229,11 @@ can weigh it against everything else. Three reasons it is not yours to do inline
 
 Do **not** exempt a file for living under `tests/`. The four largest files in the repo
 are test modules, and they are also the *least* contended — measured across the live
-worktrees, no test file had more than one branch in it while `active_modifiers.rs` had
+worktrees, no test file had more than one branch in it while one system module had
 five. Biggest and safest at once, so they are where this rule pays off first.
 
 The seams are already named: the big test files are a stack of inline
-`mod <name>_tests { ... }` blocks — `tests/combat_systems.rs` is 5983 lines holding
+`mod <name>_tests { ... }` blocks — one integration suite is 5983 lines holding
 **39** of them. One block becomes one file, so the author has already made the naming
 decision and the move is mechanical.
 
@@ -247,7 +243,7 @@ the pattern here:
 
 ```
 tests/foo.rs                 ->   tests/foo/main.rs        (the target, still named `foo`)
-    mod alpha_tests { .. }   ->   tests/foo/alpha_tests.rs (declared `mod alpha_tests;`)
+    mod alpha_tests { .. }   ->   tests/foo/alpha_tests.rs (declared `mod alpha_tests;`)  <!-- privacy-ok: placeholder module name in an illustration -->
 ```
 
 Subdirectories under `tests/` are **not** compiled as their own targets — that is why
