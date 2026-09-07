@@ -106,6 +106,62 @@
 # Use it only for builds that gate the whole pipeline; a flood of express work
 # would starve the normal lane by design.
 #
+# RESUME LANE (AA-3129) — a verify that has finished a stage outranks one that
+# has not started. One verify is several cargo commands (`clippy --all-targets`,
+# `test --lib`, `clippy --no-default-features`, `test --tests`), and each is a
+# separate call to this script, because chaining them into one call is refused
+# (see the ONE CARGO PER ACQUISITION guard below; do not "fix" this by lifting
+# that ban — it is what bounds hold duration). Under strict FIFO that means a
+# verify releases its slot between stages and re-enters at the BACK, behind
+# every waiter that arrived while it was building.
+#
+# Measured: a task passed clippy and `test --lib` in six minutes of slot time,
+# then sat behind 22 wrappers for its third stage; another had its clippy result
+# sit complete and unused for 3h26m while it queued for `test --lib`. At depth N
+# a verify pays 3-4 full queue drains, so wall-clock is dominated by re-queuing
+# rather than by compiling — and the in-flight count stays high, which is what
+# keeps the queue deep in the first place.
+#
+# NOTE WHAT DOES NOT WORK, because it is the obvious idea: having the releasing
+# stage draw its next ticket BEFORE releasing. Its next ticket is still drawn
+# after every waiter that queued up during the build, so it lands at the back
+# anyway. The position a resuming stage needs is ahead of waiters that have not
+# started, and no single monotonic counter can express that.
+#
+# So the resume lane is a SECOND ticket queue with its own counters, sitting
+# between express and normal:
+#   * A stage that follows a successful stage from the same worktree queues in
+#     the resume lane, strictly FIFO among resumers by their own tickets.
+#   * Normal waiters yield to any live resumer, exactly as they already yield to
+#     express. Resumers yield to express. Express yields to nobody. The
+#     precedence is a total order, so no two lanes can wait on each other.
+#   * A resumer never touches `serving`, so ordering among normal waiters is
+#     unchanged, and it cannot preempt a build already holding a slot.
+#
+# KEYED BY WORKTREE, so no caller opts in. The per-worktree mutex below already
+# guarantees at most one build per worktree, so "the next cargo from this
+# worktree" is exactly "the next stage of this chain". The verify scope template
+# and every other caller are unchanged.
+#
+# THREE BOUNDS, because a lane that always wins starves the one below it:
+#   * HOPS (CARGO_SEM_RESUME_MAX, default 4). A chain may hand off its
+#     precedence this many times, then queues normally. So each normal admission
+#     can spawn at most four resume admissions and normals keep a fifth of
+#     throughput in the worst case — while in practice the lane finishes work
+#     that is already half-paid-for and then empties.
+#   * GRACE (CARGO_SEM_RESUME_GRACE, seconds). The marker a finishing stage
+#     leaves expires. It has to hold the position across the handoff gap — stage
+#     N+1 starts only after stage N's process exits, and normal waiters are
+#     spinning — so while it is unexpired, normals yield to it. That is the
+#     mechanism's whole cost, and it is idle slots: a chain that has ended, or a
+#     one-off cargo, blocks the queue head until its marker lapses. Hence a few
+#     seconds, not tens.
+#   * SUCCESS ONLY. A failed stage ends the `&&` chain, so there is nothing to
+#     resume.
+# Self-healing is unchanged: a resumer's queue position is an flock, so a dead
+# resumer is stepped over by the same probe the normal lane uses. Losing the
+# marker file only costs a chain its precedence. CARGO_SEM_RESUME=0 disables it.
+#
 # WHY IT SELF-HEALS (this is the property the raw flock had and a naive
 # ticket counter would lose): every lock that gates progress is an flock the
 # kernel releases automatically when its owner dies —
@@ -366,6 +422,27 @@ SERV="$D/cargo-sem.serving"
 WAIT="$D/cargo-sem.wait"
 EXP="$D/cargo-sem.express"
 PRIO="${CARGO_SEM_PRIORITY:-0}"
+# --- resume lane (see header) ---
+RNEXT="$D/cargo-sem.rnext"     # the resume lane's own ticket counter...
+RSERV="$D/cargo-sem.rserving"  # ...and its own low-water mark
+RWAIT="$D/cargo-sem.rwait"     # $RWAIT.<ticket>, a resumer's presence lock
+MARK="$D/cargo-sem.chain"      # $MARK.<worktree key> -> "<deadline epoch> <hops>"
+RESUME="${CARGO_SEM_RESUME:-1}"
+# Seconds a chain marker stays valid. This is the mechanism's one real cost, and
+# it is paid in IDLE SLOTS rather than latency: normal waiters yield while a
+# marker is unexpired, so the last stage of every chain — and every one-off
+# cargo — blocks the queue head until its marker lapses. Keep it just long
+# enough to cover the handoff, which is a `&&` in one shell plus at most a `git
+# diff`. Five seconds against builds measured in tens of minutes buys back 2-3
+# full queue drains per verify; do not raise it without re-measuring that trade.
+GRACE="${CARGO_SEM_RESUME_GRACE:-5}"
+[ "$GRACE" -ge 1 ] 2>/dev/null || GRACE=5
+# How many hand-offs one chain may use the lane for. The longest verify is four
+# stages, so it needs three; 4 leaves headroom for a trailing command such as a
+# schema regeneration. Past it the chain queues normally, which is what keeps a
+# worktree looping on cargo from holding permanent precedence.
+RESUME_MAX="${CARGO_SEM_RESUME_MAX:-4}"
+[ "$RESUME_MAX" -ge 0 ] 2>/dev/null || RESUME_MAX=4
 
 # --- ONE cargo per acquisition (guard runs before any lock is touched) ---
 # A slot is held for the whole lifetime of the wrapped command, so wrapping a
@@ -571,7 +648,7 @@ wr() { printf '%s' "$2" > "$1"; }
 # Is ticket $1 still a live waiter? Non-zero (false) once its owner has released
 # the presence lock — by admission or by death. Probe is subshell-scoped so the
 # fd (and any momentary acquire) is dropped immediately.
-alive() { ! ( exec 4>"$WAIT.$1"; flock -n 4; ) 2>/dev/null; }
+alive() { ! ( exec 4>"${2:-$WAIT}.$1"; flock -n 4; ) 2>/dev/null; }
 
 # --- express lane (CARGO_SEM_PRIORITY=1) ---
 # Is any *live* priority waiter queued? Same flock-presence trick as alive(), so
@@ -585,6 +662,43 @@ express_waiting() {
     [ -e "$f" ] || continue
     if ! ( exec 4>"$f"; flock -n 4; ) 2>/dev/null; then return 0; fi
     rm -f "$f"
+  done
+  return 1
+}
+
+# --- resume lane ---
+# Is a resumer queued, or about to be? Two things count, and the second is what
+# makes the lane work at all:
+#
+#   * A live resume-lane presence lock. Same flock scan as express_waiting(),
+#     self-healing for the same reason — a dead resumer's lock is dropped by the
+#     kernel and its stale file is swept here.
+#   * An unexpired chain marker, meaning a stage finished and its successor has
+#     not registered yet. THE HANDOFF GAP IS REAL AND NORMALS WIN IT OTHERWISE:
+#     stage N+1 only starts after stage N's process exits, and waiters are
+#     spinning at $POLL. Measured without this clause, the chain used the lane
+#     and was still admitted last — the two competitors took both turns during
+#     the millisecond gap. So the marker holds the position across the gap, and
+#     its expiry is what bounds the cost of a chain that has ended.
+#
+# Normal waiters consult this; resumers do not, or they would yield to
+# themselves and to each other's markers.
+resume_waiting() {
+  local f now dl
+  for f in "$RWAIT".*; do
+    [ -e "$f" ] || continue
+    if ! ( exec 4>"$f"; flock -n 4; ) 2>/dev/null; then return 0; fi
+    rm -f "$f"
+  done
+  # $EPOCHSECONDS and a builtin `read` rather than `date` and `cut`: every normal
+  # waiter runs this on every poll, so a fork here is a fork per waiter per
+  # 200 ms across the whole queue.
+  now="${EPOCHSECONDS:-0}"
+  for f in "$MARK".*; do
+    [ -e "$f" ] || continue
+    dl=""; read -r dl _ < "$f" 2>/dev/null || true    # no trailing newline; see draw
+    if [ "${dl:-0}" -ge "$now" ] 2>/dev/null; then return 0; fi
+    rm -f "$f"                                   # lapsed: the chain ended here
   done
   return 1
 }
@@ -629,17 +743,43 @@ if ! flock -n 3; then
   flock 3
 fi
 
-# --- draw a ticket and register presence atomically under the ctl-lock ---
+# --- which lane? read the chain marker the previous stage left ---
+# Read under the ctl-lock together with the ticket draw, so the lane and the
+# ticket cannot disagree. RESUMING=1 means this call continues a chain whose
+# earlier stage already paid for a slot.
+RESUMING=0; HOPS=0
 exec 6>"$CTL"; flock 6
-T=$(rd "$NEXT"); wr "$NEXT" $((T + 1))
-exec 7>"$WAIT.$T"; flock -n 7   # own presence — self-flock always succeeds
+# An express build already outranks every lane, so it never also resumes —
+# taking both presences would have it yield to itself.
+if [ "$RESUME" = "1" ] && [ "$PRIO" != "1" ] && [ -f "$MARK.$WTKEY" ]; then
+  # `read` reports failure at EOF even when it filled the variables, and this
+  # file carries no trailing newline — so do not gate on its exit status.
+  MDL=""; MHOPS=0
+  read -r MDL MHOPS < "$MARK.$WTKEY" 2>/dev/null || true
+  rm -f "$MARK.$WTKEY"
+  if [ "${MDL:-0}" -ge "${EPOCHSECONDS:-0}" ] 2>/dev/null \
+     && [ "${MHOPS:-0}" -le "$RESUME_MAX" ] 2>/dev/null; then
+    RESUMING=1; HOPS="${MHOPS:-0}"
+  fi
+fi
+
+# --- draw a ticket and register presence atomically under the ctl-lock ---
+if [ "$RESUMING" = "1" ]; then
+  T=$(rd "$RNEXT"); wr "$RNEXT" $((T + 1))
+  exec 7>"$RWAIT.$T"; flock -n 7   # resume-lane presence
+else
+  T=$(rd "$NEXT"); wr "$NEXT" $((T + 1))
+  exec 7>"$WAIT.$T"; flock -n 7   # own presence — self-flock always succeeds
+fi
 [ "$PRIO" = "1" ] && { exec 5>"$EXP.$T"; flock -n 5; }   # express presence
 flock -u 6; exec 6>&-
 
 # Optional trace for starvation debugging: records ticket order and,
 # on admission, the wait. Off unless CARGO_SEM_DEBUG is set.
 DBG="${CARGO_SEM_DEBUG:+$D/cargo-sem.debug.log}"
-[ -n "$DBG" ] && printf 'draw ticket=%s t=%s args=%s\n' "$T" "$(date +%s.%N)" "$*" >> "$DBG"
+[ -n "$DBG" ] && printf '%s ticket=%s hops=%s t=%s args=%s\n' \
+  "$([ "$RESUMING" = "1" ] && echo draw-resume || echo draw)" \
+  "$T" "$HOPS" "$(date +%s.%N)" "$*" >> "$DBG"
 
 # --- wait for the front of the queue AND a free slot ---
 while true; do
@@ -649,10 +789,18 @@ while true; do
   # low-water mark against everyone behind it (AA-5045).
   derive_limits
 
+  # Each lane advances its own low-water mark over dead waiters. A resumer never
+  # touches `serving`, so ordering among normal waiters is exactly as it was.
   exec 6>"$CTL"; flock 6
-  s=$(rd "$SERV")
-  while [ "$s" -lt "$T" ] && ! alive "$s"; do rm -f "$WAIT.$s"; s=$((s + 1)); done
-  wr "$SERV" "$s"
+  if [ "$RESUMING" = "1" ]; then
+    s=$(rd "$RSERV")
+    while [ "$s" -lt "$T" ] && ! alive "$s" "$RWAIT"; do rm -f "$RWAIT.$s"; s=$((s + 1)); done
+    wr "$RSERV" "$s"
+  else
+    s=$(rd "$SERV")
+    while [ "$s" -lt "$T" ] && ! alive "$s"; do rm -f "$WAIT.$s"; s=$((s + 1)); done
+    wr "$SERV" "$s"
+  fi
   flock -u 6; exec 6>&-
 
   # Express lane: an express waiter must NOT also respect the FIFO gate below.
@@ -673,6 +821,27 @@ while true; do
     sleep "$POLL"; continue
   fi
 
+  # Resume lane: FIFO among resumers by their own tickets, and it skips the
+  # normal FIFO gate for the same reason express does — normals are already
+  # yielding to it, so waiting its turn behind them would deadlock both sides.
+  # It yields to express, which yields to nobody: the precedence is a total
+  # order, so no two lanes can wait on each other.
+  if [ "$RESUMING" = "1" ]; then
+    if [ "$s" -lt "$T" ]; then sleep "$POLL"; continue; fi  # an earlier resumer is ahead
+    if express_waiting; then sleep "$POLL"; continue; fi
+    if acquire_slot; then
+      exec 6>"$CTL"; flock 6
+      [ "$(rd "$RSERV")" = "$T" ] && wr "$RSERV" $((T + 1))
+      flock -u 6; exec 6>&-
+      exec 7>&-; rm -f "$RWAIT.$T"                         # stop blocking normals
+      [ -n "$DBG" ] && printf 'admit-resume ticket=%s hops=%s slot=%s t=%s\n' \
+        "$T" "$HOPS" "$SLOT_IDX" "$(date +%s.%N)" >> "$DBG"
+      announce_admission
+      break
+    fi
+    sleep "$POLL"; continue
+  fi
+
   if [ "$s" -lt "$T" ]; then sleep "$POLL"; continue; fi   # a live waiter is ahead
 
   # Express lane: a red `main` gates the whole pipeline, so the ci-fix build must
@@ -682,9 +851,22 @@ while true; do
   # the wait to the running builds rather than to the whole queue behind them.
   # It cannot preempt a build already holding a slot — that would throw away real
   # work — so an express build still waits for the first slot to free.
-  if [ "$PRIO" != "1" ] && express_waiting; then sleep "$POLL"; continue; fi
+  # The resume lane is yielded to on the same terms and for the same shape of
+  # reason: a half-finished verify's remaining stages are worth more than a
+  # verify that has not started, and letting them finish is what drains the
+  # queue rather than deepening it (AA-3129).
+  if express_waiting || resume_waiting; then sleep "$POLL"; continue; fi
 
   if acquire_slot; then
+    # Re-check the lanes now that the slot is actually held. The check above is
+    # not atomic with the acquire — it globs two directories and forks a subshell
+    # per candidate, and a slot can free during that — so on its own it loses the
+    # handoff race intermittently (measured: 2 of 3 runs). Re-checking here is
+    # decisive rather than tighter, because the ordering is guaranteed on the
+    # other side: a stage that has more work writes its marker BEFORE dropping
+    # its slot, so any slot we can win from a continuing chain already has that
+    # chain's marker in place. Dropping the slot and looping costs one poll.
+    if express_waiting || resume_waiting; then exec 9>&-; sleep "$POLL"; continue; fi
     exec 6>"$CTL"; flock 6
     [ "$(rd "$SERV")" = "$T" ] && wr "$SERV" $((T + 1))    # let the next ticket contend
     flock -u 6; exec 6>&-
@@ -758,5 +940,20 @@ WATCH_PID=$!
 wait "$BUILD_PID"; rc=$?
 kill "$WATCH_PID" 2>/dev/null || true
 close_detached_run "$rc"
+
+# --- leave a chain marker for this worktree's next stage (AA-3129) ---
+# BEFORE the slot lock is dropped, and that ordering is load-bearing: waiters
+# are spinning at $POLL, so a marker written after the release loses the gap to
+# whoever is polling. Measured with the two swapped, the chain used the lane and
+# was still overtaken. Holding the slot while writing costs nothing — the slot
+# is busy either way, and the marker only makes normal waiters yield.
+#
+# A failed stage ends the caller's `&&` chain, so there is nothing to resume; a
+# chain that has spent its hand-offs queues normally from here on.
+if [ "$RESUME" = "1" ] && [ "$rc" -eq 0 ] && [ "$HOPS" -lt "$RESUME_MAX" ] 2>/dev/null; then
+  printf '%s %s' "$(( ${EPOCHSECONDS:-0} + GRACE ))" "$((HOPS + 1))" > "$MARK.$WTKEY"
+else
+  rm -f "$MARK.$WTKEY"
+fi
 exec 9>&-
 exit "$rc"
