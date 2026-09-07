@@ -18,7 +18,7 @@ Nightly fires run just *after* the 8 PM America/Denver Claude weekly-limit
 reset (Planner 20:10 → Coordinator 20:15 → Facilitator 20:45), so they draw the
 freshest quota of the cycle. Do NOT move them back before 20:00 — firing into
 the pre-reset window is the most-depleted slot of the week and silently
-hard-failed three nights running (AA-2023).
+hard-failed three nights running.
 
 Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitator); assignment-fire `wakeOnDemand` for Worker/Reviewer/Architect (no scheduled routine — they only run when given a task).
 

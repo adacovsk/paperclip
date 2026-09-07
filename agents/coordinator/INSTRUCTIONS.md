@@ -73,13 +73,13 @@ Human merges. You GC the worktree + branch.
      re-check next fire. The Landing sweep's own note applies verbatim here — *absence of a
      subtask-keyed sentinel is evidence of nothing*.
 
-     This is not hypothetical. At 10:41Z one fire probed `.paperclip/worktrees/AA-4193`, saw 14
-     modified files + 1 commit, concluded the Worker had died, cancelled Reviewer subtask AA-4201
+     This is not hypothetical. At 10:41Z one fire probed a task's worktree, saw 14
+     modified files + 1 commit, concluded the Worker had died, cancelled Reviewer subtask one task
      and re-dispatched the Worker. Those 14 files were the **Reviewer's own in-flight edits** —
-     AA-4201 posted its review ~70s later and the parent landed as PR #784. The outcome was benign
+     the Reviewer posted its review ~70s later and the parent landed cleanly. The outcome was benign
      only because the Reviewer ignored the cancellation; against an agent that honours it, the same
      misdiagnosis destroys uncommitted work, and the re-dispatch races the live run inside one
-     worktree (AA-3261 is the deadlock that follows).
+     worktree (is the deadlock that follows).
 
      Once liveness is ruled out: This is **not** an exit-gate violation and **not** a
      done-without-PR case: do NOT create a Reviewer subtask (its Step 0 rebase fails on unstaged
@@ -96,8 +96,8 @@ Human merges. You GC the worktree + branch.
      terminal, and re-firing buys the identical run at full cost.
      **Absent from the comments is not absent from the run — read `resultJson` before re-dispatching.**
      A Worker that reaches a defensible conclusion and never calls `/api/` writes it to the run,
-     not to a comment, and comment-absence alone bought four full-price identical re-dispatches
-     ([AA-6705](/AA/issues/AA-6705)). Fetch the run named by the task's `executionRunId`, or the
+     not to a comment, and comment-absence alone bought four full-price identical re-dispatches.
+     Fetch the run named by the task's `executionRunId`, or the
      newest `GET /api/companies/{companyId}/heartbeat-runs?limit=60` row whose
      `contextSnapshot.issueId` matches, then `GET /api/heartbeat-runs/{runId}` and read
      `resultJson.result`. (`/api/agents/:id/runs` 404s — the route is **company-scoped**; that
@@ -111,7 +111,7 @@ Human merges. You GC the worktree + branch.
      with 0 commits and no verdict in either the comments or `resultJson`, `escalate to operator`
      rather than firing a third.
      This arm exists because clean/0-commit is otherwise indistinguishable from never-started
-     and had no bullet at all: AA-5337 was re-picked three times inside 40 minutes, each run
+     and had no bullet at all: One task was re-picked three times inside 40 minutes, each run
      ~15-32s of billed Opus concluding the same no-op.
    - Reviewer done, `needs-build` → assign Architect on the same task branch (Architect runs cargo)
    - Reviewer done, `data-only` → Architect opens PR (no cargo), then mark parent done after merge
@@ -135,9 +135,8 @@ Human merges. You GC the worktree + branch.
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
 5. Promote backlog → `todo` if <2 Worker tasks active. PATCH must set `assigneeAgentId`. **Allocate a worktree** for each task you promote (see §Worktree allocation below).
    - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because the second one's merge conflict is billed to the operator as a hand-merge.
-     This is not hypothetical scheduling theory. Seven branches went unmergeable at once, and **six of them were the same kind of work** — adding a usage-limit/frequency gate to one more `AbilityMechanic` variant — so they necessarily all edited `src/systems/active_modifiers.rs` and `execute.rs`. Main then absorbed two more commits on that same surface and every in-flight branch broke together. The pipeline read that as six independent "needs operator merge" parks, billing six hand-merges for one scheduling decision ([AA-5194](/AA/issues/AA-5194)).
-     **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges.
-   - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it: the `validate-data.yml` per-guard step list became `run_guards.py` auto-discovery, so adding a guard needs no workflow edit at all ([AA-4227](/AA/issues/AA-4227)); and `docs/ROADMAP.md` was given a single writer, enforced by `scripts/check_roadmap_writer.py` ([AA-5199](/AA/issues/AA-5199)). `assets.manifest.json` ([AA-4970](/AA/issues/AA-4970)) is the open one.
+     **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges. → [the six hand-merges this cost](rationale/contended-edit-surface.md)
+   - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it. → [what those fixes were](rationale/contention-is-a-file-defect.md)
    - **When several branches are already conflicting on one file, ask the operator to merge them in a deliberate order** — resolve the contended file once and rebase the rest onto that result. Six blind three-way merges of the same hunk produce six divergent resolutions; do not park them as independent operator work.
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
@@ -151,7 +150,7 @@ Human merges. You GC the worktree + branch.
       - **`inflight` is not "everything `in_review`".** Count a parent only if it is genuinely queued for or running a build: it has an open Architect verify subtask, or a build slot held against its worktree. An `in_review` parent whose PR is already open is waiting on a **human merge**, not on the Architect — it consumes no build capacity, and counting it throttles intake on an idle resource. This gate exists to protect the cargo lock, so measure the cargo lock. (Observed: every `in_review` parent had an open PR and every build slot was free, and intake was still restricted to `data-only`.)
       - **Do not "simplify" this by folding `inflight` into the first gate.** An Architect-bound pipeline routinely sits at many `in_review` parents; a single combined `≥ 5` gate would then skip intake on *every* fire and starve supply precisely when the Planner has restocked it. `inflight` throttles `needs-build`; it never blocks intake outright. (An under-count report motivates counting `in_review` at all — but the literal fix it suggests is this trap.)
    b. **Cursor — the scan region is `## Active fronts`, not the phase bodies.** Read the last "Roadmap intake cursor" line from your previous routine task's comment trailer (format: `Roadmap intake cursor: ROADMAP.md:<line-number>`). If absent, or if it points below the end of `## Active fronts`, start at the `## Active fronts` heading.
-      **Why this is the anchor and the phase headers are not.** This step used to say "start at the first `## Phase` header marked \"Active\"". No phase heading has ever carried that marker, and the phase bodies are `###` sections of prose — the top-level `- ` bullets this step matches barely exist down there. Everything the Planner writes *for promotion* is in the `## Active fronts` index at the top of the file: one top-level bullet per front, each `**§N.NNN**` prefixed, each carrying its own band label, each pointing at the section that specs it. Anchoring below that index meant a cursor that scanned past the entire supply and never came back — measured on 2026-09-01, `check_roadmap.py` reported **77 fronts indexed, all free**, while intake promoted **zero** across consecutive fires and the ready queue drained to one task. That is not a supply shortage and escalating it as one wastes a Planner fire.
+      **Why this is the anchor and the phase headers are not.** Everything the Planner writes *for promotion* is in the `## Active fronts` index at the top of the file: one top-level bullet per front, `**§N.NNN**` prefixed, each pointing at the section that specs it. Anchoring below that index scans past the entire supply and never comes back — which reads as a supply shortage and wastes a Planner fire when escalated as one. → [the fires this cost](rationale/roadmap-index-is-the-anchor.md)
       The index is deliberately terse — a bullet is a pointer, not the spec. Follow the `§N.NNN` to its section before promoting; the section (and its `**Detail**:` file) is what goes in the task body, per (c).
    c. **Scan forward** from the cursor. Match top-level Markdown bullets: lines beginning in column 0 with `- ` followed by content. Indented sub-bullets (lines starting with `  - ` or deeper) are part of their parent item; do NOT promote them as standalone tasks.
       For each candidate top-level bullet:
@@ -420,7 +419,7 @@ For each parent `{task-id}`:
    parent to `blocked`, with a comment naming the conflicting path(s) and
    "needs operator merge (conflict class)". This parks it visibly in
    one cadence instead of bouncing for hours or burying an `escalate`
-   comment. (Seen exactly this way: a real `transitions.rs` conflict that
+   comment. (Seen exactly this way: a real source-file conflict that
    sat ~10h before a human hand-merged it.)
 
    **Then reap the build**: `agents/architect/reap-verify.sh {task-id} unlandable`.
@@ -453,7 +452,7 @@ For each parent `{task-id}`:
      resolution can silently disagree with what the generator emits. Correct
      resolution is to take `origin/main`'s copy, rebase the Rust, and re-run
      the generator (the Architect does this at §6.5 before Landing anyway).
-     Measured: AA-5067 was parked citing 7 conflicting paths, 4 of which were
+     Measured: One task was parked citing 7 conflicting paths, 4 of which were
      these schemas. **State the excluded paths in the block comment** so the
      next reader can see the count was filtered rather than mis-measured.
    - **A single remaining non-schema path is a Worker rebase, not operator
@@ -462,12 +461,12 @@ For each parent `{task-id}`:
      it costs one run. Park on the operator only when two or more distinct
      non-schema paths conflict, i.e. when resolving requires reconciling
      changes across surfaces. Misreading a one-file conflict as a hand-merge
-     is the failure that left AA-4893/AA-5246 parked five days and AA-5716
+     is the failure that left two tasks parked five days, and a third
      parked over a one-word comment edit.
    - **A file and its own test are one surface, not two.** `foo.py` +
      `tests/test_foo.py` (or `src/x.rs` + `tests/x.rs`) conflict together
      because one change touched both, and they rebase together too. Count
-     that pair as one path. Measured: AA-5282's whole conflict is
+     that pair as one path. Measured: One task's whole conflict is
      `scripts/check_data_asset_paths.py` and its test.
 
    Re-dispatch each task to the Worker **once** for a given conflict: a task
@@ -556,8 +555,8 @@ git merge-base --is-ancestor origin/<branch> origin/<claimed-superseder>
 
 Quote the command output in the closing comment. Failing that, leave the PR open.
 
-PR #1136 (`task/AA-5202-reland`) was closed as "already on main via #1153" when
-#1153 touched an entirely disjoint file set; ~91 lines of finished `data-only`
+a reland PR was closed as "already on main via <other PR>" when that other
+PR touched an entirely disjoint file set; ~91 lines of finished `data-only`
 work sat in a closed branch while its roadmap bullet read as unclaimed. Ancestry
 is also blind to reverts, so on a `done`-acceptance path probe content on
 `origin/main` (line count / distinctive grep), not ancestry alone.
@@ -605,7 +604,7 @@ parents):
    `task/{identifier}`, and the head-only lookup returns nothing for the very task the PR exists to
    rescue. The task then either gets re-opened — spawning a duplicate Worker run against work that
    is already recovered and awaiting merge — or is left `done` while its work is provably not on
-   `main`. Three tasks (AA-4719, AA-4740, AA-4810) sat `done` with open `op/recover-*` PRs, and the
+   `main`. Three tasks sat `done` with open `op/recover-*` PRs, and the
    only thing that caught it was the operator noticing the PRs by hand.
 
    **A PR found under any head counts.** The head name is a naming convention, not evidence; the
@@ -620,9 +619,9 @@ parents):
      and `done` is the signal every other sweep reads: a `done` parent is what
      unblocks dependents and what the roadmap counts as shipped. Recording it
      early is not a cosmetic mislabel — it hands downstream work a premise that
-     is not yet true. Observed exactly so: AA-2999 was recorded landed on an
-     open #596, which unblocked AA-3021 on the strength of
-     `spawn_campaign_characters` existing on main, where it did not yet exist.
+     is not yet true. Observed exactly so: One task was recorded landed on an
+     an open PR, which unblocked a dependent task on the strength of
+     a function existing on main, where it did not yet exist.
    - **No PR** → run the **on-main pre-check** (step 4) before re-opening.
 
    Trust `mergedAt`, not `state`. A `CLOSED` PR is not merged, and `MERGED` as a
@@ -636,7 +635,7 @@ parents):
    d. If no SHA references anywhere in the task, also try `git log origin/main --since={createdAt} --grep="{task-id}"` for commit messages mentioning the task ID. Match → accept as in (b).
    e. **Superseded-on-main verdict.** Before falling through, scan the task's comments for a line beginning `PR-EVIDENCE: superseded-on-main` (case-sensitive, start of line). If one exists, **accept the task as `done`** and skip the re-open, commenting `"PR-evidence audit: standing superseded-on-main verdict, accepting."`
 
-      Every probe in a-d is *attribution-scoped* — a PR on this branch, a SHA this task names, a commit message naming this task. None can observe a done-when satisfied by **a different task's PR**, and when that happens all three correctly return nothing while step 5 concludes the opposite of the truth: the work landed, under someone else's attribution. Re-opening then costs a wake per cycle and can dispatch a Worker at already-correct code. AA-4187 flipped **five times** this way, and its one remaining action was deleting a run condition that `main` documents inline as *"Do not delete this condition"*. AA-6128 is the second worked example: `main` implements its subject through a different design, so its own three commits can never become ancestors of `main` and every probe above will keep returning nothing forever.
+      Every probe in a-d is *attribution-scoped* — a PR on this branch, a SHA this task names, a commit message naming this task. None can observe a done-when satisfied by **a different task's PR**, and when that happens all three correctly return nothing while step 5 concludes the opposite of the truth: the work landed, under someone else's attribution. Re-opening then costs a wake per cycle and can dispatch a Worker at already-correct code. One task flipped **five times** this way, and its one remaining action was deleting a run condition that `main` documents inline as *"Do not delete this condition"*. One task is the second worked example: `main` implements its subject through a different design, so its own three commits can never become ancestors of `main` and every probe above will keep returning nothing forever.
 
       The marker is deliberately a *written verdict* rather than another probe. Machine-deciding "is this done-when satisfied?" against arbitrary code is exactly what the audit cannot do; someone who has read the code can state it, and the line makes that reading durable instead of something each fire re-litigates. Whoever closes such a task **must** leave the line and **must** cite the implementing code on it — `path:line`, or the PR that landed it — so the claim is checkable rather than asserted. A marker with no citation is not a verdict; treat it as absent.
 
@@ -679,7 +678,7 @@ When the PR for `task/{task-id}` merges, tear down. **Reap the task's build
 chain first** — removing the directory out from under a live cargo does not
 stop it. The build survives with its cwd marked `(deleted)`, keeps holding one
 of only three `cargo-sem.sh` slots, and burns CPU for a task that is already
-merged. Observed on AA-2713: a chain held cargo-slot-2 against a deleted
+merged. Observed on one task: a chain held cargo-slot-2 against a deleted
 worktree for ~67 minutes of rustc CPU before anything reaped it.
 
 ```sh
@@ -718,8 +717,8 @@ is admitted only because the task provably cannot consume the result:
 **`blocked` is NOT a reason, and this is the correction to make.** The obvious
 rule — "blocked on conflict, so a rebase is needed, so the build is invalid
 anyway" — was measured **false**. Two `blocked` tasks holding live builds
-(AA-4533, AA-6971) both merged **clean** into `origin/main`, while a branch that
-genuinely conflicted (AA-6856) belonged to an `in_review` task that legitimately
+both merged **clean** into `origin/main`, while a branch that
+genuinely conflicted belonged to an `in_review` task that legitimately
 wanted its result. A block is reversible without a rebase, and the freshness gate
 already allows landing on a slightly stale base — so a blocked task's build is
 *deferred*, not worthless. `reap-verify.sh` therefore re-proves `unlandable` with
@@ -730,7 +729,7 @@ blocked build go away; if the branch merges, leave it running.
 That leaves the real cost of a long-blocked build — it holds a slot or a FIFO
 position ahead of work that can land today — as a **scheduling** problem, not a
 correctness one. Do not solve it by killing the build. It belongs to the verify
-queue's priority ordering (AA-6129).
+queue's priority ordering.
 
 **Why the ordering inside the script matters.** It writes `100` *before*
 signalling. The wrapper's own trap writes `99` only when the sentinel is absent,
@@ -833,7 +832,7 @@ is the exception: that is Facilitator's territory and stays assignable.
 **An explicit unassign is a routing decision.** If an agent unassigns a task and
 states a reason, do not re-assign it to that same agent without new evidence
 that it became actionable. Re-routing over a stated reason silently discards it
-(AA-3297 was re-assigned to Facilitator 79 minutes after Facilitator unassigned
+(was re-assigned to Facilitator 79 minutes after Facilitator unassigned
 it as operator-owned).
 
 ## Never

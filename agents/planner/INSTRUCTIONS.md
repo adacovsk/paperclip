@@ -50,11 +50,11 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
     fi
     ```
 
-    The `else` is what gives you a fresh branch exactly when the last one landed, so the name is stable forever and the content never trails `main`. `merge`, not `rebase`: replaying a roadmap edit fails where the merge succeeds ([AA-5311](/AA/issues/AA-5311)), and a failed replay strands the fire, not the file.
+    The `else` is what gives you a fresh branch exactly when the last one landed, so the name is stable forever and the content never trails `main`. `merge`, not `rebase`: replaying a roadmap edit fails where the merge succeeds, and a failed replay strands the fire, not the file.
 
-    **Why this is a rule and not a preference.** Minting a name per fire produced sixteen live `planner/*` branches — five in one day — two of which carried overlapping restocks committed hours apart, and one of which (`planner/prune-0826e`) sat 376 commits behind `main` with every one of its edits already landed by a later fire that had forked separately. A second writer branch collides on the `## Active fronts` index exactly as a task branch does, with the added cost that neither side is wrong, so there is nothing to discard. Step 11 already tells you to resume an interrupted fire "from the existing branch instead of silently redoing the work onto a conflicting parallel branch" — this is the branch it means.
+    **Why this is a rule and not a preference.** A name minted per fire produces parallel writer branches, and two of them collide on the index exactly as a task branch does — neither side is wrong, so the conflict has no correct resolution after the fact. → [the sixteen branches this produced](rationale/one-writer-branch.md)
 
-    `scripts/check_roadmap_writer.py` enforces it at pre-push: a `planner/*` branch other than `planner/roadmap` that touches `docs/ROADMAP.md` or `docs/roadmap/` fails. Left the shared checkout on your branch and a red appears somewhere unrelated? That is the same defect from the other end ([AA-5539](/AA/issues/AA-5539)) — return the checkout to `main` when you are done.
+    `scripts/check_roadmap_writer.py` enforces it at pre-push: a `planner/*` branch other than `planner/roadmap` that touches `docs/ROADMAP.md` or `docs/roadmap/` fails. Left the shared checkout on your branch and a red appears somewhere unrelated? That is the same defect from the other end — return the checkout to `main` when you are done.
 
 1. **Context** — `git log --oneline -10` + recent completed reviews via `paperclip` skill. Note what changed since last run.
 2. Read `docs/ROADMAP.md` — current phase, checked vs unchecked.
@@ -81,7 +81,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    - **Rewrite the prose; never paste the title as the bullet.** Operator issues are written as symptoms and questions ("investigate why X breaks"), which is precisely the skip-word shape Coordinator drops on sight. Convert to a top-level imperative bullet with file paths and done-criteria, the same bar as a scan finding.
    - **Issue-derived items are not exempt from the brake.** They count toward the band in step 8 and are subject to the same leaky-queue rule in step 6. An operator-filed issue is a strong *priority* signal, not a license to write an unpromotable bullet.
 
-   **Worked example — the bootstrap case (#840).** *"Use paperclip harness to open local claude code instance with remote-control… I can no longer access my remote terminals."* This is `ops`, not roadmap, and the reason generalizes: it asks the harness to repair the host the harness itself runs on. Every agent that could act on it is started by the machine that is down, so the pipeline structurally cannot execute it no matter how well the bullet is phrased. Issues in this class must reach the operator through Facilitator; routing one to the roadmap converts an actionable request into a bullet that fails silently.
+   **Worked example — the bootstrap case.** *"Use paperclip harness to open local claude code instance with remote-control… I can no longer access my remote terminals."* This is `ops`, not roadmap, and the reason generalizes: it asks the harness to repair the host the harness itself runs on. Every agent that could act on it is started by the machine that is down, so the pipeline structurally cannot execute it no matter how well the bullet is phrased. Issues in this class must reach the operator through Facilitator; routing one to the roadmap converts an actionable request into a bullet that fails silently.
 
 6. **Self-audit before writing.** Roadmap entries are only useful if Coordinator promotes them into tasks. Check the conversion rate:
    - Count items you added to the roadmap in the last 7 days (`git log --since="7 days ago" --author=... -- docs/ROADMAP.md` or grep your routine-comment trail).
@@ -219,7 +219,7 @@ that differ only in *which* edge they declare, *which* allowlist row they re-exp
 *which* enum variant they add are **one chain, not parallel work**: they land in the same file
 and the second one waits on the first regardless of how the roadmap counts them. A band can
 read 27 deep and supply zero promotable items this way, which is exactly what happened for two
-consecutive Coordinator fires (AA-5473) while `check_data_key_refs.py` carried six in-flight
+consecutive Coordinator fires while `check_data_key_refs.py` carried six in-flight
 branches and the two mechanic allowlists carried two blocked ones.
 
 So when restocking to the step-8 band, **check the target file's in-flight count before writing
