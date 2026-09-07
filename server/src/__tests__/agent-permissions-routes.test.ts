@@ -304,6 +304,60 @@ describe("agent permission routes", () => {
     expect(res.status).toBe(403);
   });
 
+  // The adapter probe runs caller-supplied config through the secrets service
+  // and echoes values back in its diagnostics, so reaching it is not a
+  // configuration read. It is the only non-GET among assertCanReadConfigurations'
+  // callers, and it must keep the agents:create bar.
+  it("does not let agents:read_config reach the adapter test-environment probe", async () => {
+    mockAccessService.hasPermission.mockImplementation(
+      async (_companyId: string, _type: string, _id: string, key: string) =>
+        key === "agents:read_config",
+    );
+
+    const app = createApp({
+      type: "agent",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      companyId,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/adapters/process/test-environment`)
+      .send({ adapterConfig: { command: "echo" } });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("reports canReadConfigurations for an explicit agents:create grant, mirroring the gate", async () => {
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      {
+        id: "grant-3",
+        companyId,
+        principalType: "agent",
+        principalId: agentId,
+        permissionKey: "agents:create",
+        scope: null,
+        grantedByUserId: "operator-user",
+        createdAt: new Date("2026-03-19T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+      },
+    ]);
+
+    const app = createApp({
+      type: "operator",
+      userId: "operator-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.access.canReadConfigurations).toBe(true);
+    expect(res.body.access.configReadSource).toBe("explicit_grant");
+  });
+
   it("grants agents:read_config when the permissions patch enables it", async () => {
     const app = createApp({
       type: "operator",
