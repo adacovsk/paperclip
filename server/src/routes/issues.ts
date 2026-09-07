@@ -982,12 +982,23 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
     if (!(await assertAgentRunCheckoutOwnership(req, res, existing))) return;
 
+    // Issues are never hidden. `hiddenAt` is filtered out by every listing,
+    // activity and routine query, so a hidden row is invisible to the sweeps and
+    // to anyone auditing the board — it cannot be tracked, only stumbled upon.
+    // `cancelled` already carries "done with this" while staying greppable, so
+    // hiding buys nothing that a terminal status does not, and costs the ability
+    // to see the work at all. Rejected loudly rather than dropped silently: a
+    // caller that thinks it hid something should be told it did not.
+    if (req.body.hiddenAt !== undefined) {
+      res.status(400).json({
+        error: "Issues are never hidden. Use a terminal status (done/cancelled) instead.",
+      });
+      return;
+    }
+
     const actor = getActorInfo(req);
     const isClosed = existing.status === "done" || existing.status === "cancelled";
-    const { comment: commentBody, reopen: reopenRequested, hiddenAt: hiddenAtRaw, ...updateFields } = req.body;
-    if (hiddenAtRaw !== undefined) {
-      updateFields.hiddenAt = hiddenAtRaw ? new Date(hiddenAtRaw) : null;
-    }
+    const { comment: commentBody, reopen: reopenRequested, ...updateFields } = req.body;
     if (commentBody && reopenRequested === true && isClosed && updateFields.status === undefined) {
       updateFields.status = "todo";
     }
