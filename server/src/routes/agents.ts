@@ -121,11 +121,20 @@ export function agentRoutes(db: Db) {
       ? await access.listPrincipalGrants(agent.companyId, "agent", agent.id)
       : [];
     const hasExplicitTaskAssignGrant = grants.some((grant) => grant.permissionKey === "tasks:assign");
+    // Mirrors agentCanReadConfigurations, which is the gate that actually runs.
+    // Note the CEO role is deliberately absent: it confers task assignment and
+    // agent edits, but not config reads on other agents.
+    const configRead = canCreateAgents(agent)
+      ? { canReadConfigurations: true, configReadSource: "agent_creator" as const }
+      : grants.some((grant) => grant.permissionKey === "agents:read_config")
+        ? { canReadConfigurations: true, configReadSource: "explicit_grant" as const }
+        : { canReadConfigurations: false, configReadSource: "none" as const };
 
     if (agent.role === "ceo") {
       return {
         canAssignTasks: true,
         taskAssignSource: "ceo_role" as const,
+        ...configRead,
         membership,
         grants,
       };
@@ -135,6 +144,7 @@ export function agentRoutes(db: Db) {
       return {
         canAssignTasks: true,
         taskAssignSource: "agent_creator" as const,
+        ...configRead,
         membership,
         grants,
       };
@@ -144,6 +154,7 @@ export function agentRoutes(db: Db) {
       return {
         canAssignTasks: true,
         taskAssignSource: "explicit_grant" as const,
+        ...configRead,
         membership,
         grants,
       };
@@ -152,6 +163,7 @@ export function agentRoutes(db: Db) {
     return {
       canAssignTasks: false,
       taskAssignSource: "none" as const,
+      ...configRead,
       membership,
       grants,
     };
@@ -211,21 +223,57 @@ export function agentRoutes(db: Db) {
     return actorAgent;
   }
 
+  // Configuration *reads* accept either agents:create or its read-only counterpart
+  // agents:read_config. Creating an agent implies being able to read one, but an
+  // auditing agent needs the reverse of that implication and nothing more: gating
+  // reads on agents:create alone forces an over-grant of write authority, and
+  // withholding it silently redacts adapterConfig/runtimeConfig to `{}` — a
+  // success response indistinguishable from genuinely-empty config.
   async function assertCanReadConfigurations(req: Request, companyId: string) {
-    return assertCanCreateAgentsForCompany(req, companyId);
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type === "operator") {
+      if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return null;
+      const allowed =
+        (await access.canUser(companyId, req.actor.userId, "agents:create")) ||
+        (await access.canUser(companyId, req.actor.userId, "agents:read_config"));
+      if (!allowed) {
+        throw forbidden("Missing permission: agents:read_config");
+      }
+      return null;
+    }
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+    const actorAgent = await svc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (!(await agentCanReadConfigurations(companyId, actorAgent))) {
+      throw forbidden("Missing permission: agents:read_config");
+    }
+    return actorAgent;
+  }
+
+  async function agentCanReadConfigurations(
+    companyId: string,
+    actorAgent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
+  ) {
+    if (canCreateAgents(actorAgent)) return true;
+    if (await access.hasPermission(companyId, "agent", actorAgent.id, "agents:create")) return true;
+    return access.hasPermission(companyId, "agent", actorAgent.id, "agents:read_config");
   }
 
   async function actorCanReadConfigurationsForCompany(req: Request, companyId: string) {
     assertCompanyAccess(req, companyId);
     if (req.actor.type === "operator") {
       if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return true;
-      return access.canUser(companyId, req.actor.userId, "agents:create");
+      return (
+        (await access.canUser(companyId, req.actor.userId, "agents:create")) ||
+        (await access.canUser(companyId, req.actor.userId, "agents:read_config"))
+      );
     }
     if (!req.actor.agentId) return false;
     const actorAgent = await svc.getById(req.actor.agentId);
     if (!actorAgent || actorAgent.companyId !== companyId) return false;
-    const allowedByGrant = await access.hasPermission(companyId, "agent", actorAgent.id, "agents:create");
-    return allowedByGrant || canCreateAgents(actorAgent);
+    return agentCanReadConfigurations(companyId, actorAgent);
   }
 
   async function assertCanUpdateAgent(req: Request, targetAgent: { id: string; companyId: string }) {
@@ -1447,6 +1495,16 @@ export function agentRoutes(db: Db) {
       effectiveCanAssignTasks,
       req.actor.type === "operator" ? (req.actor.userId ?? null) : null,
     );
+    if (typeof req.body.canReadConfigurations === "boolean") {
+      await access.setPrincipalPermission(
+        agent.companyId,
+        "agent",
+        agent.id,
+        "agents:read_config",
+        req.body.canReadConfigurations,
+        req.actor.type === "operator" ? (req.actor.userId ?? null) : null,
+      );
+    }
 
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -1461,6 +1519,9 @@ export function agentRoutes(db: Db) {
       details: {
         canCreateAgents: agent.permissions?.canCreateAgents ?? false,
         canAssignTasks: effectiveCanAssignTasks,
+        ...(typeof req.body.canReadConfigurations === "boolean"
+          ? { canReadConfigurations: req.body.canReadConfigurations }
+          : {}),
       },
     });
 

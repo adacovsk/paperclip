@@ -347,6 +347,10 @@ export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 
 export const PERMISSION_KEYS = [
   "agents:create",
+  // Read-only counterpart to agents:create. Gates the configuration read paths
+  // only, so an auditing agent can diff live adapterConfig/runtimeConfig against
+  // its on-disk source without being granted the power to create or edit agents.
+  "agents:read_config",
   "users:invite",
   "users:manage_permissions",
   "tasks:assign",

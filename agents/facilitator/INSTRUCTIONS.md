@@ -62,6 +62,8 @@ Recent done-sounding comments (`"nothing to fix"`, `"all clean"`, `"review compl
 
 Diff live `adapterConfig.promptTemplate` + `instructionsFilePath` content against `$PAPERCLIP_REPO/agents/{agent}/INSTRUCTIONS.md`. Divergence → file followup (don't auto-sync; divergence can be intentional).
 
+**A `{}` is not a clean read.** Another agent's `adapterConfig`/`runtimeConfig` is redacted to `{}` unless you hold `agents:read_config` (or `agents:create`) for the company, and the redaction is a `200` — indistinguishable from genuinely-empty config. Check `access.canReadConfigurations` on your own record (`GET /api/agents/me`) before trusting this step: if it is `false`, report step 5 as **not evaluated** and escalate for the grant, never as clean.
+
 `runtimeConfig.heartbeat.sessionCompaction` is deliberately **per-agent and non-uniform** — each agent's thresholds are tuned to its own observed run distribution, not to a house default. `claude_local`'s adapter default zeroes every threshold, so an agent with no override never rotates at all; an agent whose values differ from its neighbours is not drift. Flag only a *missing* `sessionCompaction` block, or `enabled: false`.
 
 ### 6. Hide stale completions
