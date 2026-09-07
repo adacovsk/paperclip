@@ -2,4 +2,18 @@
 
 **Justifies:** *refused the invocation, NOT a build failure* (Procedure — sentinel state machine, `64`)
 
-64 is the wrapper's multi-cargo-chain guard (see Cargo discipline §One cargo per `cargo-sem.sh` call): the launch wrapped two cargo commands inside a single slot acquisition, so the wrapper rejected it and **cargo never ran**. The code is fine; the *command* is wrong. Do **not** enter the fix loop and do **not** edit Rust — that chases a compile error that does not exist and burns the 3-cycle budget on it. Re-read the launch block and confirm the `&&` sits *between* two `"$SEM"` invocations, never inside one, then `rm -f "$EXIT"` and relaunch. If the launch block is already in the split form and you still got 64, escalate to operator with the `Got:` line from `$LOG` — something is rewriting the command.
+Chaining several cargo commands inside one slot acquisition holds that slot for the whole
+chain, which is the failure the one-cargo-per-call rule exists to prevent.
+
+The wrapper refuses it outright rather than running it, so this code means cargo never
+executed. The code is fine; the command was malformed.
+
+That distinction is the reason for a dedicated code. Any non-zero exit otherwise reads as a
+build failure, and a build failure reads as an instruction to edit source — so a
+malformed *command* would be answered by changing *code* that was never compiled, consuming
+the fix budget on a defect that is not there.
+
+The correct response is to re-read the launch and confirm the chaining operator sits between
+invocations rather than inside one. A refusal that persists against a correctly split command
+means something is rewriting it, which is a different problem and not one to solve by editing
+source either.

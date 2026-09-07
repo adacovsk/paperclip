@@ -2,4 +2,15 @@
 
 **Justifies:** *the launch also symlinks them under the* `Verify:` subtask id (Cargo discipline rule 7)
 
-Without the aliases, anyone probing liveness by the subtask id (Coordinator's re-dispatch check does exactly that, since that is the row it iterates) finds no `.pid` and no `.exit` even while cargo is actively compiling, concludes "never started", and re-dispatches — which killed a live build and threw away ~50 min of progress under semaphore contention.
+Sentinels are named after the worktree, which belongs to the parent task. But the row a sweep
+iterates is the verify subtask, so it probes under the subtask's id — and finds nothing, even
+while the build is actively compiling.
+
+Absence then reads as "never started", and the response to a stage that never started is to
+dispatch it again. The re-dispatch lands on a worktree that already has a build in it, and the
+progress made so far is lost.
+
+Two ids naming one build is the underlying problem, and it cannot be fixed by choosing the
+right one: each side is correct to use the id it holds. Aliasing every sentinel under both
+makes either probe work, which is cheaper and more robust than requiring every reader to know
+which id the file was named for.

@@ -2,4 +2,15 @@
 
 **Justifies:** *The `+` is load-bearing* — the wrapper census (Cargo discipline rule 7)
 
-The `+` is load-bearing. With `[0-9]*` the pattern matches zero digits against the literal `verifyrun-AA-[0-9]*` sitting in the pipeline's own argv, and the census grows a phantom bare `verifyrun-AA-` row — measured at 10 such rows on this box. Anchoring on one-or-more digits leaves the census clean. A build waiting on a busy `cargo-sem.sh` slot (both `/tmp/cargo-slot-{1,2}.lock` held) can sit 20–40 min showing only the startup `echo` — that is RUNNING, not dead.
+A process listing filtered for a specific build's tag matches the filtering command itself,
+because that command's own arguments contain the tag. So the probe reports the build alive
+whether or not it exists, and it is the probe's own presence being observed.
+
+Running one census over all ids and reading the result avoids self-matching, but only if the
+pattern cannot match its own text. A pattern allowing zero digits does match the literal
+pattern sitting in the pipeline's arguments, and the census fills with phantom entries that
+belong to no build. Requiring at least one digit is what makes the census describe reality.
+
+The second trap is reading elapsed silence as death. A build waiting on a busy semaphore
+produces no output for a long time by design — it has not started compiling yet. Quiet is what
+waiting looks like, not what dying looks like.

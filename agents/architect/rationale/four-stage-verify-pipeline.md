@@ -2,14 +2,38 @@
 
 **Justifies:** *One detached process, up to four slot acquisitions — the `&&` goes BETWEEN `cargo-sem.sh` calls, never inside one*, and the report-only fourth stage. (Cargo discipline rule 5)
 
-```
-   The third stage closes the one configuration nothing checks per-change. Root `CLAUDE.md` runs `ci.yml` weekly only, and CI's clippy is `--no-default-features`; a feature-gated compile error therefore reaches `main` and blocks *every* task until an operator fixes it. That is not hypothetical — `3273812c` landed an `E0599` that default-feature clippy could not see, and it stayed red until a PR.
-   - **Why clippy and not `test --no-default-features`.** Clippy is check-level: no codegen, no link, and sccache is warm from the stage that just ran, so the marginal cost is one slot round-trip plus a mostly-cached front-end pass. A no-default-features *test* stage would be a full test-binary link — the stage that already gets OOM-killed (rule at line 149) — and it would buy nothing here, since the failure class this stage exists for is a compile error.
-   - **Why the `else true`.** The gate skips the stage when the diff touches no Rust under `src/`. Without the `else`, a skipped stage leaves `grep`'s non-zero status as the group's status and the sentinel reports a build failure for a docs-only task.
-   - **Fourth stage — `cargo test --tests`, REPORT-ONLY. It must never reach `$rc`.** The three gating stages *compile* the integration crates (`--all-targets`) but never *run* them, so a `src`-only change that breaks a `tests/*.rs` suite at runtime passes every per-task gate. That is not hypothetical: it reddened `main` via an integration suite and spawned four `ci-failure` issues, because `cargo test --lib` never executes integration targets. This stage runs them and **reports**; it does not block the PR.
-     - **Why report-only and not a gate.** `tests/` is separately maintained and has historically been broken on `main` for reasons unrelated to any single task. Promoting this to a gate re-creates exactly the failure the `--lib` rule at the end of this section exists to prevent — every needs-build task failing regardless of its own correctness, bailing before the PR step, and masquerading as done with no PR. **Do not "fix" this by folding `irc` into `rc`.** If integration failures should block, that is an operator policy change, not a tidy-up.
-     - **Why it runs before the sentinel is written.** The `.exit` write fires the `/wakeup` callback, and a green sentinel sends you straight to §Landing. A report-only stage placed after that would finish into a run that had already landed, so its result would never reach a comment. It costs the landing that much extra wall-clock, deliberately.
-     - **Why its status goes in `{task-id}.integration`, a separate file.** Two sentinels, two meanings: `.exit` gates, `.integration` informs. `rc` is captured *before* this stage runs and is not reassigned, so a red integration suite cannot turn a passing verify into a failing one. `137` is remapped here the same way as for `.exit`, since this stage is also a heavy test-binary link and OOM presents as 101.
-     - **Why `--tests` and not `--no-default-features`.** `--tests` reuses the default-feature artifacts the earlier stages just warmed; the no-default-features variant would be a cold full relink of the stage that already OOMs. The failure class here is a *runtime* test failure, which either configuration surfaces.
-     - **Why the gate includes `tests/`.** The changed-file filter admits `^(src|tests)/.*\.rs$`, so a task that edits a suite directly also gets it run. A docs- or data-only task skips the stage entirely and pays nothing.
-   This is the *only* form that satisfies both constraints at once. The `&&` preserves the staged gate (test runs only if clippy passed) and short-circuits `$?` to clippy's exit code on failure, exactly as before; the split releases the slot between stages per §Cargo discipline rule 3. Wrapping the chain instead — `cargo-sem.sh bash -c 'cargo clippy && cargo test --lib'` — is the multi-cargo chain `cargo-sem.sh` refuses with **exit 64**, and it burns a dispatch round-trip every time. (That refusal recurred on essentially every verify because this step used to specify the wrapped form while rule 3 forbade it; the launch block is now the split form, so follow it verbatim and the guard stays quiet.) Do not launch the two as separate *background* jobs either — they'd serialize on the build lock and you'd lose the single-sentinel state model.
+## The third stage: the configuration nothing else checks
+
+Feature-gated code is compiled by exactly one configuration, and if no per-change gate builds
+that configuration, an error in it reaches the main branch. There it blocks every task, not
+just the one that introduced it, and clears only by operator intervention.
+
+Clippy rather than tests, because the failure class is a compile error. Clippy is check-level —
+no codegen, no link — and the compiler cache is warm from the stage before it, so the marginal
+cost is roughly one slot round-trip. A test build in the same configuration would be a full
+relink of the heaviest, most memory-hungry stage, to catch nothing this stage does not.
+
+The explicit `else` branch exists because a skipped stage must not look like a failed one.
+Without it the group inherits the non-zero status of the test that decided to skip, and a
+change with no relevant source reports a build failure.
+
+## The fourth stage: report-only, and why that is deliberate
+
+The gating stages compile the integration crates but never run them. A change confined to the
+library can therefore break an integration suite at runtime and pass every gate.
+
+Running them and reporting closes that blind spot. Making them *gate* would reopen a worse one:
+integration suites are separately maintained and can be broken for reasons unrelated to any
+task, so gating on them fails every task regardless of its own correctness — the exact failure
+the library-only gate exists to prevent, where work bails before opening its PR and appears
+finished with nothing to show. Whether integration failures should block is a policy decision,
+not a tidy-up, so the result is captured before this stage runs and is never folded back in.
+
+It runs *before* the sentinel is written because writing the sentinel fires the callback that
+sends the run to land. A report produced after that point would arrive at a run that had
+already finished, and would never reach anyone. Reporting costs the landing some wall-clock,
+which is the price of the result existing at all.
+
+Its status goes in a separate file so the two sentinels keep distinct meanings: one gates, the
+other informs. A resource kill is recognised here the same way as elsewhere, since this stage
+is heavy enough to be killed for memory and that presents identically to a real failure.

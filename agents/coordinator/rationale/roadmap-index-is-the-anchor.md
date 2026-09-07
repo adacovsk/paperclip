@@ -2,4 +2,17 @@
 
 **Justifies:** *Why this is the anchor and the phase headers are not.* (Roadmap intake)
 
-**Why this is the anchor and the phase headers are not.** This step used to say "start at the first `## Phase` header marked \"Active\"". No phase heading has ever carried that marker, and the phase bodies are `###` sections of prose — the top-level `- ` bullets this step matches barely exist down there. Everything the Planner writes *for promotion* is in the `## Active fronts` index at the top of the file: one top-level bullet per front, each `**§N.NNN**` prefixed, each carrying its own band label, each pointing at the section that specs it. Anchoring below that index meant a cursor that scanned past the entire supply and never came back — measured on 2026-09-01, `check_roadmap.py` reported **77 fronts indexed, all free**, while intake promoted **zero** across consecutive fires and the ready queue drained to one task. That is not a supply shortage and escalating it as one wastes a Planner fire.
+Everything written for promotion lives in the `## Active fronts` index at the top of the
+roadmap: one top-level bullet per front, each prefixed with its section number, each carrying a
+band label, each pointing at the section that specs it. That index is the supply.
+
+The phase sections below it are prose. They hold the analysis a front was written from, not the
+units of work, so the top-level bullets this step matches barely occur there at all.
+
+An anchor placed below the index therefore scans a region that structurally cannot contain
+promotable items, and — because the cursor only moves forward — never returns to the region
+that can. Intake then promotes nothing, fire after fire, while the index sits full.
+
+The failure presents as a supply shortage, which is what makes it expensive: escalating it
+spends a Planner fire restocking something already stocked. Anchoring on the index makes the
+shortage reading true when it appears.

@@ -1,9 +1,24 @@
 # One cargo per slot, and the resume lane
 
-**Justifies:** *One cargo per `cargo-sem.sh` call — never chain*, and the claim that yielding the slot between stages is free. (Cargo discipline rule 3)
+**Justifies:** *One cargo per `cargo-sem.sh` call — never chain* (Cargo discipline rule 3)
 
-**Why chaining is the single worst thing you can do to this queue.** A slot is held for the whole lifetime of the wrapped command, so `cargo-sem.sh bash -c 'cargo clippy && cargo test --lib'` holds ONE slot for an entire verify. Measured: one such chain held a slot 3–7 hours while the front waiter sat 9h50m.
+A slot is held for the entire lifetime of the wrapped command. Wrapping a whole verify in one
+invocation therefore holds a single slot across every stage of it — clippy, tests and all —
+rather than across one compile.
 
-That is why starvation kept recurring *after* the ticket queue made admission provably fair. Fairness was never the problem; hold time was. Two separate calls each wait their own turn and yield the slot in between, which is what lets the queue drain. It is also why "one cargo at a time" and the staged gate are compatible with the semaphore rather than in tension with it: you were always meant to run clippy, let go, then run test.
+This is why starvation persisted after the queue was made provably fair. Admission order was
+never the problem; hold time was. A strictly fair queue still starves if the item at the front
+holds its resource for hours, and no amount of ordering fixes that. Separate invocations each
+take their turn and release in between, which is what lets the queue drain at all.
 
-**Why yielding became free.** Yielding the slot between stages used to send a half-finished verify to the back of the queue — measured, a clippy result sat complete and unused for 3h26m while its `test --lib` waited, and a verify paid 3–4 full queue drains. That was the real cost behind "verifies are slow", and it made chaining look attractive for the wrong reason. The resume lane removed that cost, which is what makes the no-chaining rule cheap to obey.
+It is also why "one cargo at a time" and the staged gate are compatible with the semaphore
+rather than in tension with it. The staging was always meant to be: run clippy, let go, run
+tests.
+
+**Why yielding is free, which is what makes the rule cheap to obey.** Releasing a slot between
+stages used to send a half-finished verify to the back of the queue, so a completed clippy
+result could sit unused while its tests waited through several full drains. That cost was the
+real substance behind "verifies are slow", and it made chaining attractive for a reason that
+had nothing to do with correctness. A resume lane — where the next cargo from the same worktree
+outranks waiters that have not started — removes it, so there is no longer anything to buy by
+chaining.

@@ -2,8 +2,18 @@
 
 **Justifies:** *A `ci-failure` task exports `CARGO_SEM_PRIORITY=1` before the launch; nothing else does.* (Cargo discipline rule 3)
 
-Strict FIFO has one pathological case and this is it: a red `main` gates every verify, but the ci-fix that would clear it draws a ticket like everything else and queues behind builds whose results are already known to be worthless.
+Strict FIFO has one pathological case, and this is it.
 
-Measured — the ci-fix sat 6th while all three slots were held by verifies whose own tasks had since moved to `blocked`, so the single build that would have unblocked ten tasks was the last to run.
+A red main branch gates every verify in the queue: until it is fixed, the builds waiting behind
+it are computing results against a base that cannot land. The fix for that condition draws a
+ticket like any other work, so the one build that would release everything else queues behind
+builds whose results are already worthless.
 
-The restriction to `ci-failure` tasks is the whole safety property: the lane works because almost nothing uses it.
+Fairness is what produces this. The queue is behaving correctly and the outcome is still the
+worst available ordering, because FIFO cannot see that one item is a precondition for the rest.
+
+The lane skips the queue but never the slot: a running build is left to finish, since
+preempting one discards real work to save queue position. And it is restricted to a single
+label because that restriction *is* the safety property — an express lane that anything may
+enter is just a second queue, and a flood of express builds starves the normal lane by
+construction. It works because almost nothing uses it.

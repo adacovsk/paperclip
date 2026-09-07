@@ -1,11 +1,23 @@
 # Why the detached-launch rule is inverted
 
-**Justifies:** *Detached launch — launch the build with its sentinel, then END your run. Do not block-and-poll.* (Cargo discipline rule 2)
+**Justifies:** *Do not revert this to "block and poll"* — the detached launch (Cargo discipline rule 2)
 
-This rule previously said the opposite: *background it, then BLOCK by polling, never end your run mid-build*. That is what the sentinel machinery was built to replace, and leaving it in place cost real work.
+This rule once said the opposite: background the build, then block by polling, and never end
+the run mid-build. The sentinel machinery exists to replace that, and the two cannot coexist.
 
-`cargo-sem.sh` admits only `SLOTS` builds at once (default = physical cores − 1), and a run's hard watchdog starts when the run is **dispatched**, not when it acquires a slot. So a blocking Architect past the slot ceiling spent its entire budget sitting in the ticket queue and was killed by the watchdog with `Process lost` — having compiled nothing. Observed: five verifies unblocked within 8 seconds, all five killed, load ~14 on a 4-core box.
+The reason is a mismatch in when the two clocks start. A run's watchdog begins at dispatch; a
+build's work begins when it acquires a semaphore slot. Past the slot ceiling those are far
+apart, so a blocking run spends its entire budget waiting in the ticket queue and is killed
+having compiled nothing. Under contention this affects every waiter at once, since they are all
+blocked on the same ceiling.
 
-Blocking did not make the build finish sooner; it only guaranteed the *waiting* was what got billed. A detached build survives the death of the run that launched it — that is the entire point of the sentinel + pid-file + callback design.
+Blocking never makes a build finish sooner. It only guarantees that the waiting, rather than
+the compiling, is what gets billed. A detached build outlives the run that launched it, which
+is the whole point of the sentinel, pid file and callback.
 
-**The old rule was not wrong about its own incident, which is why the confirmation half of it survives inline.** It was written against a real class of loss: runs that emitted *"monitors armed, waiting…"* and exited **without** a sentinel, losing the result and looping on ~30s no-op wakes. The fix for that is a *correct launch*, not a blocking one.
+**The old rule was right about its own failure, which is why half of it survives inline.** It
+was written against runs that announced they were waiting and then exited without writing a
+sentinel — losing the result, and leaving nothing to distinguish "still building" from "died",
+so the task looped on no-op wakes. That failure is caused by an incorrect launch, not by
+ending the run. Confirming the chain is genuinely running before exiting addresses it; blocking
+addresses it only by accident, at the cost above.

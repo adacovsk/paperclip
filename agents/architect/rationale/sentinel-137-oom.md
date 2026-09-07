@@ -2,4 +2,18 @@
 
 **Justifies:** *the build was OOM-killed, NOT a build failure* (Procedure — sentinel state machine, `137`)
 
-137 is 128+9: the launch found `signal: 9` in *this run's* log, meaning the OOM killer SIGKILLed rustc mid-compile. cargo reports that as `error: could not compile … (lib test)` and exits **101 — the same code a genuine test failure produces** — with no `error[Exxx]`, no failing test names, no `test result: FAILED`; the only tell is `(signal: 9, SIGKILL: kill)` buried in the `Caused by:` tail. It is remapped here precisely because, read as 101, it sends you hunting a bug that does not exist in your diff (that already cost a cycle on one task). Your code is very likely fine. Do **not** enter the fix loop and do **not** edit Rust. `rm -f "$EXIT"` and relaunch: the `--test` compile of `src/lib.rs` is the heaviest unit in the build, so it dies when several verifies reach that stage at once, and a retry on a quieter box usually just passes.
+An out-of-memory kill and a genuine test failure reach cargo as the same exit code, and cargo
+surfaces both identically. There is no error code, no failing test name, no failure summary —
+the only distinguishing evidence is a signal mention buried in the cause chain.
+
+Read at face value, that sends the run hunting a bug that does not exist in its diff, and the
+budget for real fixes is spent proving the code correct.
+
+The remap exists so the two are different states before anything acts on them. Recognising it
+early also matters because the correct response is the opposite of a fix: the compile that
+dies is the heaviest unit in the build, it dies under memory pressure from concurrent builds
+rather than from anything in the change, and a retry on a quieter machine usually passes
+unmodified.
+
+A termination signal is a different cause again — deliberate rather than resource-driven — and
+conflating the two loses that distinction.

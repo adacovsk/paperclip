@@ -2,4 +2,15 @@
 
 **Justifies:** *the build was deliberately reaped; the task could not consume the result* (Procedure — sentinel state machine, `100`)
 
-- **Why this code exists at all.** The reap writes it first precisely so the wrapper's own `_sentinel` trap — which only fires when the file is absent — cannot overwrite it with `99`. Without that ordering every reap produced `99`, `99` means relaunch, and the next wake started the build again: the reap would cost a full build and free nothing. `137` has the same failure shape via the launch block's `signal: (9|15)` remap. If you see `100`, the slot was freed on purpose; re-taking it needs a reason.
+The wrapper's own signal trap writes its sentinel only when none is present. Writing the reap
+code first therefore makes that trap a no-op, and the deliberate value survives the signal.
+
+Reversing the order defeats the reap entirely. The trap wins the race and records an
+interruption, an interruption means relaunch, and the next wake starts the very build that was
+just stopped — so the reap costs a full compile and frees nothing. The remap for
+resource-driven kills has the same shape and the same outcome.
+
+This is what makes a reap distinguishable from every other way a build can stop. The other
+codes describe things that happened to a build; this one records a decision someone made about
+whether its result was still wanted. A slot freed on purpose should not be re-taken without a
+reason, and only a code that survives the kill can say so.

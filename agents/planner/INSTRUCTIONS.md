@@ -129,10 +129,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    items/run". A cap is the wrong shape: it bounds *supply* while demand is set
    by how fast the pipeline consumes, so whenever consumption exceeds the cap the
    only way to keep up is to fire Planner more often — which is what happened.
-   Measured on 2026-08-06: roadmap-fed task creation ran **~10/day** against a cap
-   of 3, and Planner was woken **five** times in nineteen hours (four branches,
-   13 assigned tasks) with restock demands reading "restock #3 today", "drained to
-   zero", "drained to zero again". Planner is also the most expensive agent in the
+   Consumption can run several times the per-fire cap, so the queue drains faster than any single restock refills it. The demand signal then repeats within hours — drained, drained again — and each repeat wakes another fire, each of which mints another branch and another set of assigned tasks. Planner is also the most expensive agent in the
    fleet (~54% of pipeline spend), so a cap that forces extra fires is costly in
    the most direct way. Restock **to a depth** instead and the wake rate falls out
    of it.

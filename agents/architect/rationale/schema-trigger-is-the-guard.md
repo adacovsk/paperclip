@@ -2,4 +2,20 @@
 
 **Justifies:** *Do not re-narrow this trigger to a path prefix* (Procedure step 6.5)
 
-**Why the trigger is the script and not a path prefix.** This step used to fire only on `git diff --name-only main..HEAD` containing `src/resources/`. That is a strict *subset* of what the CI guard checks: the guard derives its roots from `src/bin/generate_schemas.rs`'s imports and then follows `use` edges two hops out, so it also claims files under `src/components/`, `src/systems/` and elsewhere. Two PRs stalled red on exactly that gap on 2026-08-02 (the offending files were under `src/components/` and `src/systems/`, not `src/resources/` at all) — the Architect correctly followed the old rule, saw no `src/resources/` change, skipped, and CI failed anyway. Both PRs were otherwise green, so this was the only thing blocking their merge. Running the guard removes the second, hand-maintained copy of "what counts as schema-relevant"; there is now one definition and CI owns it. **Do not re-narrow this trigger to a path prefix** — the prefix is what silently drifted out from under the guard.
+"Which files can move a generated schema?" has exactly one correct answer, and it is derived,
+not enumerated. The guard computes it by starting from the generator's own imports and
+following use-edges outward, so the set includes anything transitively reachable from a schema
+root.
+
+A path prefix is a hand-maintained approximation of that set, and always a strict subset of it.
+Types reachable from the generator live under several directories, so a prefix covering one of
+them misses the rest.
+
+The failure mode is the expensive kind. A change under an uncovered path skips regeneration,
+the branch goes green locally, and CI rejects it for drift the diff never suggested — with the
+work otherwise finished, so this is the only thing standing between it and a merge.
+
+The deeper problem is having two definitions of the same thing. The prefix drifts out from
+under the guard silently, because nothing compares them. Running the guard itself removes the
+second definition entirely: there is one answer, and the check that enforces it is the check
+that computes it.

@@ -2,5 +2,16 @@
 
 **Justifies:** *Hold on a contended edit surface.* (Run step 5)
 
-This is not hypothetical scheduling theory. Seven branches went unmergeable at once, and **six of them were the same kind of work** — adding a usage-limit/frequency gate to one more `AbilityMechanic` variant — so they necessarily all edited the same two `src/systems/` files. Main then absorbed two more commits on that same surface and every in-flight branch broke together. The pipeline read that as six independent "needs operator merge" parks, billing six hand-merges for one scheduling decision.
-**Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges.
+Two tasks editing the same file do not finish sooner than the same two run in sequence. They
+finish later, because whichever lands second has to be merged by hand — so parallelism that
+looks free is really borrowing the operator's time and paying it back with interest.
+
+The failure compounds when several branches share one surface. A single commit landing there
+breaks all of them at once, and each break is reported independently. What was one scheduling
+decision arrives as several separate requests for a hand-merge, each of which resolves the same
+region in isolation and can resolve it differently.
+
+**Same-shaped work is the tell, and it is easy to miss** — the bullets read as independent
+because each names a different entry. If two items differ only in *which* variant or record
+they handle, they touch the same code by construction, and treating them as parallel work is
+what creates the pile-up. Promote one, and promote the next when the first has merged.
