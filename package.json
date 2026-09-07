@@ -25,6 +25,8 @@
     "release:rollback": "./scripts/rollback-latest.sh",
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
     "check:agent-git": "node scripts/check-agent-git-predicates.mjs",
+    "check:agent-privacy": "node scripts/check-agent-privacy.mjs",
+    "check:agent-rationale": "node scripts/check-agent-rationale.mjs",
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",

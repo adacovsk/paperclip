@@ -56,6 +56,11 @@ Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite,
 6. **Modes.** `local_trusted` (loopback, no login) | `authenticated/private` (LAN/Tailscale) | `authenticated/public` (internet).
 7. **No lockfile commits.** CI owns `pnpm-lock.yaml`.
 8. **Never PR onto `paperclipai/paperclip` (upstream).** This fork (`adacovsk/paperclip`, remote `origin`) has diverged from upstream — hundreds of commits each way — so upstream is a *different codebase*, not a merge target. All work integrates into `adacovsk/paperclip:master` (what the local instance and every operator worktree track). **Always pass `--repo adacovsk/paperclip` to every `gh` command** (`pr create`/`merge`/`view`/`repo view`). Bare `gh` resolves this dir to the parent `paperclipai/paperclip` and will *silently open the PR against upstream* (it does not reliably fail — it succeeds against the wrong repo, then shows as CONFLICTING because upstream rewrote the files). If you ever find a PR of ours open on `paperclipai/*`, it was mis-targeted — close it and recreate with `--repo adacovsk/paperclip`. Default branch is `master`.
+9. **This repo is PUBLIC; the project it runs against is PRIVATE. Never write private references into `agents/**`.** No tracker ids (`AA-####`), no PR/issue numbers from the downstream repo, no repo name, no module or guard filenames from its tree. `agents/` ships in the npm package (there is no `files` field and no `.npmignore`), so anything written there is published.
+
+   **Keep the lesson, drop the pointer.** The incident narration is load-bearing — it is what stops a rule being re-litigated or tidied away — so do not delete it to comply. Rewrite it without the identifiers: *"one task held a build slot 1h40m while ten verifies queued behind three slots"* carries the entire argument. The version naming the task, the PR and the source file adds nothing a public reader can act on and leaks a private tree.
+
+   Enforced by `pnpm check:agent-privacy`, which fails on the identifier classes and on a list of private names. A genuinely generic token can opt out per line with `<!-- privacy-ok: why -->`; extend `PRIVATE_TERMS` when the private tree grows a new name worth catching. Run it before pushing any `agents/**` edit — prose alone would not have caught the 144 references the guard found on its first run.
 
 ## Done When
 
