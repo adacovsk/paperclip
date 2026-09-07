@@ -157,6 +157,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Agent doc guards
+        # Privacy first: this repo is public and `agents/**` ships in the npm
+        # package, so a leaked private reference is published, not just pushed.
+        run: |
+          pnpm check:agent-privacy
+          pnpm check:agent-rationale
+
       - name: Typecheck
         run: pnpm -r typecheck
 
