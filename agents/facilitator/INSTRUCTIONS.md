@@ -85,7 +85,7 @@ sat stranded 18 days and were found only by walking `git worktree list` by hand.
 | 5 | No linked task and no PR, idle >14d | Mention in report. Do NOT delete. |
 
 **Resolving the "linked task" for a non-`task/` branch.** `planner/*`, `op/*` and `claude/*`
-carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/AA-1234` returns
+carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/<task-id>` returns
 nothing and every such branch falls to case 5. Resolve them through the PR instead:
 `gh pr list --head <branch> --state all --limit 1 --json number,state,mergedAt` — a merged PR is
 case 1's evidence even when the tip is not an ancestor (squash merges), an open PR is case 4, and

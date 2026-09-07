@@ -29,16 +29,19 @@ const PATTERNS = [
   [/\brust-bevy-rpg\b|\bbevy-rpg\b/g, "private repo name"],
 ];
 
-// Literal names from the private tree. Generic paths the instructions genuinely
-// need (`src/`, `tests/*.rs`, `assets/schemas/`) are deliberately NOT here — the
-// rules do not work without them and they name nothing.
+// Literal names from the private tree that reveal what it IS — its domain, its
+// systems, its content model.
+//
+// The line here is operational necessity, not caution. Names the instructions
+// must contain to work — `docs/ROADMAP.md`, `scripts/check_*.py`,
+// `generate_schemas`, `src/`, `tests/*.rs`, `assets/schemas/` — are deliberately
+// absent: an agent cannot follow a rule about a file it is forbidden to name,
+// and those names describe a build, not a product. What is listed is the set
+// that tells a reader what the private project does.
 const PRIVATE_TERMS = [
   "core_mechanics.rs", "combat_systems.rs", "active_modifiers.rs",
   "damage_system.rs", "terrain_system.rs", "transitions.rs",
-  "generate_schemas", "check_roadmap_writer.py", "check_roadmap.py",
-  "check_schema_regen.py", "check_condition_names.py",
-  "roadmap_section_baseline.txt", "spawn_campaign_characters",
-  "docs/ROADMAP.md", "docs/roadmap/",
+  "spawn_campaign_characters", "check_condition_names.py",
 ];
 
 // A line may opt out with a trailing `<!-- privacy-ok: reason -->` when the token

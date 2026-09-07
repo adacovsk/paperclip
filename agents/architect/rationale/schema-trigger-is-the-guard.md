@@ -1,0 +1,5 @@
+# Why the schema trigger is the guard script, not a path prefix
+
+**Justifies:** *Do not re-narrow this trigger to a path prefix* (Procedure step 6.5)
+
+**Why the trigger is the script and not a path prefix.** This step used to fire only on `git diff --name-only main..HEAD` containing `src/resources/`. That is a strict *subset* of what the CI guard checks: the guard derives its roots from `src/bin/generate_schemas.rs`'s imports and then follows `use` edges two hops out, so it also claims files under `src/components/`, `src/systems/` and elsewhere. Two PRs stalled red on exactly that gap on 2026-08-02 (the offending files were under `src/components/` and `src/systems/`, not `src/resources/` at all) — the Architect correctly followed the old rule, saw no `src/resources/` change, skipped, and CI failed anyway. Both PRs were otherwise green, so this was the only thing blocking their merge. Running the guard removes the second, hand-maintained copy of "what counts as schema-relevant"; there is now one definition and CI owns it. **Do not re-narrow this trigger to a path prefix** — the prefix is what silently drifted out from under the guard.
