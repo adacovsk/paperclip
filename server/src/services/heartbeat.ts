@@ -112,29 +112,58 @@ const CHAIN_WAKE_MIN_INTERVAL_MS = Math.max(
 );
 
 /**
- * Chain-wake candidate guard (AA-2966): exclude a task that is `in_review`
- * behind a live child stage owned by a *different* agent.
+ * Chain-wake candidate guard: an `in_review` task is selectable only while a
+ * non-terminal child stage of it is assigned to *this* agent.
  *
- * The parent is waiting on that child by definition, so re-waking the parent's
- * owner cannot advance anything — the agent re-reads the branch, finds its own
- * work already committed, writes a no-op, and exits. One Worker task absorbed
- * 28 such wakes in three days (its own run log named it the "seventeenth
- * identical dispatch"), and 147 of 200 Worker runs in that window were sub-40s
- * no-ops.
+ * `in_review` means this agent's own stage is finished — the branch is
+ * committed and the next stage (Review, Verify) or a human merge owns the task.
+ * Re-waking its owner cannot advance it: the agent re-reads the branch, finds
+ * its work already committed, writes a no-op, and exits. `in_review` also sorts
+ * *ahead* of `todo` in the candidate ordering below, so such a task is picked in
+ * preference to real queued work, and the cooldown only paces the re-ask rather
+ * than ending it.
  *
- * The two older guards cannot see this class: `ne(issues.id, issueId)` only
- * blocks re-selecting the task just processed, and the no-progress guard only
- * looks at the *triggering* run, which is often real work. The child's own
- * `subtask.completed` callback is what legitimately re-wakes this parent.
+ * Two arms, from two measurements:
+ *
+ *  - AA-2966 — a live child owned by a *different* agent. The parent is waiting
+ *    on that child by definition. One Worker task absorbed 28 such wakes in
+ *    three days (its own run log named it the "seventeenth identical
+ *    dispatch"), and 147 of 200 Worker runs in that window were sub-40s no-ops.
+ *
+ *  - AA-4004 — *no* open child at all, which the first arm cannot see: it
+ *    catches the case where someone else is working and misses the case where
+ *    nobody is. Measured over 200 runs, 46 of 75 Worker runs were sub-40s
+ *    no-ops; 23 were `queue.chain`, and every top offender was `in_review` with
+ *    no open child. One of them (AA-5851) had already *merged* and was still
+ *    being chain-woken, because its status was never PATCHed off `in_review`.
+ *
+ * Keeping the own-child case selectable is what preserves re-dispatch for the
+ * no-skill Architect that commits without landing (see the chain-wake comment
+ * below): that task carries its own non-terminal verify subtask, so it stays a
+ * candidate while a foreign-owned or childless one does not.
+ *
+ * The other guards cannot cover either arm: `ne(issues.id, issueId)` only
+ * blocks re-selecting the task just processed, and the no-progress guard needs
+ * `num_turns <= 1`, while a Worker no-op checks out the branch and runs git
+ * before reporting, so it always clears that bar. A child's own
+ * `subtask.completed` callback is what legitimately re-wakes these parents.
  */
-export function notWaitingOnForeignChildStage(agentId: string) {
+export function inReviewOnlyWhenOwnStageIsLive(agentId: string) {
   return sql`NOT (
     ${issues.status} = 'in_review'
-    AND EXISTS (
-      SELECT 1 FROM ${issues} AS child
-      WHERE child.parent_id = ${issues.id}
-        AND child.status NOT IN ('done', 'cancelled')
-        AND child.assignee_agent_id IS DISTINCT FROM ${agentId}
+    AND (
+      EXISTS (
+        SELECT 1 FROM ${issues} AS child
+        WHERE child.parent_id = ${issues.id}
+          AND child.status NOT IN ('done', 'cancelled')
+          AND child.assignee_agent_id IS DISTINCT FROM ${agentId}
+      )
+      OR NOT EXISTS (
+        SELECT 1 FROM ${issues} AS own_child
+        WHERE own_child.parent_id = ${issues.id}
+          AND own_child.status NOT IN ('done', 'cancelled')
+          AND own_child.assignee_agent_id = ${agentId}
+      )
     )
   )`;
 }
@@ -3379,7 +3408,7 @@ export function heartbeatService(db: Db) {
                     eq(issues.assigneeAgentId, agent.id),
                     ne(issues.id, issueId),
                     inArray(issues.status, ["in_progress", "in_review", "todo"]),
-                    notWaitingOnForeignChildStage(agent.id),
+                    inReviewOnlyWhenOwnStageIsLive(agent.id),
                   ),
                 )
                 .orderBy(
