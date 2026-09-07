@@ -14,20 +14,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
+    # What counts as a reason for the lockfile to move. Declared once because two
+    # steps below ask the same question, and a second copy would drift.
+    env:
+      MANIFEST_PATTERN: '(^|/)package\.json$|^pnpm-workspace\.yaml$|^\.npmrc$|^pnpmfile\.(cjs|js|mjs)$'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # Block a lockfile edit that has NO MANIFEST REASON — that is the change
+      # this rule exists to stop: someone hand-resolving a 20k-line generated
+      # file. A lockfile moving *alongside* the manifest that made it move is
+      # the correct shape of a dependency bump and is allowed.
+      #
+      # This used to reject any diff containing pnpm-lock.yaml, which made every
+      # dependency change unmergeable by anyone — not just Dependabot. Both
+      # directions failed: keep the lockfile and this step rejected it; drop the
+      # lockfile and `verify`/`e2e` rejected it, because both install with
+      # --frozen-lockfile and pnpm errors ERR_PNPM_OUTDATED_LOCKFILE when the
+      # lockfile and manifests disagree. Five Dependabot PRs sat on that
+      # deadlock, and the two real dependency bumps in master's history would
+      # both fail this step as it was written — they merged only because the
+      # fork's Actions were not running at the time.
+      #
+      # Nothing here gets weaker. A lockfile-only edit still fails, and a
+      # lockfile mangled to match a manifest still fails downstream, because
+      # --frozen-lockfile checks exactly that. The `chore/refresh-lockfile`
+      # branch stays exempt: refresh-lockfile.yml writes it, and it is
+      # lockfile-only by design.
       - name: Block manual lockfile edits
         if: github.head_ref != 'chore/refresh-lockfile'
         run: |
           changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
-          if printf '%s\n' "$changed" | grep -qx 'pnpm-lock.yaml'; then
-            echo "Do not commit pnpm-lock.yaml in pull requests. CI owns lockfile updates."
-            exit 1
+
+          if ! printf '%s\n' "$changed" | grep -qx 'pnpm-lock.yaml'; then
+            exit 0
           fi
+
+          if printf '%s\n' "$changed" | grep -Eq "$MANIFEST_PATTERN"; then
+            echo "pnpm-lock.yaml moved alongside a manifest change. Allowed."
+            exit 0
+          fi
+
+          echo "::error::pnpm-lock.yaml changed with no accompanying manifest change."
+          echo "Do not hand-edit the lockfile. CI owns lockfile-only updates:"
+          echo "  gh workflow run refresh-lockfile.yml --repo adacovsk/paperclip"
+          exit 1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -83,8 +118,7 @@ jobs:
       - name: Validate dependency resolution when manifests change
         run: |
           changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
-          manifest_pattern='(^|/)package\.json$|^pnpm-workspace\.yaml$|^\.npmrc$|^pnpmfile\.(cjs|js|mjs)$'
-          if printf '%s\n' "$changed" | grep -Eq "$manifest_pattern"; then
+          if printf '%s\n' "$changed" | grep -Eq "$MANIFEST_PATTERN"; then
             pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile
           fi
 
