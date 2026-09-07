@@ -52,7 +52,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
 
     The `else` is what gives you a fresh branch exactly when the last one landed, so the name is stable forever and the content never trails `main`. `merge`, not `rebase`: replaying a roadmap edit fails where the merge succeeds, and a failed replay strands the fire, not the file.
 
-    **Why this is a rule and not a preference.** Minting a name per fire produced sixteen live `planner/*` branches — five in one day — two of which carried overlapping restocks committed hours apart, and one of which (`planner/prune-0826e`) sat 376 commits behind `main` with every one of its edits already landed by a later fire that had forked separately. A second writer branch collides on the `## Active fronts` index exactly as a task branch does, with the added cost that neither side is wrong, so there is nothing to discard. Step 11 already tells you to resume an interrupted fire "from the existing branch instead of silently redoing the work onto a conflicting parallel branch" — this is the branch it means.
+    **Why this is a rule and not a preference.** A name minted per fire produces parallel writer branches, and two of them collide on the index exactly as a task branch does — neither side is wrong, so the conflict has no correct resolution after the fact. → [the sixteen branches this produced](rationale/one-writer-branch.md)
 
     `scripts/check_roadmap_writer.py` enforces it at pre-push: a `planner/*` branch other than `planner/roadmap` that touches `docs/ROADMAP.md` or `docs/roadmap/` fails. Left the shared checkout on your branch and a red appears somewhere unrelated? That is the same defect from the other end — return the checkout to `main` when you are done.
 

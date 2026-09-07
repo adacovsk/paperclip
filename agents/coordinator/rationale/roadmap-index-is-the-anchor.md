@@ -1,0 +1,5 @@
+# Why the front index is the scan anchor
+
+**Justifies:** *Why this is the anchor and the phase headers are not.* (Roadmap intake)
+
+**Why this is the anchor and the phase headers are not.** This step used to say "start at the first `## Phase` header marked \"Active\"". No phase heading has ever carried that marker, and the phase bodies are `###` sections of prose — the top-level `- ` bullets this step matches barely exist down there. Everything the Planner writes *for promotion* is in the `## Active fronts` index at the top of the file: one top-level bullet per front, each `**§N.NNN**` prefixed, each carrying its own band label, each pointing at the section that specs it. Anchoring below that index meant a cursor that scanned past the entire supply and never came back — measured on 2026-09-01, `check_roadmap.py` reported **77 fronts indexed, all free**, while intake promoted **zero** across consecutive fires and the ready queue drained to one task. That is not a supply shortage and escalating it as one wastes a Planner fire.
