@@ -423,6 +423,23 @@ For each parent `{task-id}`:
    comment. (Seen exactly this way: a real `transitions.rs` conflict that
    sat ~10h before a human hand-merged it.)
 
+   **Then reap the build**: `agents/architect/reap-verify.sh {task-id} unlandable`.
+   Blocking the subtask does not stop the detached cargo the Architect already
+   launched — it keeps its `cargo-sem.sh` slot until it finishes on its own.
+   Measured: one such build held a slot **1h40m** while 10 landable verifies
+   queued behind 3 slots, and on another fire three at once were compiling
+   branches whose PRs were already open while the ci-fix for a red `main` waited.
+
+   **Reap here because THIS GATE JUST PROVED the branch cannot merge — not
+   because the status is now `blocked`.** That distinction is the whole safety
+   argument, and it is not pedantry: `blocked` on its own does *not* imply
+   unlandable. Measured on live data, two blocked tasks holding builds both
+   merged **clean**, while the one branch that genuinely conflicted belonged to
+   an `in_review` task that wanted its result. `reap-verify.sh` re-runs
+   `merge-tree` itself and refuses when the branch merges, so passing
+   `unlandable` from anywhere that has not proven it is rejected rather than
+   obeyed. See §Reaping an unwanted verify build.
+
    **Classify the conflicting paths before you decide who owns the merge.**
    The raw `merge-tree` path list overstates the work in two ways, and both
    have parked branches on the operator that a Worker could have rebased in
@@ -666,37 +683,88 @@ merged. Observed on AA-2713: a chain held cargo-slot-2 against a deleted
 worktree for ~67 minutes of rustc CPU before anything reaped it.
 
 ```sh
-W="$PWD/.paperclip/worktrees/{task-id}"
-# 1. Enumerate ACTUAL slot holders, then keep the ones living in this worktree.
-for pid in $(fuser /tmp/cargo-slot-*.lock 2>/dev/null); do
-  cwd=$(readlink /proc/"$pid"/cwd 2>/dev/null) || continue
-  case "${cwd% (deleted)}" in "$W"|"$W"/*)
-    kill -TERM "-$(ps -o pgid= -p "$pid" | tr -d ' ')" 2>/dev/null ;;   # whole group
-  esac
-done
-# 2. Only then remove the directory.
+agents/architect/reap-verify.sh {task-id} pr-merged   # in $PAPERCLIP_REPO
 git worktree remove .paperclip/worktrees/{task-id}
 git branch -D task/{task-id}        # local branch
 # remote branch is auto-deleted by GitHub on squash-merge
 ```
 
-**Do not substitute `ps aux | grep <worktree-path>`** — it reports a false
-clean, twice over. It matches on *cmdline*: `cargo-sem.sh` embeds the path, but
-its `cargo` / `clippy-driver` / `rustc` descendants inherit the directory via
-`cd` and carry relative paths, so they never match. And once the directory is
-gone the kernel marks the cwd `(deleted)`, so even a cwd grep on the live path
-stops matching. The slot lock plus `/proc` is the probe that actually sees them;
-`kill` targets the process *group* because the `.pid` sentinel names only the
-wrapper, not the slot-holding descendants.
+The reap is `reap-verify.sh` and not an inline loop **because it is needed at
+more than one exit** — see §Reaping an unwanted verify build below, which is the
+single place the rule and its safety argument live. Run it before
+`git worktree remove`; removing the directory does not stop a live cargo.
 
-**Why reaping is safe here specifically.** A live wrapper whose dispatching run
-has died is **not** an orphan — that is the normal decoupled-land pattern, where
-the run hits its 2h watchdog while the detached build legitimately continues
-(observed alive at 3h09m) and still writes its `.exit` sentinel. Killing on
-pid-liveness alone destroys live work. The real test is whether the *task* still
-needs a verify result, and at this point in the procedure it provably does not:
-the PR has already merged. Do not lift this block to anywhere that condition
-does not hold.
+## Reaping an unwanted verify build
+
+`agents/architect/reap-verify.sh <task-id> <reason>` stops a detached build and
+writes sentinel `100` so the Architect does not relaunch it. Reasons:
+`pr-merged`, `verify-done`, `parent-cancelled`, `worktree-gone`, `unlandable`.
+
+**The test is whether the TASK STILL WANTS A RESULT — never process liveness.**
+A live wrapper whose dispatching run has died is **not** an orphan: that is the
+normal decoupled-land pattern, where the run hits its 2h watchdog while the
+detached build legitimately continues (observed alive at 3h09m) and still writes
+its sentinel. Killing on pid-liveness alone destroys live work. Each reason below
+is admitted only because the task provably cannot consume the result:
+
+| Reason | Why the result is provably unwanted |
+|---|---|
+| `pr-merged` | The PR merged. Whatever the build concludes changes nothing. |
+| `verify-done` | The verify subtask is `done`/`cancelled` — the stage that would read the sentinel has already finished. Measured worse than waste: the dispatcher starts a *fresh* build while the old one still holds its slot. |
+| `parent-cancelled` | Abandoned; nothing will read the result. |
+| `worktree-gone` | The tree being compiled no longer exists. The build survives with its cwd marked `(deleted)`, which is why a `ps` grep on the live path reports a false clean. |
+| `unlandable` | The branch cannot merge into current `origin/main`, so no result it produces can land. **Self-checked** — see below. |
+
+**`blocked` is NOT a reason, and this is the correction to make.** The obvious
+rule — "blocked on conflict, so a rebase is needed, so the build is invalid
+anyway" — was measured **false**. Two `blocked` tasks holding live builds
+(AA-4533, AA-6971) both merged **clean** into `origin/main`, while a branch that
+genuinely conflicted (AA-6856) belonged to an `in_review` task that legitimately
+wanted its result. A block is reversible without a rebase, and the freshness gate
+already allows landing on a slightly stale base — so a blocked task's build is
+*deferred*, not worthless. `reap-verify.sh` therefore re-proves `unlandable` with
+`git merge-tree --write-tree` on every invocation and **refuses** when the branch
+merges clean, rather than trusting a status. Never pass `unlandable` to make a
+blocked build go away; if the branch merges, leave it running.
+
+That leaves the real cost of a long-blocked build — it holds a slot or a FIFO
+position ahead of work that can land today — as a **scheduling** problem, not a
+correctness one. Do not solve it by killing the build. It belongs to the verify
+queue's priority ordering (AA-6129).
+
+**Why the ordering inside the script matters.** It writes `100` *before*
+signalling. The wrapper's own trap writes `99` only when the sentinel is absent,
+and `99` means "inconclusive — relaunch" to the Architect. Reap without the
+pre-write and the next wake restarts the build you just killed: the reap costs a
+build and frees nothing.
+
+**Do not substitute `ps aux | grep <worktree-path>`** — it reports a false clean,
+twice over. It matches on *cmdline*: `cargo-sem.sh` embeds the path, but its
+`cargo` / `clippy-driver` / `rustc` descendants inherit the directory via `cd`
+and carry relative paths, so they never match. And once the directory is gone the
+kernel marks the cwd `(deleted)`, so even a cwd grep on the live path stops
+matching. The script prefers the transient scope (`systemctl --user stop
+verifyrun-<id>.scope`), which is an exact atomic handle on the whole cgroup, and
+falls back to the slot-lock + `/proc` probe with a process-*group* kill for
+builds launched without a user bus.
+
+**Call it at every exit where the result stops being wanted** — this list is the
+one to extend when a new exit appears, rather than improvising a reap in place:
+
+- §Worktree teardown, on merge — `pr-merged`.
+- §Landing sweep step 3, when the clean-merge gate has *proven* a conflict and
+  you park the task for an operator hand-merge — `unlandable`.
+- Whenever you close a verify subtask `done` or `cancelled` — `verify-done`. Its
+  build has nothing left to compute, and leaving it running is measurably worse
+  than idle: the dispatcher launches a *fresh* build for the next attempt while
+  the old one still holds its slot.
+- §Stale worktree GC, for a worktree whose task no longer exists —
+  `worktree-gone`, before `git worktree remove`.
+
+`reap-verify.sh --list` shows every live build, marking those whose directory is
+not a `task/AA-*` worktree as **OFF-BOOKS**: an operator worktree or the main
+checkout consumes the same slots but has no task, so no reason can be proven
+about it and this script will not touch it.
 
 If `git worktree remove` complains about uncommitted changes, that means
 an agent left state behind — comment on the task and skip teardown
