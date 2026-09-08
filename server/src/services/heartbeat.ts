@@ -32,6 +32,7 @@ import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } fr
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { shouldWakeNextMover } from "./stage-completion-wake.js";
+import { isSweepWakeReason, wakeCoalesceScope } from "./sweep-wake-scope.js";
 import {
   buildWorkspaceReadyComment,
   cleanupExecutionWorkspaceArtifacts,
@@ -3893,7 +3894,15 @@ export function heartbeatService(db: Db) {
       return null;
     }
 
+    const isSweepWake = isSweepWakeReason(reason) ||
+      isSweepWakeReason(readNonEmptyString(enrichedContextSnapshot.wakeReason));
+
+    // A sweep wake is not a dispatch onto `issueId` (see sweep-wake-scope.ts), so
+    // it must not take the per-issue execution-lock branch: that branch queues a
+    // run per issue, which is exactly what defeats coalescing when every stage
+    // exit in the fleet lands on the Coordinator under a different pivot task.
     const bypassIssueExecutionLock =
+      isSweepWake ||
       reason === "issue_comment_mentioned" ||
       readNonEmptyString(enrichedContextSnapshot.wakeReason) === "issue_comment_mentioned";
 
@@ -4186,18 +4195,29 @@ export function heartbeatService(db: Db) {
       .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])))
       .orderBy(desc(heartbeatRuns.createdAt));
 
+    const coalesceScope = wakeCoalesceScope(reason, taskKey);
+    const runCoalesceScope = (candidate: typeof heartbeatRuns.$inferSelect) =>
+      wakeCoalesceScope(
+        readNonEmptyString(parseObject(candidate.contextSnapshot).wakeReason),
+        runTaskKey(candidate),
+      );
     const sameScopeQueuedRun = activeRuns.find(
-      (candidate) => candidate.status === "queued" && isSameTaskScope(runTaskKey(candidate), taskKey),
+      (candidate) => candidate.status === "queued" && isSameTaskScope(runCoalesceScope(candidate), coalesceScope),
     );
     const sameScopeRunningRun = activeRuns.find(
-      (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
+      (candidate) => candidate.status === "running" && isSameTaskScope(runCoalesceScope(candidate), coalesceScope),
     );
-    const shouldQueueFollowupForCommentWake =
-      Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;
+    // A run already in flight may have read the board before this wake arrived,
+    // so merging into it can swallow the signal outright. Queue exactly one
+    // follow-up instead: it absorbs every later wake as `sameScopeQueuedRun`,
+    // which bounds the agent to one running plus one pending sweep however fast
+    // completions arrive, while never dropping one.
+    const shouldQueueFollowupRun =
+      (Boolean(wakeCommentId) || isSweepWake) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;
 
     const coalescedTargetRun =
       sameScopeQueuedRun ??
-      (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
+      (shouldQueueFollowupRun ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(
