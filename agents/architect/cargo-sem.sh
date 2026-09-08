@@ -52,7 +52,8 @@
 #   SLOTS = physical cores - 1  (reserve one for OS/sccache/orchestration)
 #   JOBS  = logical cores / SLOTS
 #   CGU   = 16, declared       (cargo's non-incremental default; floor CGU_FLOOR)
-# each floored as noted. On this 4-core/8-thread box: 2 slots x 2 jobs x 16 units.
+# each floored as noted. On this 4-core/8-thread box the memory ceiling binds
+# first, so it is 1 slot x 2 jobs x 16 units — the CPU derivation would allow 3.
 # CGU is not part of the thread product — see the JOBS x CGU block for why.
 # MEMORY IS ALSO A DERIVED CEILING, not just a warning in this header. SLOTS is
 # additionally capped by (MemTotal x MEMPCT) / MEM_PER_BUILD — two declared
@@ -347,13 +348,32 @@ RSSWIN="${CARGO_SEM_RSS_WINDOW:-5}"
 [ "$RSSWIN" -ge 1 ] 2>/dev/null || RSSWIN=5
 MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 [ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
-# Declared worst-case peak RSS of one build, in kB. 8 GiB: the workspace-crate
-# rustc has been observed between 6 and 11.5 GiB depending on command, and this
-# sits above the common case without letting the test-harness outlier serialize
-# the queue. On this box that yields (31.06 GiB x 70%) / 8 GiB = 2 slots.
+# Declared worst-case peak RSS of one build, in kB. 11 GiB, from recorded peaks:
+# 10.95 GiB and 10.06 GiB on two consecutive verifies, and 8.1-8.5 GiB as the
+# routine cost of the `test --lib` stage ($RSSF holds the running record). On
+# this box that yields (31.06 GiB x 70%) / 11 GiB = 1 slot; JOBS is unchanged at
+# 2, because the sqrt split below returns 2 for a per-slot budget of both 4 and
+# 8 threads.
+#
+# This was 8 GiB, which sat in the GAP of a bimodal distribution rather than
+# above it: `clippy` peaks ~3.9 GiB and the `test --lib` link ~8.1-11 GiB, so
+# every heavy build ended by warning that the constant underneath it was wrong,
+# while the memgate went on admitting two of them against a budget that fits
+# one. A declaration that the thing it governs contradicts on every run is not a
+# ceiling, it is a comment.
+#
+# WORST CASE MEANS WORST CASE, and this number is not the ceiling of rustc's
+# appetite — it is the ceiling of what this box's cores let rustc reach. A
+# single rustc has been observed at ~20 GiB on a cloud-overflow VM, which runs
+# the same crate with no semaphore and no CGU override on more cores: more LLVM
+# modules resident at once inside one process. Nothing here bounds that (the VM
+# lane does not call this script at all — see docs/ARCHITECT_CLOUD_OVERFLOW.md),
+# but it is the reason not to read the local record as "big builds cost 8 GiB".
+# Given cores, the same compile will take four times that.
+#
 # Raise it only with recorded peaks in hand — $RSSF is exactly that record.
-MEM_PER_BUILD="${CARGO_SEM_MEM_PER_BUILD:-8388608}"
-[ "$MEM_PER_BUILD" -ge 1 ] 2>/dev/null || MEM_PER_BUILD=8388608
+MEM_PER_BUILD="${CARGO_SEM_MEM_PER_BUILD:-11534336}"
+[ "$MEM_PER_BUILD" -ge 1 ] 2>/dev/null || MEM_PER_BUILD=11534336
 # Lowest codegen-unit count any stage may be reduced to. 8: measured, CGU=1 cost
 # 2x the wall clock and 4.3 GiB more peak RSS than CGU=16 on this crate, so the
 # low end of this knob is where builds get slow enough to be OOM-killed.
