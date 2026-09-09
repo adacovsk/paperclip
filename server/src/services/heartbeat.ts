@@ -3804,6 +3804,36 @@ export function heartbeatService(db: Db) {
 
     const agent = await getAgent(agentId);
     if (!agent) throw notFound("Agent not found");
+
+    // A caller that knows only the human identifier ("AA-7311") can bind its wake
+    // with it. The detached verify wrapper is the case this exists for: it runs
+    // in a transient systemd scope with none of the issue env, and its own task
+    // identifier is the one id it can carry as a literal. Without a binding the
+    // wake gets an issueId filled in from whatever task the agent's resumed
+    // session was last on, so every callback lands on the same task no matter
+    // which build finished — measured as seven green verifies whose results were
+    // never read. Resolution is scoped to the agent's own company.
+    if (!issueId) {
+      const identifier = readNonEmptyString(payload?.["issueIdentifier"])
+        ?? readNonEmptyString(enrichedContextSnapshot["issueIdentifier"]);
+      if (identifier) {
+        const resolved = await db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(and(eq(issues.companyId, agent.companyId), eq(issues.identifier, identifier)))
+          .limit(1)
+          .then((rows) => rows[0]?.id ?? null);
+        if (resolved) {
+          issueId = resolved;
+          enrichedContextSnapshot.issueId = resolved;
+          if (!readNonEmptyString(enrichedContextSnapshot.taskId)) {
+            enrichedContextSnapshot.taskId = resolved;
+          }
+        } else {
+          logger.warn({ agentId, identifier }, "wake carried an unresolvable issueIdentifier");
+        }
+      }
+    }
     const explicitResumeSession = await resolveExplicitResumeSessionOverride(agent, payload, taskKey);
     if (explicitResumeSession) {
       enrichedContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
