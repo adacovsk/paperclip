@@ -23,7 +23,7 @@ Per non-paused agent: `GET /issues?assigneeAgentId={id}&status=todo,in_progress`
 
 The priority step — surface and clear blockers before anything else. `GET /issues?status=blocked` (and scan `in_progress` whose latest comment names an unmet dependency, missing input, or "waiting on …"). For each:
 - Identify the blocker: upstream task not `done`, missing PR/branch, failed Architect verify, permission/skill gap, ambiguous spec.
-- If the blocker is already resolved (dependency now `done`, branch merged) → comment citing it and PATCH back to `todo`/`in_progress` so the owning agent re-picks it.
+- If the blocker is already resolved (dependency now `done`, branch merged) → comment citing it and PATCH back to `todo`/`in_progress` so the owning agent re-picks it. **"Already resolved" must be something you read, not something the comment's tone suggests** — a dependency you fetched and found `done`, a PR you confirmed merged, a red `main` you confirmed green by §Coordinator's positive check. Quote it in the correction. A comment that names an *outstanding* blocker leaves the status alone however recent it is, and a comment you cannot pin to a resolved thing goes in the report untouched (see §4's direction check, which applies here verbatim).
 - If a wake didn't fire after the blocker cleared → re-fire it via the assignee toggle in §2a; file a rotation bug only if the toggle also fails to start a run.
 - If genuinely waiting on the operator or another agent → leave, but surface it in the report with the specific dependency so it doesn't rot silently.
 - **If the blocked task's owner is itself stalled, do not reassign the task to yourself.** That is the tempting move — the owner can't act, so take it "for tracking" — and it is wrong twice over. You cannot fix platform bugs (no commits, no INSTRUCTIONS edits), so the task is no more actionable on you than on them; and self-assignment mints a fresh Facilitator run *per reassignment*, each of which re-runs this sweep. That fired a once-daily routine 9 times in 100 minutes, three runs inside one 6-second window. Leave the assignee, name the stalled owner in the report, and file it to whoever can act — Coordinator or the operator.
@@ -56,7 +56,47 @@ Note `usageJson`/`resultJson` are null while a run is `running` and on `cancelle
 
 ### 4. Comment-without-PATCH
 
-Recent done-sounding comments (`"nothing to fix"`, `"all clean"`, `"review complete"`) where task still `todo`/`in_progress`. PATCH to `done` on the agent's behalf with a comment citing this; file a config issue against the agent.
+An agent that records a conclusion in a comment and never PATCHes leaves the task
+parked where nothing re-wakes it. Three Planner tasks once sat `in_review` for
+16–24h whose newest comment opened *"`done` — decision recorded"* and *"Closing
+`done`"*; the work was finished and only the status was wrong.
+
+Scan for a recent done-sounding comment (`"nothing to fix"`, `"all clean"`,
+`"review complete"`, `"closing done"`) on a task that is still `todo`,
+`in_progress` or `in_review` with **no live run**. PATCH it to `done` on the
+agent's behalf, quoting the comment, and file a config issue against the agent
+whose exit path skipped the PATCH.
+
+#### The direction check — mandatory, and this arm is wrong without it
+
+**Match on what the comment says was RESOLVED, never on the presence of status
+language.** This arm implemented the search and not the discrimination, and it
+flipped two live `blocked` tasks to `in_review` claiming *"this task's latest
+comment declares it promoted/unblocked."* It did not: the comment those tasks
+carried **stated a blocker**. Both had to be reverted by the Coordinator an hour
+later — two bad flips, four runs.
+
+So before this arm may write a status:
+
+1. **Read the latest comment and decide which way it points.** "blocked on red
+   main", "needs operator merge", "waiting on AA-nnnn", "conflict in `<path>`"
+   all contain status words and all point *away* from clearing. A comment is a
+   clearance only if it names a **resolved thing**: a dependency now `done`, a
+   merged branch or PR, a specific condition it says has cleared.
+2. **Cite it.** Your correction comment must quote the phrase you relied on and
+   name what it says was resolved. If you cannot quote one, you do not have a
+   clearance — leave the status alone.
+3. **Never clear a `blocked` on this arm at all.** `blocked` is §2's, under §2's
+   own rule (clear only a block whose stated cause you can show is gone). This
+   arm is for a *finished* task parked in a live status, which is a different
+   shape entirely.
+4. **Ambiguous → report, do not touch.** Surface the task in the report and move
+   on. A §4 correction that is sometimes backwards has to be hand-checked every
+   time, which is strictly worse than not making it.
+
+Leaving a status alone is always available and always safe. The asymmetry is the
+whole argument: a missed correction costs one more sweep; a wrong one dispatches
+an agent onto work that cannot proceed and then costs a run to detect and revert.
 
 ### 5. Config drift
 

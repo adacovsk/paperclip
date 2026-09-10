@@ -31,9 +31,29 @@
 # the outlier, not the dependency rustc (~0.2-0.3 GB each), so worst case scales
 # with SLOTS: 3 slots x ~8 GB is ~24 GB on a 31 GB box that also holds ~12 GB of
 # page cache. Do NOT raise SLOTS on the assumption that only cores are scarce —
-# swapping a build box is worse than serializing it. CGU also moves this: fewer
-# codegen units means fewer LLVM modules live at once, so dropping CGU relieves
-# memory pressure as well as thread pressure.
+# swapping a build box is worse than serializing it.
+#
+# CGU DOES NOT WORK THE WAY THIS HEADER USED TO CLAIM, AND THE CLAIM WAS THE
+# WRONG WAY ROUND. It said "fewer codegen units means fewer LLVM modules live at
+# once, so dropping CGU relieves memory pressure as well as thread pressure",
+# and the default was derived downward from it. A benchmark on this box (same
+# work: `cargo test --lib --no-run` in the main checkout, same CARGO_SEM_JOBS=2,
+# express lane so it jumped no running build, only CGU varied, both rc=0):
+#
+#     CGU=1    10784s (179m)   peak RSS 12.09 GB
+#     CGU=16    4422s  (73m)   peak RSS  7.58 GB
+#
+# Dropping CGU cost 2.5x wall time *and* 4.5 GB more peak RSS. Fewer, larger
+# codegen units make each LLVM module bigger, and the biggest module is what
+# sets the peak — so the low end is worse on both axes, not a memory/speed
+# trade. Do NOT re-derive CGU downward "to relieve memory": that is the claim
+# the data contradicts.
+#
+# STATE THE GAP RATHER THAN OVERSTATING THE RESULT: the arms were 1 and 16, and
+# 16 is now the default, so this establishes the low end is bad and does not by
+# itself establish 16 over an intermediate value. A 4-vs-16 arm is the missing
+# measurement and is what to run before moving the default again. Per this
+# header's own instruction — measure before trusting a bigger number.
 #
 # The third dimension is the one that bites, because CARGO_BUILD_JOBS does not
 # reach it. A job cap bounds how many rustc processes cargo starts; it says
@@ -712,6 +732,72 @@ wr() { printf '%s' "$2" > "$1"; }
 # fd (and any momentary acquire) is dropped immediately.
 alive() { ! ( exec 4>"${2:-$WAIT}.$1"; flock -n 4; ) 2>/dev/null; }
 
+# --- escaped-build orphans ---
+# A rustc (or cargo) started under a verify wrapper can outlive both the wrapper
+# and its systemd scope: when a *dispatching* run dies, its children are
+# reparented to `systemd --user` and land in the `paperclip.service` cgroup
+# instead of a `verifyrun-*.scope`. Nothing then owns them, and nothing reaps
+# them. Measured instances held 7.7 GB, 8.5 GB and 21 GB of RSS while the real
+# build for the same worktree ran normally alongside — five recurrences, each
+# rediscovered from scratch because each was only ever written into a routine
+# record that closed the moment it was written.
+#
+# THE COST IS THROUGHPUT, NOT JUST MEMORY. SLOTS is derived from available
+# memory (see the capacity block), so one 8.5 GB orphan directly collapses the
+# semaphore ceiling — and it is the same pressure that produces the earlyoom
+# mass-kills and the SIGTERM-as-101 verify failures.
+#
+# IT ALSO WEDGES THE PER-WORKTREE LOCK. An orphan inherited the `exec 3>` fd of
+# the cargo-sem.sh that spawned it, and an flock belongs to the *open file
+# description*, not to a pid. `/proc/locks` reports only the pid that created
+# the description, so a dead pid is reported holding a lock that a live orphan
+# is really keeping open — which is why the "same self-healing property as every
+# other lock in this script" note below is true only once the orphans are gone.
+# A later stage of the same chain then spins on `flock 3` against a lock nothing
+# legitimate is using: measured at 25m49s of a `sleep 0.2` loop on a chain that
+# had already passed clippy and 3328 green tests.
+#
+# THE PREDICATE, and it is deliberately narrow — reaping a live build is far
+# worse than leaving an orphan:
+#   * command is rustc or cargo, and
+#   * cwd is inside a `.paperclip/worktrees/` tree, and
+#   * its cgroup is NOT a `verifyrun-*.scope` (a real build is always in one), and
+#   * it was reparented (ppid 1) — nothing living supervises it.
+# All four must hold. A build whose wrapper is alive fails the third; a child of
+# a live cargo fails the fourth.
+#
+# Set CARGO_SEM_REAP_ORPHANS=0 to disable, or CARGO_SEM_REAP_DRYRUN=1 to report
+# without killing (which is how to confirm the predicate on a new failure shape
+# before trusting it).
+reap_escaped_orphans() {
+  [ "${CARGO_SEM_REAP_ORPHANS:-1}" = "1" ] || return 0
+  local p pid comm cwd cg ppid n=0
+  for p in /proc/[0-9]*; do
+    pid="${p#/proc/}"
+    comm="$(cat "$p/comm" 2>/dev/null)" || continue
+    case "$comm" in rustc|cargo) ;; *) continue ;; esac
+    cwd="$(readlink -f "$p/cwd" 2>/dev/null)" || continue
+    case "$cwd" in */.paperclip/worktrees/*) ;; *) continue ;; esac
+    cg="$(cat "$p/cgroup" 2>/dev/null)"
+    case "$cg" in *verifyrun-*) continue ;; esac
+    # Reparented to init/systemd --user means nothing supervises it. Require the
+    # field to be present AND equal 1 — a missing PPid must not read as orphaned.
+    ppid="$(awk '$1=="PPid:"{print $2; exit}' "$p/status" 2>/dev/null)"
+    [ "${ppid:-0}" = "1" ] || continue
+    if [ "${CARGO_SEM_REAP_DRYRUN:-0}" = "1" ]; then
+      printf 'cargo-sem.sh: WOULD REAP escaped %s pid=%s rss=%skB cwd=%s\n' \
+        "$comm" "$pid" "$(awk '/^VmRSS:/{print $2}' "$p/status" 2>/dev/null)" "$cwd" >&2
+    else
+      printf 'cargo-sem.sh: reaping escaped %s pid=%s rss=%skB cwd=%s (no verifyrun scope, ppid 1)\n' \
+        "$comm" "$pid" "$(awk '/^VmRSS:/{print $2}' "$p/status" 2>/dev/null)" "$cwd" >&2
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] && return 0
+  return 1
+}
+
 # --- express lane (CARGO_SEM_PRIORITY=1) ---
 # Is any *live* priority waiter queued? Same flock-presence trick as alive(), so
 # it inherits the same self-healing: a dead express waiter's lock is dropped by
@@ -793,16 +879,28 @@ acquire_slot() {
 # Serializing per worktree here, BEFORE a ticket is drawn, moves that wait
 # outside the ticket queue: the second caller blocks holding no slot and drawing
 # no ticket, so it neither consumes capacity nor takes a queue position it
-# cannot use. Same self-healing property as every other lock in this script —
-# it is an flock, so a dead holder releases it.
+# cannot use. Its self-healing is *conditional*, and the condition is the reason
+# reap_escaped_orphans() exists: an flock is released when the last fd on its
+# open file description closes, NOT when the pid that created it dies. A build
+# child that escapes its scope carries that fd, so a "dead holder" in
+# /proc/locks can still be a lock nothing legitimate is using. The wait below
+# reaps first and only then blocks.
 #
 # Keyed by the resolved cwd, which is the worktree cargo will build in. Callers
 # in different worktrees never contend.
 WTKEY="$(pwd -P | cksum | tr -d ' \t-')"
 exec 3>"$D/cargo-wt-$WTKEY.lock"
 if ! flock -n 3; then
-  printf 'cargo-sem.sh: another build holds this worktree; waiting outside the queue.\n' >&2
-  flock 3
+  # Before settling in to wait, rule out the wedged case: the lock may be held
+  # by nothing but an escaped orphan's inherited fd, in which case waiting is
+  # forever. reap_escaped_orphans() returns 0 when it actually killed something,
+  # so retry the non-blocking acquire once before blocking.
+  if reap_escaped_orphans && flock -n 3; then
+    printf 'cargo-sem.sh: worktree lock was held by escaped orphans; reaped and acquired.\n' >&2
+  else
+    printf 'cargo-sem.sh: another build holds this worktree; waiting outside the queue.\n' >&2
+    flock 3
+  fi
 fi
 
 # --- which lane? read the chain marker the previous stage left ---

@@ -188,6 +188,24 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    for *promotable* depth, never a reason to lower the bar on what you write.
 9. **CLAUDE.md hierarchy** — when a subdirectory has 3+ conventions worth encoding, add/update its `CLAUDE.md`. Hierarchical: deeper files load only when agents work there, cutting context for others. Keep to rules, not implementation notes. Existing (verify with `find src -maxdepth 3 -iname CLAUDE.md` — this list drifts, that command is the source of truth): root, `src/`, `src/resources/`, `src/ui/`, `src/utils/`, and `src/systems/{ability_mechanics,combat,detection,local_map_generation,lock_interaction,movement,observers,rendering,spell_management,structure_generation,vision_system,world_generation}/`.
 10. **Close what you satisfied (exit gate).** A ROADMAP edit in steps 7–8 frequently *completes* a queued task — pruning a stale bullet (or adding the work it asked for) and committing it to `origin/main` is the done-criteria for any `todo`/`in_progress` task that tracked that bullet. Before exiting, for each such task: `PATCH /api/issues/{id}` with `{"status":"done","comment":"<what landed + the origin/main SHA>"}` in this **same fire**. The completion text you'd write as a comment rides the status PATCH — a bare `POST /comments` leaving the task in `todo` is **not** completion (a done-but-unPATCHed task is indistinguishable from un-started work and inflates the apparent queue). Mirror the Worker/Reviewer exit gate: work committed → status advanced, together.
+
+    **This gate is not limited to tasks a ROADMAP edit satisfied.** It binds any
+    task this fire reached a terminal conclusion on, including one you closed by
+    *decision* rather than by an edit — a premise you found already discharged, a
+    question you answered, a bullet you judged not worth roadmapping. Those are
+    the ones that keep leaking: three tasks were found parked `in_review` for
+    16–24h whose newest comment opened *"`done` — decision recorded"* and
+    *"Closing `done`"*, with no `activeRun` and no `executionRunId`, so nothing
+    would ever re-wake them. The verdict had been written and the PATCH never
+    made.
+
+    **The test before you exit**: for every task you commented a conclusion on
+    this fire, re-`GET` it and confirm its status matches that conclusion. If
+    you wrote the word `done` in a comment, the status is `done` or you are not
+    finished. An `in_review` task with no live run is indistinguishable at a
+    glance from a stalled stage — every Facilitator sweep re-examines it, and
+    §2a's missed-wake heuristic will happily toggle the assignee and re-dispatch
+    you onto work you already finished, burning a run each time.
 11. **Delivery gate — verify the push that step 7 already made.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). Step 7's checkpoint is what closes that hole; this step confirms it held. Before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/planner/roadmap` resolves **and** `gh pr list --head planner/roadmap` returns a PR, and **put the PR URL in the summary comment**. If a fill step added commits after the checkpoint, push them now — the check is that `git log origin/planner/roadmap..HEAD` is empty, not merely that the branch exists on the remote. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. Step 0 is what makes that resumable: the branch is always `planner/roadmap`, so an interrupted fire has a name to come back to.
 
     **Name the fill you did not reach, in the same comment.** Which of steps 4, 5, 8 and 9 you
