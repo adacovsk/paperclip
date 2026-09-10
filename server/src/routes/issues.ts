@@ -1002,6 +1002,23 @@ export function issueRoutes(db: Db, storage: StorageService) {
     if (commentBody && reopenRequested === true && isClosed && updateFields.status === undefined) {
       updateFields.status = "todo";
     }
+    // The comment is written BEFORE the update, and the order is the whole point.
+    // These are two writes and cannot be made one without threading a transaction
+    // through both services; so if one must fail alone, it has to be the one that
+    // leaves a recoverable state. A comment with no status change is recoverable —
+    // the reason is on the task and a caller can retry the status. A status change
+    // with no comment is not: it is indistinguishable from a status flipped
+    // without work, and it is what every completion gate exists to prevent.
+    // Measured previously in the other order, a tight comment-then-status loop
+    // lost the comment and kept the status four times out of four.
+    let comment = null;
+    if (commentBody) {
+      comment = await svc.addComment(id, commentBody, {
+        agentId: actor.agentId ?? undefined,
+        userId: actor.actorType === "user" ? actor.actorId : undefined,
+      });
+    }
+
     let issue;
     try {
       issue = await svc.update(id, updateFields);
@@ -1074,13 +1091,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       },
     });
 
-    let comment = null;
-    if (commentBody) {
-      comment = await svc.addComment(id, commentBody, {
-        agentId: actor.agentId ?? undefined,
-        userId: actor.actorType === "user" ? actor.actorId : undefined,
-      });
-
+    if (comment) {
       await logActivity(db, {
         companyId: issue.companyId,
         actorType: actor.actorType,

@@ -1528,22 +1528,35 @@ export function issueService(db: Db) {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
       const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
-      const [comment] = await db
-        .insert(issueComments)
-        .values({
-          companyId: issue.companyId,
-          issueId,
-          authorAgentId: actor.agentId ?? null,
-          authorUserId: actor.userId ?? null,
-          body: redactedBody,
-        })
-        .returning();
 
-      // Update issue's updatedAt so comment activity is reflected in recency sorting
-      await db
-        .update(issues)
-        .set({ updatedAt: new Date() })
-        .where(eq(issues.id, issueId));
+      // One transaction, deliberately. This used to be two statements — the
+      // comment insert, then a separate UPDATE on the issue row for recency
+      // sorting — and the status-write path updates that same row. Fired
+      // back-to-back in a loop, the two contend, and the failure was measured as
+      // silently asymmetric: the comment 500s and rolls back while the status
+      // write commits, so a task advances with no record of why. That is the
+      // exact state the completion gates exist to prevent, and it is
+      // indistinguishable afterwards from a status flipped without work.
+      const comment = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(issueComments)
+          .values({
+            companyId: issue.companyId,
+            issueId,
+            authorAgentId: actor.agentId ?? null,
+            authorUserId: actor.userId ?? null,
+            body: redactedBody,
+          })
+          .returning();
+
+        // Bump updatedAt so comment activity reflects in recency sorting.
+        await tx
+          .update(issues)
+          .set({ updatedAt: new Date() })
+          .where(eq(issues.id, issueId));
+
+        return row;
+      });
 
       return redactIssueComment(comment, currentUserRedactionOptions.enabled);
     },
