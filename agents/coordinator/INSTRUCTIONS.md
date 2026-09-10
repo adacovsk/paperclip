@@ -22,7 +22,41 @@ Each task runs end-to-end on its own branch + worktree. Worker, Reviewer,
 and Architect all commit to `task/{task-id}`. Architect opens the PR.
 Human merges. You GC the worktree + branch.
 
+## Wake triage: not every wake is a fire
+
+**Read `contextSnapshot.source` and `reason` before doing anything.** The full
+sweep below is expensive — an issue-graph fetch across four statuses (~900
+issues), two `gh pr list`, a `gh issue list`, a `systemctl` census, and a
+`git status`/`rev-list`/`merge-tree` triple per live worktree — and you are
+woken far faster than the pipeline changes state.
+
+The wake rate is coupled to **build count**; the useful sweep rate is coupled to
+**sentinel completions**, which at `SLOTS=2` is roughly one per 20–40 minutes.
+Nine full sweeps once ran in 38 minutes on a *daily* routine, and seven of the
+nine produced zero state change — each re-deriving an identical picture and
+filing a record saying so. Those records are themselves the visible cost: nine
+`done` tasks per 38 minutes of no-op, which is what buries the real signal.
+
+So branch on the wake:
+
+- **`reason: verify-sentinel-ready`** (the detached wrapper's callback, carrying
+  `payload.issueIdentifier`) → run **only §Landing sweep, for that one task**.
+  One sentinel became readable; nothing else changed. Do not run steps 1–3, do
+  not re-scan the graph, and **file no routine record** — a targeted landing is
+  recorded on the task it landed. Then exit.
+- **`subtask_completed` / assignment wakes** → advance **that task's** stage
+  (step 3's signal table) and exit. A single stage completing does not require
+  re-deriving the whole pipeline.
+- **The scheduled routine fire, an operator message, or an inbox item** → run
+  the full sweep below.
+
+**Debounce the full sweep.** Even on a qualifying wake, if a full sweep
+completed less than 20 minutes ago (your own most recent routine record is the
+timestamp), do the targeted work for this wake and skip the rest. Say so in one
+line rather than filing a record.
+
 ## Run (do all steps every fire)
+
 
 0. Resolve agent IDs (`GET /agents`). Cache Worker/Reviewer/Architect. Every task/subtask MUST set `assigneeAgentId` — unassigned = invisible.
 0a. **Close superseded routine fires.** Your own routine tasks (`Coordinator routine <date> fire <n>`) never close themselves. A fire that waits hours behind a deep callback queue can time out before it ever runs, stranding the task it checked out. → [why a stalled fire cannot close its own task](rationale/superseded-routine-fires.md) You are the current fire by definition, so any *older* routine task still `in_progress` is dead. PATCH each to `cancelled`. One short comment naming the superseding fire, or none at all when the run queue is deep — the status is the load-bearing part, and each comment costs another wake into the queue you are trying to drain.
@@ -33,6 +67,30 @@ Human merges. You GC the worktree + branch.
    c. Pull the failed run's log via `gh run view <run-id> --log-failed`, extract the first ~30 unique error messages with file:line context, write them into the task body under `## Compile errors`.
    d. Assign Architect immediately once the worktree is allocated; Architect runs cargo itself against the worktree, fixes the listed errors, opens the PR.
    This is the only path that fixes a red `main`. Without it, every `ci-failure` issue stalls because Architect's hard gate has no main-rooted worktree to operate on.
+
+   **An empty `ci-failure` list is evidence of nothing, and must never be
+   recorded as "main is GREEN".** `ci.yml` has no `push: main` trigger — that is
+   deliberate, to conserve Actions minutes — so nothing ever evaluates `main`
+   itself, and a break that lands via a merge whose PR checks predated it files
+   no issue at all. That is not hypothetical: a duplicate top-level type
+   (`E0428`/`E0119`) sat on `main` for ~5 hours while consecutive routine
+   records asserted GREEN on the strength of the empty list, and five verify
+   builds rebased onto the poisoned base in that window. The cost is worse than
+   a wrong label: a fire that believes `main` is green does not look for a
+   ci-fix, and reads the resulting build failures as task defects — which is
+   what sends a Worker to rebase a branch that was never broken.
+
+   You may assert `main` compiles only from one of these, and the record must
+   **cite which one you ran**:
+
+   - a cargo result against a `main`-rooted tree (a `ci-fix` verify, or a green
+     `.exit` sentinel whose `.base` is an ancestor of current `origin/main` —
+     `git merge-base --is-ancestor "$(cat "$VERIFY_DIR/{id}.base")" origin/main`); or
+   - a source read of the suspect path, when a specific breakage is in question.
+
+   With neither, write `main state: unverified (no ci-failure issues open; no
+   positive check run)`. That sentence is cheap, honest, and is what lets the
+   next fire tell "nobody looked" from "somebody looked and it was fine".
 2a. **Dependency-bump intake.** `gh pr list --state open --json number,title,headRefName,files` from the project checkout; select PRs whose changed files include `Cargo.toml` or `Cargo.lock`. For each not already mapped to an active AA task (search task titles for the PR number):
    a. Create AA-<n> titled `Verify: dependency bump PR #<pr>`, label `needs-build`, `dedupeKey: "verify"`, status `todo`.
    b. Allocate the worktree from **the PR's head branch**, not `origin/main` — the bump only exists on the PR branch, so a main-rooted worktree compiles the old versions and reports a meaningless green.
@@ -247,19 +305,78 @@ its Architect immediately:
 - Assignment-wake fires the Architect within seconds.
 - Coordinator moves on. Cargo runtime is the Architect's problem.
 
+**Marking a verify priority (`Priority-verify:`).** `cargo-sem.sh` admits builds
+through a strict FIFO ticket queue with no overtakes, so build order is pure
+arrival order and nothing can say *this build unblocks the others*. That
+schedules the most-unblocking build last: one contention fix — the file edited by
+9 of 52 in-flight worktrees, and the reason zero Worker tasks had been promoted
+for three consecutive fires — drew a ticket at the back of a **39-deep** queue,
+behind 10 builds it would force a rebase on when it landed.
+
+To let a normal `Verify:` take the express lane, put this line in the **subtask
+body**:
+
+```
+Priority-verify: <one line — what queued work this build unblocks>
+```
+
+The Architect exports `CARGO_SEM_PRIORITY=1` when it sees that line or the
+`ci-failure` label, and nothing else (architect INSTRUCTIONS §Cargo discipline
+rule 2). The express lane skips the *queue*, not the *slot* — it never preempts
+a running build.
+
+**The bar is "this unblocks other queued work", not "this task matters", and the
+lane stops working for anyone if it is crowded.** One or two in a queue, at
+most. If you are about to write a third, the right move is to say so in your
+record instead — the queue has a scheduling problem the lane cannot fix.
+
 **Cap concurrent verifies at 2x the semaphore's ceiling; leave the surplus
 undispatched.** Read the ceiling, never assume it:
 
 ```sh
 SLOTS=$(cat /tmp/cargo-sem.slots 2>/dev/null || echo 2)
-LIVE=$(ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+' | sort -u | wc -l)
+LIVE=$( { systemctl --user list-units 'verifyrun-*' --no-legend --plain --state=running \
+            2>/dev/null | awk '{print $1}' | grep -oE 'verifyrun-AA-[0-9]+'
+          ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+'
+        } | sort -u | wc -l )
 # dispatch only while  $LIVE  <  2 * $SLOTS
 ```
 
+Same census as §Landing sweep step 1, and it must stay the scope-list union
+rather than `ps` alone: an argv-only census **under**-reads live wrappers, so
+the cap admits more verifies than intended onto the semaphore that is already
+the throughput constraint. The two readings are load-bearing in opposite
+directions — under-reading kills a live build in the sweep, and under-reading
+over-dispatches here.
+
 `cargo-sem.sh` publishes its derived `SLOTS` on every run; the census is the
-same one §Landing sweep step 1 uses. Surplus `needs-build` tasks stay
-`in_review` and **undispatched**, and a later fire picks them up as builds
-drain — that queue is a Coordinator-side list, not 20 live wrappers.
+same one §Landing sweep step 1 uses.
+
+**Holding the surplus means leaving `assigneeAgentId` NULL. There is no other
+hold.** Setting `assigneeAgentId` = Architect fires an on-demand wake within
+seconds *regardless of status*, so assigning the Architect **is** the dispatch —
+`in_review` is not a parking status, it is where a dispatched verify lives.
+A fire that PATCHed two bumps to `in_review` + Architect with a comment saying
+they were being held launched both inside 60 seconds, taking the live census
+from 18 to 20 in the act of enforcing a cap of 4. Every earlier fire that
+believed it was holding surplus this way was in fact dispatching it, which is
+the best available explanation for how the queue reached 30 while the cap was
+written down and obeyed.
+
+So for each surplus `needs-build` task:
+
+- Create the `Verify:` subtask as normal, but with `assigneeAgentId: null` and
+  status `todo`.
+- Record the intended assignee in the subtask body as
+  `Intended assignee: Architect (held — LIVE=<n> >= 2*SLOTS=<m>)`.
+- A later fire, once `LIVE < 2 * SLOTS`, PATCHes `assigneeAgentId` to the
+  Architect and `status` to `in_review`. *That* PATCH is the dispatch.
+
+**§Landing sweep's predicate changes with it.** "in_review + assignee =
+Architect" now means *dispatched, awaiting result* and nothing else — a held
+verify is `todo` + unassigned and the sweep must skip it, because it has no
+wrapper, no sentinel and no build to probe. Do not read a held subtask as a
+dead build.
 
 **Why a cap at all, when the semaphore already bounds concurrency.** It bounds
 what *runs*; nothing bounded what was *handed to it*. Left unbounded, live wrappers accumulate to an order of magnitude more than there are slots, and the queue head can wait most of a day for a few minutes of CPU. Each verify takes up to
@@ -366,8 +483,22 @@ For each parent `{task-id}`:
 > reports live. → [why a per-id probe cannot work](rationale/census-not-per-id-grep.md)
    >
    > ```sh
-   > ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+' | sort -u
+   > { systemctl --user list-units 'verifyrun-*' --no-legend --plain --state=running \
+   >     2>/dev/null | awk '{print $1}' | grep -oE 'verifyrun-AA-[0-9]+'
+   >   ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+'
+   > } | sort -u
    > ```
+   >
+   > **Take the scope list, not `ps` alone.** A wrapper launched through
+   > `~/.cache/paperclip-verify/run-AA-<id>.sh` has argv
+   > `/usr/bin/setsid bash /home/.../run-AA-<id>.sh` — the `verifyrun-AA-<id>`
+   > token is *inside the script file*, so a `grep` over `ps` output cannot see
+   > it and the build reads as dead. Measured: 17 scopes against 16 argv rows,
+   > and the one dropped row was a live build that had already finished clippy
+   > and was queued 2h38m for its `test` slot. Re-dispatching it would have
+   > discarded that work. The systemd scope name carries the id for **both**
+   > launch forms, which is why it is the primary source; `ps` stays in the
+   > union to cover a wrapper whose scope registration failed.
    >
    > Require one-or-more digits, not `[0-9]*`. With `*` the pattern matches zero
    > digits against the literal `verifyrun-AA-[0-9]*` in the pipeline's own argv
@@ -433,6 +564,24 @@ For each parent `{task-id}`:
    Re-dispatch each task to the Worker **once** for a given conflict: a task
    that comes back still conflicting on the same path is operator work
    regardless of path count.
+
+   **A rebase dispatch must be a NEW task, not a comment on the old one.** The
+   Worker reads its task from the injected prompt; it does not read the comment
+   thread, and it has no API with which to. A dispatch whose only instruction is
+   a comment saying "rebase this branch and resolve `<path>`" is invisible to
+   it — three such runs on one task each exited `succeeded` reporting the
+   *implementation* complete, which it was, while the rebase they were dispatched
+   for never happened. Create a task whose **description** says, in the body:
+
+   > Rebase `task/{task-id}` onto `origin/main` and resolve the conflict in
+   > `<path>`. The implementation on this branch is already complete and
+   > reviewed — do not re-implement it. Done-when: `git merge-tree --write-tree
+   > origin/main HEAD` exits 0 and the tree is clean.
+
+   Worker Step 0 now has the matching arm (worker INSTRUCTIONS, "Step 0 does not
+   apply to a rebase task"), so the two halves only work together. Track the
+   `Worker rebase: N` trailer on the *parent*: a second dispatch that comes back
+   with the same conflict is operator work.
 
    **Sub-case — stale past a migration, NOT merge-conflicted.** If
    `merge-tree` reports `CONFLICT (modify/delete)` and the *deleted* side is
@@ -641,6 +790,17 @@ worktree for ~67 minutes of rustc CPU before anything reaped it.
 
 ```sh
 agents/architect/reap-verify.sh {task-id} pr-merged   # in $PAPERCLIP_REPO
+
+# HARD GATE — never delete a branch carrying commits that are not on main.
+# `git branch -d` is NOT this check: it compares against the *current* HEAD, not
+# origin/main, so it refuses genuinely-merged branches and permits unmerged ones.
+git fetch -q origin main
+if ! git merge-base --is-ancestor task/{task-id} origin/main; then
+  echo "REFUSING teardown: task/{task-id} has commits not on origin/main"
+  git log --oneline origin/main..task/{task-id}
+  exit 1        # park it, report it, and leave both branch and worktree alone
+fi
+
 git worktree remove .paperclip/worktrees/{task-id}
 git branch -D task/{task-id}        # local branch
 # remote branch is auto-deleted by GitHub on squash-merge
@@ -650,6 +810,27 @@ The reap is `reap-verify.sh` and not an inline loop **because it is needed at
 more than one exit** — see §Reaping an unwanted verify build below, which is the
 single place the rule and its safety argument live. Run it before
 `git worktree remove`; removing the directory does not stop a live cargo.
+
+**Why the ancestor gate is a hard stop and not a warning.** Deleting a branch
+destroys the only remaining ref to its commits, and git will garbage-collect
+them; there is no undo and nothing surfaces the loss. Two complete, review-clean
+tasks were `cancelled` with no comment while holding unique commits — a five-file
+data-and-Rust fix and a three-file docs fix, on no remote at the time. A later
+sweep pushed them, and a still later teardown deleted the remote branches again.
+When they were finally looked for, all three commits existed **only as
+unreferenced loose objects in one checkout**, one `gc` from unrecoverable.
+
+Two rules follow, and they are separate:
+
+- **Teardown is gated on `merge-base --is-ancestor`, not on task status.** A
+  `done`, `cancelled` or `blocked` status says what someone decided; it says
+  nothing about whether the work reached `origin/main`. Those are independent,
+  and this gate reads the one that matters. The vocabulary note in §Landing
+  sweep applies here too: "landed" means merged, never "a PR existed".
+- **A branch that fails the gate is parked and reported, never deleted.**
+  Push it if it is not on origin, name it in your record with its commit list,
+  and leave it for the operator. An accumulating unmerged branch is a visible,
+  cheap problem; a deleted one is an invisible, permanent one.
 
 ## Reaping an unwanted verify build
 
@@ -793,6 +974,83 @@ that it became actionable. Re-routing over a stated reason silently discards it
 (was re-assigned to Facilitator 79 minutes after Facilitator unassigned
 it as operator-owned).
 
+## Status writes: the paired-comment invariant
+
+**Every `status` PATCH you make carries its reason.** The preferred form is one
+call — `PATCH /api/issues/{id}` accepts a `comment` field alongside `status`, so
+the two cannot come apart. Two separate calls can, and do.
+
+> **Verify the one-call form before relying on it, and fall back cleanly.** The
+> project `CLAUDE.md` records that a `comment` field alongside a status PATCH
+> *500s*, and that operators should post the comment separately. Probed against
+> the live server while writing this: the combined PATCH returned **200 and the
+> comment landed**, so that note is stale or condition-specific — plausibly the
+> concurrency race described below rather than an unconditional refusal. Treat the
+> combined form as preferred but not guaranteed: if it errors, fall back to
+> `POST /api/issues/{id}/comments` **first**, confirm the `201`, and only then
+> PATCH the status. That order matters: the failure has been measured as
+> *asymmetric* — under a tight loop of comment-then-status writes the comment
+> insert is the half that rolls back, so the status advances and the record
+> vanishes. Writing the reason first is what makes a partial failure
+> recoverable.
+
+Either way the invariant is the same: a status change without its reason
+recorded is not a status change you are allowed to make.
+
+This is not bookkeeping. A `blocked` with no comment is unrecoverable by every
+downstream consumer *including this sweep*: Facilitator §2 clears a blocker by
+reading the latest comment to identify it, and when the newest comment predates
+the block by days there is no way to tell a live blocker from a stale flip.
+Measured: eight tasks flipped to `blocked` inside 73 seconds with no comment on
+any of them, their newest comments 1–10 days old, and one of those comments
+recorded that the task had already been *unblocked*. Nothing can re-clear that
+state without guessing.
+
+Three rules, all mandatory:
+
+1. **No bare status PATCH.** If you are about to write `status` and have no
+   reason to write with it, you do not yet know why you are writing it — stop
+   and read the task. A sweep that iterates a list PATCHing `status` without
+   the paired `comment` is the shape that produced the 73-second batch above.
+2. **Never revert a `blocked` you did not author, and cite what you read.**
+   The rule is stated at §Landing sweep step 3; what kept failing is that the
+   sweep never performed the read. So make the read observable: before clearing
+   any `blocked`, fetch that task's comments, and your clearing comment must
+   **quote the block comment it is clearing and name what resolved it** — a
+   dependency now `done`, a merged PR, a specific cleared condition. If you
+   cannot quote it, you did not read it, and you must leave the status alone.
+   A pass that pattern-matched "the last comment declares it released" reverted
+   five blocks in one sweep and every one was wrong; three of them were
+   conflict-class tasks that then relaunched Architects onto branches that
+   provably could not merge.
+3. **Direction, not presence.** Status *language* in a comment is not a
+   clearance. "blocked on red main", "needs operator merge", "waiting on
+   AA-nnnn" all contain status words and all point the opposite way. Match on
+   what the comment says was **resolved**, never on the fact that it discusses
+   status. Reading this backwards flipped two live blocks to `in_review` and
+   cost four runs — two to make the bad flips, two to detect and revert them.
+   Where a comment is ambiguous, surface the task in your record and leave it
+   untouched. Leaving a status alone is always available and always safe.
+
+### `description` is write-once for a task you did not create
+
+**Never PATCH `description` on a task you did not author.** A routine fire
+record is always a **new issue**, or a comment — never a `description` write
+onto an existing task.
+
+A fire once wrote its sweep record into a live task's `description`. The
+original body was destroyed: that task now ends mid-path in its `Where` list
+and has **no `Done-when` at all**, so a Worker dispatched on it cannot tell when
+it is finished. The damage is permanent — `description` has no version history
+exposed through the API, and the partial recovery that was possible only worked
+because an earlier run happened to have quoted the body in a comment, truncated
+at 900 characters. It is also invisible: the issues *list* endpoint omits
+`description` entirely, so an overwritten task and a normally-listed one look
+identical unless you fetch the single issue.
+
+If you need to add to a task you did not create — a verdict, a re-dispatch
+note, a conflict class — that is what comments are for.
+
 ## Never
 
-Commit · retry 409 · create without `parentId` (except top-level) or `assigneeAgentId` · give Workers skills · exit mid-run · repeat a blocked comment · run destructive / secrets-exfil commands (unless operator explicitly requests).
+Commit · retry 409 · create without `parentId` (except top-level) or `assigneeAgentId` · give Workers skills · exit mid-run · repeat a blocked comment · **PATCH `status` without a paired `comment`** · **PATCH `description` on a task you did not create** · **assert `main` is GREEN from an empty `ci-failure` list** · run destructive / secrets-exfil commands (unless operator explicitly requests).

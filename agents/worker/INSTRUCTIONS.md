@@ -54,7 +54,51 @@ commit, do NOT push.
    exists on the branch, a later stage may have produced the debris and it
    is no longer unambiguously yours.
 
-Only after all four checks pass, proceed to "Before Starting" below.
+### Step 0 does not apply to a rebase task — read the task first
+
+**A "clean tree with commits" is only *task complete* when the task asked for
+code.** If the task asks you to **rebase** the branch, or to resolve a merge
+conflict against `origin/main`, then a clean tree carrying commits is the
+*starting* state, not the finished one — and exiting `succeeded` on it is a
+guaranteed no-op.
+
+That is not hypothetical. One task with a single conflicting path was dispatched
+three times over two days; every run exited `succeeded` reporting *"the task is
+complete — worktree clean, all work committed"*, and the third carried an
+explicit instruction in the task to rebase and resolve one named file.
+`git merge-tree --write-tree origin/main HEAD` reported the identical conflict
+after each run. Each was a full billed run that moved nothing, and because they
+report success, the "re-dispatch once then escalate" counter never advances.
+
+So before treating commits-on-a-clean-tree as *done*, check what the task asks:
+
+```sh
+git fetch -q origin main
+git merge-tree --write-tree origin/main HEAD >/dev/null   # exit 1 = conflicts
+```
+
+If the task asks for a rebase, or that command exits non-zero and the task
+mentions a conflict, **do the rebase**:
+
+```sh
+git rebase origin/main
+# resolve each conflicted path, then:
+git add <resolved paths>          # specific paths, never -A
+git rebase --continue
+```
+
+- Resolve by **re-applying your branch's intent** on top of `origin/main` —
+  never by taking one side wholesale to make the conflict go away.
+- If the rebase cannot be completed (more than one surface to reconcile, or the
+  correct resolution is genuinely ambiguous), `git rebase --abort` to restore a
+  clean tree and end your run with:
+  `Worker verdict: rebase blocked — <paths> need reconciling across surfaces`.
+  That line is what escalates it to operator work; a `succeeded` with no line
+  is what buys another identical run.
+- The exit gate below still binds: finish with a clean tree either way.
+
+Only after all four checks pass **and** you have established which of these the
+task is, proceed to "Before Starting" below.
 
 The hard-gate design is deliberate: a soft fallback ("if no worktree,
 work in main repo and skip commit") creates a half-applied state where
@@ -216,9 +260,42 @@ pixi run process-sprites | optimize-images | generate-atlas | process-all-assets
 
 The server reflects your run lifecycle into the task: `todo` → `in_progress` when your run starts, `in_progress` → `done` when it succeeds. You never PATCH status.
 
-Because you never PATCH, a comment is your only way to record a conclusion the
-status cannot carry. A no-op run must leave the `Worker verdict:` line above; a
-run that stops on an unmet precondition leaves the Step 0 abort comment. Silence
-is indistinguishable from a run that never happened.
+### How you "comment on the task" — read this before you look for an API
 
-Do the work and stop. A run that committed work needs no completion comment — the commits are the record. If stuck, leave code in a clear state and stop; the task stays `in_progress` and Coordinator's stale-scan detects it.
+**Your final message IS the comment.** You have no Paperclip API, no `curl`, no
+network and no skills (§Restrictions), so every instruction in this file that
+says *comment on the task* means exactly one thing: **write it as the last thing
+you output, in your final message.** There is no endpoint to call and you must
+not go looking for one.
+
+The server stores that final message on the run as `resultJson.result`, and
+Coordinator reads it — its no-op arm explicitly fetches the run and treats a
+substantive `resultJson.result` as the verdict. So the channel works; what
+failed was that this file asked for a "comment" 14 times without ever saying
+what a comment was. Four runs on one day each reached a correct, substantive
+conclusion, wrote it as their final message, and were re-dispatched anyway at
+full price because nobody had written down that this was the right thing to do.
+
+Two consequences:
+
+- **Put the verdict last, and put it in one message.** Not in a tool call, not
+  in a file, not spread across several turns. The final message is what is
+  captured.
+- **Use the exact prescribed wording where this file gives one** — the
+  `Worker verdict: no-op — ...` lines above, the Step 0 abort strings. Coordinator
+  matches on them.
+
+Because you never PATCH, that final message is your only way to record a
+conclusion the status cannot carry. A no-op run must end with the
+`Worker verdict:` line; a run that stops on an unmet precondition must end with
+the Step 0 abort text. Silence is indistinguishable from a run that never
+happened.
+
+A run that committed work needs no verdict line — the commits are the record.
+If stuck, leave code in a clear state and stop; the task stays `in_progress`
+and Coordinator's stale-scan detects it.
+
+Then stop. (This section used to end "Do the work and stop." directly under the
+instruction to leave a comment, and the Worker follows the last thing it read —
+so the last line contradicted the paragraph above it. Finishing the verdict *is*
+finishing the work.)
