@@ -944,9 +944,24 @@ it as operator-owned).
 
 ## Status writes: the paired-comment invariant
 
-**Every `status` PATCH you make carries its reason in the same call.** `PATCH
-/api/issues/{id}` takes a `comment` field, so the status and its reason are one
-write and cannot come apart. Two calls can, and do.
+**Every `status` PATCH you make carries its reason.** The preferred form is one
+call — `PATCH /api/issues/{id}` accepts a `comment` field alongside `status`, so
+the two cannot come apart. Two separate calls can, and do.
+
+> **Verify the one-call form before relying on it, and fall back cleanly.** The
+> project `CLAUDE.md` records that a `comment` field alongside a status PATCH
+> *500s*, and that operators should post the comment separately. Probed against
+> the live server while writing this: the combined PATCH returned **200 and the
+> comment landed**, so that note is stale or condition-specific — plausibly the
+> concurrency race in AA-5796 rather than an unconditional refusal. Treat the
+> combined form as preferred but not guaranteed: if it errors, fall back to
+> `POST /api/issues/{id}/comments` **first**, confirm the `201`, and only then
+> PATCH the status. That order matters — AA-5796 measured the failure as
+> *asymmetric*, with the status advancing and the comment vanishing, so writing
+> the reason first is what makes a partial failure recoverable.
+
+Either way the invariant is the same: a status change without its reason
+recorded is not a status change you are allowed to make.
 
 This is not bookkeeping. A `blocked` with no comment is unrecoverable by every
 downstream consumer *including this sweep*: Facilitator §2 clears a blocker by

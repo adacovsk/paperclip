@@ -766,11 +766,32 @@ alive() { ! ( exec 4>"${2:-$WAIT}.$1"; flock -n 4; ) 2>/dev/null; }
 # All four must hold. A build whose wrapper is alive fails the third; a child of
 # a live cargo fails the fourth.
 #
+# `kill` WORKS HERE, AND DOES NOT WORK WHERE YOU MAY HAVE READ THAT IT DOESN'T.
+# The Architect's INSTRUCTIONS say the sandbox denies `kill` (rule 7's "do NOT
+# use kill -0"), and the Facilitator has recorded the same refusal. That applies
+# to an *agent's* tool sandbox. This script runs inside the detached wrapper's
+# own transient scope, outside that sandbox, which is exactly why the reaper
+# belongs here rather than in any agent's instructions — the agents that keep
+# finding these orphans are the ones that cannot kill them.
+#
+# THE MAIN CHECKOUT IS DELIBERATELY OUT OF SCOPE. The cwd term restricts this to
+# `.paperclip/worktrees/`, so an escaped build in `$PAPERCLIP_PROJECT` itself is
+# NOT reaped — and one has been observed there (an untracked `generate_schemas`
+# chain armed by an operator session, ppid 1, cwd the main checkout). That is a
+# deliberate exclusion, not an oversight: the main checkout is where an operator
+# builds by hand, and killing their build to reclaim a slot is a worse failure
+# than the slot. Such a process is reported by the routine sweeps and reaped by
+# hand.
+#
 # Set CARGO_SEM_REAP_ORPHANS=0 to disable, or CARGO_SEM_REAP_DRYRUN=1 to report
 # without killing (which is how to confirm the predicate on a new failure shape
 # before trusting it).
+# Returns 0 ONLY when it actually killed something, so a caller may use it as a
+# "retry is worth it" signal. Disabled and dry-run both return 1: neither freed
+# anything, and reporting otherwise would have the lock wait below print that it
+# reaped its way in when it did not.
 reap_escaped_orphans() {
-  [ "${CARGO_SEM_REAP_ORPHANS:-1}" = "1" ] || return 0
+  [ "${CARGO_SEM_REAP_ORPHANS:-1}" = "1" ] || return 1
   local p pid comm cwd cg ppid n=0
   for p in /proc/[0-9]*; do
     pid="${p#/proc/}"
@@ -787,6 +808,7 @@ reap_escaped_orphans() {
     if [ "${CARGO_SEM_REAP_DRYRUN:-0}" = "1" ]; then
       printf 'cargo-sem.sh: WOULD REAP escaped %s pid=%s rss=%skB cwd=%s\n' \
         "$comm" "$pid" "$(awk '/^VmRSS:/{print $2}' "$p/status" 2>/dev/null)" "$cwd" >&2
+      continue                                   # reported, not freed — see the return contract
     else
       printf 'cargo-sem.sh: reaping escaped %s pid=%s rss=%skB cwd=%s (no verifyrun scope, ppid 1)\n' \
         "$comm" "$pid" "$(awk '/^VmRSS:/{print $2}' "$p/status" 2>/dev/null)" "$cwd" >&2
