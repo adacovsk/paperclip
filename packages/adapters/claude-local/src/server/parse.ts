@@ -4,10 +4,36 @@ import { asString, asNumber, parseObject, parseJson } from "@paperclipai/adapter
 const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+`?claude\s+login`?|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
 const URL_RE = /(https?:\/\/[^\s'"`<>()[\]{};,!?]+[^\s'"`<>()[\]{};,!.?:]+)/gi;
 
+/**
+ * Largest context the model was asked to carry at any single turn of this run.
+ *
+ * Session rotation is decided *between* runs, from the previous run's totals, so
+ * nothing has ever been able to see growth that happens *inside* one run — and
+ * that is the shape that actually fails. One Worker run reached 17.2M cached
+ * input tokens with `sessionRotated: false` and terminated `adapter_failed`: the
+ * session did not die and get replaced, it grew unbounded within a single run
+ * until the adapter refused it. No `maxRawInputTokens` value could have caught
+ * that, because the run began under threshold.
+ *
+ * This measures the condition without acting on it. A within-run kill/rotate
+ * guard is buildable on the same numbers, but killing a Worker mid-task on a
+ * mis-set ceiling is worse than the failure it prevents, and the failure is
+ * currently a sample of one. Measure first.
+ */
+function peakContextTokensOf(message: Record<string, unknown>): number {
+  const usage = parseObject(message.usage);
+  return (
+    asNumber(usage.input_tokens, 0) +
+    asNumber(usage.cache_read_input_tokens, 0) +
+    asNumber(usage.cache_creation_input_tokens, 0)
+  );
+}
+
 export function parseClaudeStreamJson(stdout: string) {
   let sessionId: string | null = null;
   let model = "";
   let finalResult: Record<string, unknown> | null = null;
+  let peakContextTokens = 0;
   const assistantTexts: string[] = [];
 
   for (const rawLine of stdout.split(/\r?\n/)) {
@@ -26,6 +52,7 @@ export function parseClaudeStreamJson(stdout: string) {
     if (type === "assistant") {
       sessionId = asString(event.session_id, sessionId ?? "") || sessionId;
       const message = parseObject(event.message);
+      peakContextTokens = Math.max(peakContextTokens, peakContextTokensOf(message));
       const content = Array.isArray(message.content) ? message.content : [];
       for (const entry of content) {
         if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
@@ -45,11 +72,15 @@ export function parseClaudeStreamJson(stdout: string) {
   }
 
   if (!finalResult) {
+    // No `result` event: the run was killed or refused mid-stream. This is the
+    // case peakContextTokens exists for, so it is returned here too — a failed
+    // run's turn-by-turn usage is the only record of how big it got.
     return {
       sessionId,
       model,
       costUsd: null as number | null,
       usage: null as UsageSummary | null,
+      peakContextTokens,
       summary: assistantTexts.join("\n\n").trim(),
       resultJson: null as Record<string, unknown> | null,
     };
@@ -70,6 +101,7 @@ export function parseClaudeStreamJson(stdout: string) {
     model,
     costUsd,
     usage,
+    peakContextTokens,
     summary,
     resultJson: finalResult,
   };
