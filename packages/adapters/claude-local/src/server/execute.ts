@@ -522,6 +522,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         errorMessage: parseFallbackErrorMessage(proc),
         errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
         errorMeta,
+        // Carried on the failure path deliberately: a run that produced no
+        // `result` event is precisely the one whose size we could not otherwise
+        // account for.
+        ...(parsedStream.peakContextTokens > 0
+          ? { peakContextTokens: parsedStream.peakContextTokens }
+          : {}),
         resultJson: {
           stdout: proc.stdout,
           stderr: proc.stderr,
@@ -566,6 +572,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
       errorMeta,
       usage,
+      // Peak single-turn context, surfaced so within-run growth is measurable.
+      // Session rotation reads only *between*-run totals, so a run that starts
+      // under threshold and grows past the adapter's ceiling inside itself is
+      // invisible to every existing signal — see parse.ts. Reported, not acted
+      // on.
+      ...(parsedStream.peakContextTokens > 0
+        ? { peakContextTokens: parsedStream.peakContextTokens }
+        : {}),
       sessionId: resolvedSessionId,
       sessionParams: resolvedSessionParams,
       sessionDisplayId: resolvedSessionId,

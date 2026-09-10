@@ -3089,8 +3089,14 @@ export function heartbeatService(db: Db) {
               ? "timed_out"
               : "failed";
 
+      // Include peakContextTokens in the guard: a run that died before emitting a
+      // result event has neither usage totals nor a cost, and that is exactly the
+      // run whose size is worth recording. Without this it would be measured and
+      // then dropped.
       const usageJson =
-        normalizedUsage || adapterResult.costUsd != null
+        normalizedUsage
+        || adapterResult.costUsd != null
+        || (typeof adapterResult.peakContextTokens === "number" && adapterResult.peakContextTokens > 0)
           ? ({
               ...(normalizedUsage ?? {}),
               ...(rawUsage ? {
@@ -3101,6 +3107,9 @@ export function heartbeatService(db: Db) {
               ...(sessionUsageResolution.derivedFromSessionTotals ? { usageSource: "session_delta" } : {}),
               ...((nextSessionState.displayId ?? nextSessionState.legacySessionId)
                 ? { persistedSessionId: nextSessionState.displayId ?? nextSessionState.legacySessionId }
+                : {}),
+              ...(typeof adapterResult.peakContextTokens === "number" && adapterResult.peakContextTokens > 0
+                ? { peakContextTokens: adapterResult.peakContextTokens }
                 : {}),
               sessionReused: runtimeForAdapter.sessionId != null || runtimeForAdapter.sessionDisplayId != null,
               taskSessionReused: taskSessionForRun != null,

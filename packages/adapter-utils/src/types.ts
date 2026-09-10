@@ -70,6 +70,18 @@ export interface AdapterExecutionResult {
   errorMeta?: Record<string, unknown>;
   usage?: UsageSummary;
   /**
+   * Largest context carried at any single turn of this run.
+   *
+   * `usage` reports run totals, and session rotation is decided *between* runs
+   * from the previous run's totals — so neither can see a session growing inside
+   * one run. That is the failure shape actually observed: a run reached 17.2M
+   * cached input tokens with `sessionRotated: false` and terminated
+   * `adapter_failed`, having begun under every configured threshold. Adapters
+   * that can observe per-turn usage report it here so the condition is
+   * measurable; nothing acts on it yet.
+   */
+  peakContextTokens?: number;
+  /**
    * Legacy single session id output. Prefer `sessionParams` + `sessionDisplayId`.
    */
   sessionId?: string | null;
