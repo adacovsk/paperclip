@@ -44,7 +44,7 @@
     "@paperclipai/plugin-sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^24.6.0",
+    "@types/node": "^26.4.1",
     "typescript": "^7.0.2"
   }
 }
