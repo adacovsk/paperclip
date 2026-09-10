@@ -620,10 +620,44 @@ For each parent `{task-id}`:
    it attests to a pre-migration tree shape. Confirm freshness with
    `git merge-base --is-ancestor $(cat "$VERIFY_DIR/{task-id}.base")
    origin/main` before treating any `.exit` as current.
-4. **OPEN THE PR.** `git push origin task/{task-id}` then `gh pr create --head
-   task/{task-id} --base main` with a body noting cargo result + base SHA +
-   "PR opened by Coordinator decoupled-land step". Idempotent: if the
-   branch is already on origin / a PR already exists, skip that part.
+4. **OPEN THE PR — but first check whether one was already closed.**
+
+   ```sh
+   gh pr list --head "task/{task-id}" --state all --limit 5 \
+     --json number,state,mergedAt,url
+   ```
+
+   **`--state all` is load-bearing. `gh pr list` defaults to open PRs only, so a
+   closed one returns an empty list — indistinguishable from "no PR was ever
+   opened".** That is not hypothetical: one task had its PR closed unmerged by
+   the operator, the next sweep read the empty list as "needs a PR", pushed and
+   opened a second one, and that was closed too. The operator was handed the same
+   rejected work twice. A default-state query cannot tell "never PR'd" from
+   "PR'd and rejected", and those need opposite actions.
+
+   Branch on what comes back:
+
+   - **A merged PR** → already landed; skip to step 5.
+   - **A closed, unmerged PR** → **STOP. Do not open another, and do not
+     re-dispatch.** A human closed it deliberately; reopening it is overriding a
+     decision you cannot see the reasons for. PATCH the parent **and** the Verify
+     subtask to `cancelled`, with a comment naming the closed PR number and its
+     URL, and state that the closure is being treated as terminal. If the work is
+     still wanted, it comes back as a *new* task with a *new* premise — that is
+     the operator's call to make, not a sweep's.
+   - **An open PR** → nothing to do; skip to step 5.
+   - **Nothing at all** → `git push origin task/{task-id}` then `gh pr create
+     --head task/{task-id} --base main`, body noting cargo result + base SHA +
+     "PR opened by Coordinator decoupled-land step".
+
+   Still idempotent for the branch push itself: if the branch is already on
+   origin, skip that part.
+
+   > **A closed PR is a decision, and the pipeline's default is to re-derive
+   > rather than to remember.** Every other terminal signal here is a status the
+   > sweep writes itself; this one is written *outside* Paperclip entirely, by a
+   > human on GitHub, and nothing imports it. Treating it as absence is what turns
+   > "I rejected this" into "please reject it again".
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
    *opened*, now met). Comment the PR link on the parent; leave the parent
    `in_review` until the human merges (§Merge sweep tears down on merge).
