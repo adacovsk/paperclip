@@ -491,7 +491,7 @@ For each parent `{task-id}`:
    >
    > **Take the scope list, not `ps` alone.** A wrapper launched through
    > `~/.cache/paperclip-verify/run-AA-<id>.sh` has argv
-   > `/usr/bin/setsid bash /home/.../run-AA-6377.sh` — the `verifyrun-AA-<id>`
+   > `/usr/bin/setsid bash /home/.../run-AA-<id>.sh` — the `verifyrun-AA-<id>`
    > token is *inside the script file*, so a `grep` over `ps` output cannot see
    > it and the build reads as dead. Measured: 17 scopes against 16 argv rows,
    > and the one dropped row was a live build that had already finished clippy
@@ -953,12 +953,14 @@ the two cannot come apart. Two separate calls can, and do.
 > *500s*, and that operators should post the comment separately. Probed against
 > the live server while writing this: the combined PATCH returned **200 and the
 > comment landed**, so that note is stale or condition-specific — plausibly the
-> concurrency race in AA-5796 rather than an unconditional refusal. Treat the
+> concurrency race described below rather than an unconditional refusal. Treat the
 > combined form as preferred but not guaranteed: if it errors, fall back to
 > `POST /api/issues/{id}/comments` **first**, confirm the `201`, and only then
-> PATCH the status. That order matters — AA-5796 measured the failure as
-> *asymmetric*, with the status advancing and the comment vanishing, so writing
-> the reason first is what makes a partial failure recoverable.
+> PATCH the status. That order matters: the failure has been measured as
+> *asymmetric* — under a tight loop of comment-then-status writes the comment
+> insert is the half that rolls back, so the status advances and the record
+> vanishes. Writing the reason first is what makes a partial failure
+> recoverable.
 
 Either way the invariant is the same: a status change without its reason
 recorded is not a status change you are allowed to make.
