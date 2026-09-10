@@ -790,6 +790,17 @@ worktree for ~67 minutes of rustc CPU before anything reaped it.
 
 ```sh
 agents/architect/reap-verify.sh {task-id} pr-merged   # in $PAPERCLIP_REPO
+
+# HARD GATE — never delete a branch carrying commits that are not on main.
+# `git branch -d` is NOT this check: it compares against the *current* HEAD, not
+# origin/main, so it refuses genuinely-merged branches and permits unmerged ones.
+git fetch -q origin main
+if ! git merge-base --is-ancestor task/{task-id} origin/main; then
+  echo "REFUSING teardown: task/{task-id} has commits not on origin/main"
+  git log --oneline origin/main..task/{task-id}
+  exit 1        # park it, report it, and leave both branch and worktree alone
+fi
+
 git worktree remove .paperclip/worktrees/{task-id}
 git branch -D task/{task-id}        # local branch
 # remote branch is auto-deleted by GitHub on squash-merge
@@ -799,6 +810,27 @@ The reap is `reap-verify.sh` and not an inline loop **because it is needed at
 more than one exit** — see §Reaping an unwanted verify build below, which is the
 single place the rule and its safety argument live. Run it before
 `git worktree remove`; removing the directory does not stop a live cargo.
+
+**Why the ancestor gate is a hard stop and not a warning.** Deleting a branch
+destroys the only remaining ref to its commits, and git will garbage-collect
+them; there is no undo and nothing surfaces the loss. Two complete, review-clean
+tasks were `cancelled` with no comment while holding unique commits — a five-file
+data-and-Rust fix and a three-file docs fix, on no remote at the time. A later
+sweep pushed them, and a still later teardown deleted the remote branches again.
+When they were finally looked for, all three commits existed **only as
+unreferenced loose objects in one checkout**, one `gc` from unrecoverable.
+
+Two rules follow, and they are separate:
+
+- **Teardown is gated on `merge-base --is-ancestor`, not on task status.** A
+  `done`, `cancelled` or `blocked` status says what someone decided; it says
+  nothing about whether the work reached `origin/main`. Those are independent,
+  and this gate reads the one that matters. The vocabulary note in §Landing
+  sweep applies here too: "landed" means merged, never "a PR existed".
+- **A branch that fails the gate is parked and reported, never deleted.**
+  Push it if it is not on origin, name it in your record with its commit list,
+  and leave it for the operator. An accumulating unmerged branch is a visible,
+  cheap problem; a deleted one is an invisible, permanent one.
 
 ## Reaping an unwanted verify build
 
