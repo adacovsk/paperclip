@@ -75,7 +75,7 @@ States: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `cancelled`, `blo
 
 | Role | Skills | `dangerouslySkipPermissions` | `maxConcurrentRuns` (default) |
 |---|---|---|---|
-| Worker | none | false | 4 |
+| Worker | none | true | 4 |
 | Reviewer | `paperclip` | true | 4 |
 | Architect | none | true (needs shell for cargo + gh) | **8** |
 | Coordinator | `paperclip`, `paperclip-create-agent` | true | 1 |
@@ -85,6 +85,14 @@ States: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `cancelled`, `blo
 One agent instance per role; concurrency comes from `maxConcurrentRuns`. Architect's cap above 1 is intentional — the cargo *build* step is bounded independently by the `cargo-sem.sh` FIFO slot semaphore (`CARGO_SEM_SLOTS`, default physical cores − 1), **not** by run count (per-worktree `target/`s share no build lock), so extra runs just queue on the semaphore for cargo while parallelizing everything cheap (analyzing output, applying fixes, committing, pushing, opening PR) — the bottleneck-around-cargo flow you want. To add *build* parallelism you raise `CARGO_SEM_SLOTS`, not `maxConcurrentRuns`.
 
 Workers have no skills because the adapter injects task context directly into their prompt; agents that hit the API need the `paperclip` skill (which uses `curl`, hence skip-permissions).
+
+Every role runs with `dangerouslySkipPermissions: true`, Worker included. The table read
+`false` for Worker on the reasoning above — no skills, so no `curl`, so no need — but that
+argument is about *API access*, not about prompts. A Worker runs headless, so anything that
+raises a permission prompt stalls until the run times out and the task fails. Skip-permissions
+is what keeps a headless run from hanging, and it is needed whether or not the agent holds a
+skill. If the Worker should be genuinely sandboxed, that is a change to how the pipeline runs
+and belongs in its own decision, not in this table.
 
 ## Cadence
 
