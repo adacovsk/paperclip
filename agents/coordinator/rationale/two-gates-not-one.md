@@ -1,6 +1,6 @@
 # Why the two capacity gates stay separate
 
-**Justifies:** *Do not "simplify" this by folding `inflight` into the first gate.* (Run step 9a)
+**Justifies:** *Do not fold `inflight` into the first gate.* (Run step 9a)
 
 The two gates answer different questions and act on different things. `ready` asks whether
 un-started work exists, and blocks intake outright. `inflight` asks whether the build lock is

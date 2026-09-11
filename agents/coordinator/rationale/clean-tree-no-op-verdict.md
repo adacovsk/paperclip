@@ -1,6 +1,6 @@
 # Why a clean 0-commit exit needs its own arm
 
-**Justifies:** *This arm exists because clean/0-commit is otherwise indistinguishable from never-started* (Run step 3)
+**Justifies:** *if absent, read the run's `resultJson.result` before re-dispatching* (Run step 3)
 
 A run that finishes having changed nothing leaves the same repository state as a run that
 never started: clean tree, no commits, no branch movement. Nothing in the tree distinguishes
