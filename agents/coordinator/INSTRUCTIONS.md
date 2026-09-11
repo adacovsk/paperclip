@@ -184,7 +184,7 @@ line rather than filing a record.
      operator`; stop re-dispatching that task.
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
 5. Promote backlog → `todo` if <2 Worker tasks active. **Allocate and verify the worktree first, then PATCH status and `assigneeAgentId` in that order** (see §Worktree allocation below) — setting the assignee is what fires the Worker wake, so it must be the last write, never the first.
-   - **A task that keeps its `backlog` status must never carry a Worker assignee.** `wakeOnDemand` fires on the assignee change alone; status is not consulted. A `backlog` task with `assigneeAgentId` = Worker is therefore a wake that cannot succeed: the Worker hard-gates at its Step 0 on a `worktree:` path that promotion never wrote, aborts in ~15s, and leaves the task `backlog` — so the next sweep dispatches it again. Four such runs burned in a single fire (AA-6613, AA-6984, AA-6895, AA-4484 — the last one recording in its own result that it was the *second* identical dispatch). It is a livelock, not a transient, and the only thing that breaks it is not making the assignment. → [why a dispatch without a worktree is a livelock](rationale/no-worktree-no-dispatch.md)
+   - **A task that keeps its `backlog` status must never carry a Worker assignee.** `wakeOnDemand` fires on the assignee change alone; status is not consulted. A `backlog` task with `assigneeAgentId` = Worker is therefore a wake that cannot succeed: the Worker hard-gates at its Step 0 on a `worktree:` path that promotion never wrote, aborts in ~15s, and leaves the task `backlog` — so the next sweep dispatches it again. Four such runs burned in a single fire (four in one fire — the last recording in its own result that it was the *second* identical dispatch). It is a livelock, not a transient, and the only thing that breaks it is not making the assignment. → [why a dispatch without a worktree is a livelock](rationale/no-worktree-no-dispatch.md)
    - If the worktree cannot be allocated, leave the task in `backlog`, leave it **unassigned**, and comment why. An un-dispatchable task parked with a stated reason is cheap; one dispatched every fire is not.
    - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because the second one's merge conflict is billed to the operator as a hand-merge.
      **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges. → [why shared surfaces finish later, not sooner](rationale/contended-edit-surface.md)
@@ -370,6 +370,37 @@ the cap admits more verifies than intended onto the semaphore that is already
 the throughput constraint. The two readings are load-bearing in opposite
 directions — under-reading kills a live build in the sweep, and under-reading
 over-dispatches here.
+
+**Also report an untracked build holding the semaphore — you cannot reap it, and
+nothing else surfaces it.** A build launched outside a verify wrapper (an agent
+shell, an operator's hand-run) draws a `cargo-sem.sh` ticket like any other, but
+belongs to no task: nothing will read its result, it cannot commit or open a PR,
+and because it is normal-priority `express_waiting()` never yields to it. It is
+pure contention against builds that can land. One measured instance sat 47
+minutes producing a zero-byte log, racing the express build for the very
+regeneration that would have unblocked the queue.
+
+It is **deliberately out of the orphan reaper's scope** — `reap_escaped_orphans()`
+in `cargo-sem.sh` requires cwd under `.paperclip/worktrees/`, so a build in
+`$PAPERCLIP_PROJECT` itself is never killed. That exclusion is correct: the main
+checkout is where the operator builds by hand, and killing their build to reclaim
+a slot is a worse failure than the slot. Correctly-excluded is not covered,
+though, so the gap is yours to *report*:
+
+```sh
+# Semaphore waiters whose cwd is the main checkout and whose parent is gone.
+for p in /proc/[0-9]*; do
+  c=$(cat "$p/comm" 2>/dev/null); case "$c" in cargo|rustc) ;; *) continue ;; esac
+  [ "$(readlink -f "$p/cwd" 2>/dev/null)" = "$(readlink -f "$PAPERCLIP_PROJECT")" ] || continue
+  [ "$(awk '$1=="PPid:"{print $2; exit}' "$p/status" 2>/dev/null)" = "1" ] || continue
+  echo "UNTRACKED BUILD ${p#/proc/} $c — holds a ticket, owned by no task"
+done
+```
+
+Name any hit in your record with its pid, age and log path, and **leave it
+running**. The operator decides whether it is theirs; a sweep cannot tell a
+deliberate hand-build from abandoned debris, and guessing wrong destroys work
+whose only record is that process.
 
 `cargo-sem.sh` publishes its derived `SLOTS` on every run; the census is the
 same one §Landing sweep step 1 uses.
@@ -861,10 +892,10 @@ A non-zero count requires **one** of these recorded in the closing comment:
 | **Abandoned** | commits not wanted | the reason, plus the tip SHA and diffstat, before deleting |
 
 "A re-filed task exists" is **not** a recovery unless that task's body names this
-branch as its source. The failure this guards is exact: `task/AA-5246` carried a
-finished five-commit implementation while AA-6895 sat in `backlog` scheduled to
-write the same feature from scratch, and `task/AA-5853` was the branch AA-7012
-escalated to the operator to recover **by hand** — both because a cancel closed
+branch as its source. The failure this guards is exact: one branch carried a
+finished five-commit implementation while a `backlog` task sat scheduled to
+write the same feature from scratch, and another branch had to be escalated to
+the operator to recover **by hand** — both because a cancel closed
 the ticket and left the code unaddressed. Six such branches accumulated 1,840
 insertions with no path to `main`.
 

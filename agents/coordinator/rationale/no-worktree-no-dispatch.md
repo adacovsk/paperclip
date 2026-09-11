@@ -10,7 +10,7 @@ as it found it.
 That last clause is what makes this a livelock rather than a one-off waste. The task is still
 `backlog`, still un-allocated, still assigned — so it is still a dispatch candidate, and the next
 sweep fires the identical run. Four of these were measured in the last 50 company heartbeat-runs
-of one fire (~$1.70), and AA-4484's own result text records that it was the second identical
+of one fire (~$1.70), and one run's own result text records that it was the second identical
 dispatch of that task.
 
 Nothing in the loop degrades, so nothing escalates. The failure is invisible in every metric that
@@ -22,5 +22,5 @@ Worker a fallback allocation all move the allocation decision to the agent least
 Coordinator is the single writer on the worktree namespace, and allocation is its job. So the
 precondition belongs on the write that fires the wake.
 
-Distinct from AA-6708 (Worker *rebase* dispatch is a no-op) and AA-4004 (completed stages
-re-woken): both of those dispatch onto tasks that do have worktrees.
+Distinct from the Worker *rebase* no-op and from completed stages being re-woken: both of
+those dispatch onto tasks that do have worktrees.
