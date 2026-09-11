@@ -15,3 +15,16 @@ trips on that inflated number and skips intake, and the failure is invisible fro
 the pipeline reports a deep backlog while the Worker sits idle, and the supply that would have
 fixed it is never promoted. A depth measurement that includes undispatchable work does not
 measure depth.
+
+A third category joins them, and it is the one an assignee check misses. A task can be
+assigned and still be undispatchable: parked on a question only the operator can answer,
+missing the `worktree:` line its Worker hard-gates on, or held by step 5 because a file it
+must edit is already in flight. Step 5 refuses to promote exactly these, which is correct —
+but the same tasks then present to the capacity gate as supply, because they have an
+assignee.
+
+That is worse than an unassigned task sitting there, because it is self-reinforcing. Held
+work suppresses the intake that would have produced work that is *not* held, so the queue
+cannot refill itself out of the condition. The test is not "does this task have an
+assignee" but "could step 5 hand this to a Worker on this fire" — if step 5 is holding it,
+it is not depth, whoever it is assigned to.
