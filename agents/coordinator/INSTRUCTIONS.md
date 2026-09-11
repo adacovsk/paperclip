@@ -920,9 +920,20 @@ agents/architect/reap-verify.sh {task-id} pr-merged   # in $PAPERCLIP_REPO
 # origin/main, so it refuses genuinely-merged branches and permits unmerged ones.
 git fetch -q origin main
 if ! git merge-base --is-ancestor task/{task-id} origin/main; then
-  echo "REFUSING teardown: task/{task-id} has commits not on origin/main"
-  git log --oneline origin/main..task/{task-id}
-  exit 1        # park it, report it, and leave both branch and worktree alone
+  # Ancestry is the right *first* test and the wrong *only* test: a squash-merge
+  # replays the branch as one new commit, so the original tip is never an
+  # ancestor of main even though every line of it landed. Ask GitHub what
+  # happened to the PR before concluding the work is unlanded.
+  # Bare `gh`, run from the project checkout, same as every other gh call here.
+  SQUASH=$(gh pr list --head "task/{task-id}" --state merged \
+             --json mergeCommit -q '.[0].mergeCommit.oid' 2>/dev/null)
+  if [ -n "$SQUASH" ] && git merge-base --is-ancestor "$SQUASH" origin/main; then
+    echo "task/{task-id}: squash-merged as ${SQUASH:0:9}; teardown proceeds"
+  else
+    echo "REFUSING teardown: task/{task-id} has commits not on origin/main"
+    git log --oneline origin/main..task/{task-id}
+    exit 1      # park it, report it, and leave both branch and worktree alone
+  fi
 fi
 
 git worktree remove .paperclip/worktrees/{task-id}
@@ -934,6 +945,19 @@ The reap is `reap-verify.sh` and not an inline loop **because it is needed at
 more than one exit** — see §Reaping an unwanted verify build below, which is the
 single place the rule and its safety argument live. Run it before
 `git worktree remove`; removing the directory does not stop a live cargo.
+
+**The squash fallback is not a loosening — it is what keeps the gate usable.**
+Without it the gate refuses *every* squash-merged branch forever, so the
+worktrees it protects accumulate without bound and the rule gets disabled rather
+than obeyed. Measured in `$PAPERCLIP_REPO`: three branches whose PRs had all been
+merged failed `--is-ancestor` with one commit ahead apiece, purely because a
+squash commit is not a descendant of the original tip. Verifying each PR's
+`mergeCommit.oid` against `origin/main` settled all three in one call.
+
+Note the fallback asks for `--state merged` specifically. A **closed-unmerged**
+PR returns nothing and the gate still refuses, which is correct — that branch's
+work did not land, and §Landing sweep step 4 treats the closure as terminal
+rather than as permission to delete the evidence.
 
 **Why the ancestor gate is a hard stop and not a warning.** Deleting a branch
 destroys the only remaining ref to its commits, and git will garbage-collect
