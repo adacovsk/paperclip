@@ -1,6 +1,6 @@
 # Why a dirty worktree needs a liveness probe
 
-**Justifies:** *Check liveness before concluding death.* (Run step 3)
+**Justifies:** *Probe liveness first* — the dirty-tree/0-commit arm (Run step 3)
 
 A dirty worktree with no commits has two completely different causes, and the repository
 cannot tell you which one you are looking at. A run may have died partway through its edits,

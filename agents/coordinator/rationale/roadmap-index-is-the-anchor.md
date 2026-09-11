@@ -1,6 +1,6 @@
 # Why the front index is the scan anchor
 
-**Justifies:** *Why this is the anchor and the phase headers are not.* (Roadmap intake)
+**Justifies:** *anchoring below it scans past the entire supply and never comes back* (Run step 9b)
 
 Everything written for promotion lives in the `## Active fronts` index at the top of the
 roadmap: one top-level bullet per front, each prefixed with its section number, each carrying a

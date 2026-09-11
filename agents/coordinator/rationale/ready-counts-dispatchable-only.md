@@ -1,6 +1,6 @@
 # Why the capacity gate counts only dispatchable tasks
 
-**Justifies:** *Count only tasks that are actually dispatchable, or this gate measures the wrong pool.* (Run step 9a)
+**Justifies:** *dispatchable only — skip unassigned tasks* (Run step 9a)
 
 The gate asks one question — is there un-started work a Worker could pick up? — so it must
 count only tasks a Worker will ever be handed.

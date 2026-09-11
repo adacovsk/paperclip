@@ -1,6 +1,6 @@
 # Why inflight is not everything in_review
 
-**Justifies:** *`inflight` is not "everything `in_review`".* (Run step 9a)
+**Justifies:** *Not "everything `in_review`"* — the `inflight` definition (Run step 9a)
 
 This gate exists to protect one scarce resource — the build lock — so it has to count that
 resource and nothing else.
