@@ -106,9 +106,31 @@ Diff live `adapterConfig.promptTemplate` + `instructionsFilePath` content agains
 
 `runtimeConfig.heartbeat.sessionCompaction` is deliberately **per-agent and non-uniform** — each agent's thresholds are tuned to its own observed run distribution, not to a house default. `claude_local`'s adapter default zeroes every threshold, so an agent with no override never rotates at all; an agent whose values differ from its neighbours is not drift. Flag only a *missing* `sessionCompaction` block, or `enabled: false`.
 
-### 6. Hide stale completions
+### 6. (removed) Hide stale completions — never re-add a `hiddenAt` write
 
-`status` in `done`/`cancelled`, `updatedAt` > 7 days, `hiddenAt` null → `PATCH /issues/{id} {"hiddenAt": <now>}`. No comment. Planner pattern-scan unaffected.
+This step used to PATCH `{"hiddenAt": <now>}` onto every `done`/`cancelled` task
+older than 7 days. **The server refuses that field by policy**, not by accident:
+
+```
+PATCH /api/issues/<id>  {"hiddenAt": "..."}
+400  {"error":"Issues are never hidden. Use a terminal status (done/cancelled) instead."}
+```
+
+`server/src/routes/issues.ts` rejects it loudly on purpose — `hiddenAt` is filtered
+out of every listing, activity and routine query, so a hidden row is invisible to
+the sweeps and to anyone auditing the board. `cancelled` already carries "done with
+this" while staying greppable.
+
+The step therefore could never succeed, and one sweep spent **368 PATCHes for 368
+`400`s**. Worse than the waste: it read as an unperformed duty, so a later sweep
+could plausibly escalate its own failures as a platform outage.
+
+Two adjacent spellings are also dead ends, so do not reach for them: an epoch-millis
+`hiddenAt` fails Zod validation, and `{"hidden": true}` returns `200 OK` with the
+field **silently dropped** — the same `assigneeId`-vs-`assigneeAgentId` trap.
+
+If keeping the Planner's pattern-scan off a long tail of old terminal issues is still
+wanted, it needs a query-side mechanism (a date bound on the scan) — not a write.
 
 ### 7. Stale branch sweep
 
