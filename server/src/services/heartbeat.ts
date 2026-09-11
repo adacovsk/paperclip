@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, type BillingType } from "@paperclipai/shared";
 import {
@@ -32,6 +32,7 @@ import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } fr
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { shouldWakeNextMover } from "./stage-completion-wake.js";
+import { resolveSubtaskWakeTarget } from "./subtask-wake-target.js";
 import { isSweepWakeReason, wakeCoalesceScope } from "./sweep-wake-scope.js";
 import {
   buildWorkspaceReadyComment,
@@ -171,6 +172,21 @@ const STALE_QUEUED_EXECUTION_LOCK_MS = Math.max(
  * before reporting, so it always clears that bar. A child's own
  * `subtask.completed` callback is what legitimately re-wakes these parents.
  */
+/**
+ * The company's Coordinator, the default next mover for anything with no live
+ * stage of its own. Shared by the top-level arm of the subtask-completion wake
+ * and by the redirect `resolveSubtaskWakeTarget` asks for, so the two cannot
+ * disagree about who that is.
+ */
+async function coordinatorIdFor(db: Db, companyId: string): Promise<string | null> {
+  return db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.companyId, companyId), eq(agents.role, "coordinator")))
+    .limit(1)
+    .then((rows) => rows[0]?.id ?? null);
+}
+
 export function inReviewOnlyWhenOwnStageIsLive(agentId: string) {
   return sql`NOT (
     ${issues.status} = 'in_review'
@@ -3357,14 +3373,53 @@ export function heartbeatService(db: Db) {
                 );
               } else if (existingIssue.parentId) {
                 const parentIssue = await issuesSvc.getById(existingIssue.parentId);
-                wakeTargetAgentId = parentIssue?.assigneeAgentId ?? null;
+                // "Is anyone still working on this parent?" — every sibling that
+                // is neither done nor cancelled, excluding the child that just
+                // finished (its status may not be committed yet, and it is the
+                // one thing we know is complete).
+                const otherOpenChildren = await db
+                  .select({ id: issues.id })
+                  .from(issues)
+                  .where(
+                    and(
+                      eq(issues.parentId, existingIssue.parentId),
+                      ne(issues.id, issueId),
+                      notInArray(issues.status, ["done", "cancelled"]),
+                    ),
+                  )
+                  .limit(1);
+                const target = resolveSubtaskWakeTarget({
+                  parentStatus: parentIssue?.status ?? null,
+                  hasOtherOpenChild: otherOpenChildren.length > 0,
+                });
+                if (target.kind === "none") {
+                  logger.info(
+                    {
+                      issueId,
+                      agentId: agent.id,
+                      runId: run.id,
+                      parentId: existingIssue.parentId,
+                      parentStatus: parentIssue?.status ?? null,
+                    },
+                    `suppressed subtask-completion wake (${target.reason} — nothing downstream can advance)`,
+                  );
+                } else if (target.kind === "coordinator") {
+                  wakeTargetAgentId = await coordinatorIdFor(db, agent.companyId);
+                  logger.info(
+                    {
+                      issueId,
+                      agentId: agent.id,
+                      runId: run.id,
+                      parentId: existingIssue.parentId,
+                      wakeTargetAgentId,
+                    },
+                    `redirected subtask-completion wake to the Coordinator (${target.reason})`,
+                  );
+                } else {
+                  wakeTargetAgentId = parentIssue?.assigneeAgentId ?? null;
+                }
               } else {
-                wakeTargetAgentId = await db
-                  .select({ id: agents.id })
-                  .from(agents)
-                  .where(and(eq(agents.companyId, agent.companyId), eq(agents.role, "coordinator")))
-                  .limit(1)
-                  .then((rows) => rows[0]?.id ?? null);
+                wakeTargetAgentId = await coordinatorIdFor(db, agent.companyId);
               }
               if (wakeTargetAgentId) {
                 const wakePivotId = existingIssue.parentId ?? issueId;
