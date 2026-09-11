@@ -183,19 +183,24 @@ line rather than filing a record.
      (`git -C .paperclip/worktrees/{task-id} log --oneline origin/main..HEAD`) and `escalate to
      operator`; stop re-dispatching that task.
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
-5. Promote backlog → `todo` if <2 Worker tasks active. PATCH must set `assigneeAgentId`. **Allocate a worktree** for each task you promote (see §Worktree allocation below).
+5. Promote backlog → `todo` if <2 Worker tasks active. **Allocate and verify the worktree first, then PATCH status and `assigneeAgentId` in that order** (see §Worktree allocation below) — setting the assignee is what fires the Worker wake, so it must be the last write, never the first.
+   - **A task that keeps its `backlog` status must never carry a Worker assignee.** `wakeOnDemand` fires on the assignee change alone; status is not consulted. A `backlog` task with `assigneeAgentId` = Worker is therefore a wake that cannot succeed: the Worker hard-gates at its Step 0 on a `worktree:` path that promotion never wrote, aborts in ~15s, and leaves the task `backlog` — so the next sweep dispatches it again. Four such runs burned in a single fire (AA-6613, AA-6984, AA-6895, AA-4484 — the last one recording in its own result that it was the *second* identical dispatch). It is a livelock, not a transient, and the only thing that breaks it is not making the assignment. → [why a dispatch without a worktree is a livelock](rationale/no-worktree-no-dispatch.md)
+   - If the worktree cannot be allocated, leave the task in `backlog`, leave it **unassigned**, and comment why. An un-dispatchable task parked with a stated reason is cheap; one dispatched every fire is not.
    - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because the second one's merge conflict is billed to the operator as a hand-merge.
      **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first merges. → [why shared surfaces finish later, not sooner](rationale/contended-edit-surface.md)
    - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it. → [why contention is removed rather than scheduled around](rationale/contention-is-a-file-defect.md)
    - **When several branches are already conflicting on one file, ask the operator to merge them in a deliberate order** — resolve the contended file once and rebase the rest onto that result. Six blind three-way merges of the same hunk produce six divergent resolutions; do not park them as independent operator work.
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
-8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged.
+8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged. Any parent you close here, or anywhere else, needs a §Branch disposition on close record first.
 9. **Roadmap intake** — promote concrete top-level bullet items from `docs/ROADMAP.md` into the backlog. The vague version of this step ("stock backlog ≥5") used to no-op repeatedly because Coordinator would re-read the same top items each fire and skip them as "already considered". Be concrete:
-   a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status in todo, in_progress, backlog)` and `inflight = count(in_review parents that are still waiting on the Architect)`.
-      - **Count only tasks that are actually dispatchable, or this gate measures the wrong pool.** `ready` exists to answer *"is there un-started work a Worker could pick up?"* — so exclude any task no Worker will ever be handed. Concretely: **skip unassigned tasks** (your own step 0 says unassigned = invisible; a task nothing can dispatch is not queue depth) and skip platform/pipeline/host bugs, which are Facilitator's and are routinely parked for weeks. → [why undispatchable work is not queue depth](rationale/ready-counts-dispatchable-only.md)
-      - Symptom to recognise: `ready` is large, `in_progress` is **0**, and Worker has nothing active. That combination means the queue is deep in name only — recount it with the exclusions above before skipping intake.
-      - If `ready ≥ 5` → skip roadmap intake entirely; the un-started queue is already deep.
+   a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings, let `ready = count(status == backlog)` and `inflight = count(in_review parents that are still waiting on the Architect)`.
+      - **`ready` counts `backlog` only, because `backlog` is supply and `todo` is queue depth — they are different populations and one counter cannot answer both.** Intake exists to restock *un-started supply*; `backlog` is exactly that, and nothing is handed to a Worker from it until step 5/8 promotes it. Folding `todo`/`in_progress` in makes the gate measure work that has already been dispatched, so a deep backlog and an empty Worker queue are simultaneously true while intake reads "full" and skips forever. Measured when this was found: `backlog` = 20 (13 promotable parents), `todo` = 7 of which **0** were Worker-dispatchable — 4 unassigned `Verify:` rows that 9a's own dispatchable rule already excluded, 2 Planner-bound, 1 a Facilitator finding. `ready` read 13+ and intake skipped while the Worker had nothing to pull. → [why `backlog` is supply and `todo` is queue depth](rationale/ready-counts-supply-not-queue.md)
+      - **When `ready` is deep and Worker-assignable `todo` + `in_progress` is 0-1, the corrective action is step 5 promotion, not step 9 intake.** Intake correctly has nothing to do in that state; run the promotion and say so in the routine comment. Do not "fix" a starved Worker by promoting more roadmap bullets into a backlog that is already deep.
+      - Excluding the unassigned `Verify:` rows does **not** move this gate — they were already excluded, and removing all four left `ready` unchanged. Supply was never the shortage either. Do not re-file that premise.
+      - **Count only tasks that are actually dispatchable, or this gate measures the wrong pool.** `ready` exists to answer *"is there un-started supply a Worker could be handed?"* — so exclude any task no Worker will ever be handed. Concretely: **skip unassigned tasks** (your own step 0 says unassigned = invisible; a task nothing can dispatch is not queue depth) and skip platform/pipeline/host bugs, which are Facilitator's and are routinely parked for weeks. → [why undispatchable work is not queue depth](rationale/ready-counts-dispatchable-only.md)
+      - Symptom to recognise: `ready` is large, `in_progress` is **0**, and Worker has nothing active. That combination means the queue is deep in name only — recount it with the exclusions above, then **promote** (step 5) rather than skipping the fire.
+      - If `ready ≥ 5` → skip roadmap intake entirely; the un-started supply is already deep.
       - Else if `ready + inflight ≥ 8` → scan and promote **`data-only` items only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. Architect-bound parents serialize on the cargo lock, so promoting more `needs-build` work lengthens that queue without adding throughput, while `data-only` work skips Architect entirely and still flows.
       - **`inflight` is not "everything `in_review`".** Count a parent only if it is genuinely queued for or running a build: it has an open Architect verify subtask, or a build slot held against its worktree. An `in_review` parent whose PR is already open is waiting on a **human merge**, not on the Architect — it consumes no build capacity, and counting it throttles intake on an idle resource. This gate exists to protect the cargo lock, so measure the cargo lock. → [why in_review is the wrong thing to count](rationale/inflight-measures-the-cargo-lock.md)
       - **Do not "simplify" this by folding `inflight` into the first gate.** `inflight` throttles `needs-build`; it never blocks intake outright. → [why a single combined gate starves supply](rationale/two-gates-not-one.md)
@@ -277,6 +282,23 @@ Only after verification succeeds, PATCH the task with the worktree path
 and branch as a `worktree:` line in the description (custom fields
 preferred when the schema supports them; fall back to description
 otherwise). Worker/Reviewer/Architect read this in their step 0.
+
+**Write order is load-bearing, because the assignee write is the wake.**
+
+```
+1. allocate worktree      2. verify it      3. PATCH worktree: line + status
+4. PATCH assigneeAgentId  ← fires the wake; nothing after this point is preparation
+```
+
+`wakeOnDemand` triggers on an `assigneeAgentId` *change* and does not look at
+status, so an assignment made before step 3 races the agent's own Step 0 read and
+usually loses. Never set the assignee "to reserve it" and allocate afterwards.
+
+**Corollary — before dispatching any task, re-read it and confirm it carries a
+`worktree:` line and that the directory still exists.** This is cheap and catches
+the case allocation-time verification cannot: a worktree GC'd or hand-removed
+between fires. A task failing this check goes back to `backlog`, unassigned, with a
+comment — it is not re-dispatched in hope.
 
 Skip allocation if the worktree already exists (idempotent re-promote).
 
@@ -812,6 +834,43 @@ cherry-pick on main, stop and escalate to the operator.
 
 - Long-running batch verifies that span multiple Coordinator fires (verify subtask correctly stays `in_review` across fires; only flag once it goes `done`).
 - Tasks where Worker never recorded a SHA in any comment AND the cherry-pick commit message doesn't mention the task ID. Step 4 returns nothing in that case and step 5 re-opens. Acceptable — re-opening is cheaper than missed-loss.
+
+## Branch disposition on close (required before `done`/`cancelled`)
+
+**Terminal task status is a disposition for the *ticket*. It is not a disposition
+for the *code*.** A task ends for reasons that say nothing about whether its
+commits are wanted — superseded, re-filed, stale past a migration, closed on a
+partial land. The branch outlives the ticket and then has no owner at all:
+§Worktree teardown fires only on a *merged* PR, §Stale worktree GC looks at local
+worktrees, and a terminal task is never re-dispatched. Nothing ever asks again.
+
+So before you PATCH any parent task to `done` or `cancelled`, run the test:
+
+```sh
+git fetch -q origin
+git rev-list --count origin/main..origin/task/{task-id}    # 0 → nothing to dispose
+git diff --stat origin/main...origin/task/{task-id}
+```
+
+A non-zero count requires **one** of these recorded in the closing comment:
+
+| Disposition | When | What you write |
+|---|---|---|
+| **Landed** | commits are on `origin/main` | the merged PR number |
+| **Recovered** | commits wanted, ticket ending anyway | the live task id now sourcing **from this branch** — not one that re-derives the work |
+| **Abandoned** | commits not wanted | the reason, plus the tip SHA and diffstat, before deleting |
+
+"A re-filed task exists" is **not** a recovery unless that task's body names this
+branch as its source. The failure this guards is exact: `task/AA-5246` carried a
+finished five-commit implementation while AA-6895 sat in `backlog` scheduled to
+write the same feature from scratch, and `task/AA-5853` was the branch AA-7012
+escalated to the operator to recover **by hand** — both because a cancel closed
+the ticket and left the code unaddressed. Six such branches accumulated 1,840
+insertions with no path to `main`.
+
+Abandonment is a legitimate outcome and is cheap to record; silence is what costs.
+Deletion still goes through the §Worktree teardown hard gate — the disposition
+authorises it, it does not replace the ancestor check.
 
 ## Worktree teardown
 
