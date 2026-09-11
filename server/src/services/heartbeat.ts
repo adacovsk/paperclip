@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, type BillingType } from "@paperclipai/shared";
 import {
@@ -110,6 +110,28 @@ const HEARTBEAT_RUN_HARD_TIMEOUT_MS = Math.max(
 const CHAIN_WAKE_MIN_INTERVAL_MS = Math.max(
   0,
   Number(process.env.CHAIN_WAKE_MIN_INTERVAL_MS) || 5 * 60 * 1000,
+);
+
+// How long a *queued* run may hold an issue's execution lock before the lock is
+// aged out.
+//
+// Nothing else bounds it. `resumeQueuedRuns` is called only at server start, and
+// `startNextQueuedRunForAgent` refuses while the agent is paused, terminated, or
+// already at `maxConcurrentRuns` — so a queued run can sit indefinitely.
+// `reapOrphanedRuns` deliberately skips `queued`, the wake path's own expiry only
+// fires for a run that has *left* queued/running, and
+// `releaseIssueExecutionAndPromote` only fires when a run terminates. A run that
+// never starts therefore holds the lock forever, and every assignment wake for
+// that issue is deferred against it — the issue reads as an ordinary assigned
+// `todo` while being undispatchable, which is the AA-6096 shape.
+//
+// `running` is deliberately NOT aged out here: that is the reaper's job, and
+// expiring a live run's lock would double-dispatch work that is in flight. A
+// queued run is executing nothing by definition, so releasing its lock cannot
+// duplicate anything — at worst the run later starts and re-locks.
+const STALE_QUEUED_EXECUTION_LOCK_MS = Math.max(
+  60_000,
+  Number(process.env.STALE_QUEUED_EXECUTION_LOCK_MS) || 15 * 60 * 1000,
 );
 
 /**
@@ -3993,6 +4015,19 @@ export function heartbeatService(db: Db) {
           activeExecutionRun = null;
         }
 
+        // Age out a lock held by a run that never left the queue. See
+        // STALE_QUEUED_EXECUTION_LOCK_MS: without this, a queued run that can
+        // never start (paused agent, saturated maxConcurrentRuns) holds the
+        // issue undispatchable forever, because no other path expires it.
+        const staleQueuedLockCutoff = new Date(Date.now() - STALE_QUEUED_EXECUTION_LOCK_MS);
+        if (
+          activeExecutionRun &&
+          activeExecutionRun.status === "queued" &&
+          new Date(activeExecutionRun.createdAt).getTime() <= staleQueuedLockCutoff.getTime()
+        ) {
+          activeExecutionRun = null;
+        }
+
         if (!activeExecutionRun && issue.executionRunId) {
           await tx
             .update(issues)
@@ -4012,7 +4047,17 @@ export function heartbeatService(db: Db) {
             .where(
               and(
                 eq(heartbeatRuns.companyId, issue.companyId),
-                inArray(heartbeatRuns.status, ["queued", "running"]),
+                // Same staleness bound as the lock expiry above. Without it this
+                // fallback re-adopts the very run that was just aged out — the
+                // lock would clear and re-set within one wake, and nothing would
+                // change.
+                or(
+                  eq(heartbeatRuns.status, "running"),
+                  and(
+                    eq(heartbeatRuns.status, "queued"),
+                    gt(heartbeatRuns.createdAt, staleQueuedLockCutoff),
+                  ),
+                ),
                 sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
               ),
             )

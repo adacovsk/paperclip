@@ -64,6 +64,12 @@ Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite,
 
    A genuinely generic or operationally required token opts out per line with `<!-- privacy-ok: why -->`, which documents itself and reveals nothing the same line does not already show. Run it before pushing any `agents/**` edit — prose alone would not have caught the 144 references the guard found on its first run.
 
+10. **Closing a defect: verify the mechanism, not the absence of symptoms.** A fleet scan showing the bad state is nowhere present answers *"is it happening right now"*, which is not the question a defect ticket asks. Read the code path that would produce it and confirm every branch is covered.
+
+   The worked case: a lock-expiry defect was closed on three readings, each individually true — the self-heal exists in the source, the originally-reported issue is clear, and a per-issue GET across every live issue found zero instances. All three held. The defect recurred anyway, because the self-heal only fired for a run that had *left* `queued`/`running`, and the shape that actually recurs is a run stuck **in** `queued` — which nothing expired, since the reaper skips queued by design, the release path fires only on termination, and the resume path runs only at server start. The ticket's own comments described a queued holder twice and the closure did not reconcile them.
+
+   Two habits fall out of that, both cheap. **Read the ticket's own recurrence comments before closing** — a defect filed once and observed four times has four descriptions of the mechanism, and they may not agree with the filing. **State the shape you verified**, so a later reader can tell which branch was checked rather than assuming all of them were. "No live instance" and "the mechanism is covered" are different claims and only the second closes a defect.
+
 ## Done When
 
 `pnpm -r typecheck && pnpm test:run && pnpm build` all pass. Contracts synced across all layers. Docs updated if behavior changed.
