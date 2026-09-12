@@ -361,6 +361,18 @@ THREADS="${CARGO_SEM_THREADS:-$NPROC}"
 # build box is worse than queueing it.
 RSSF="$D/cargo-sem.peak-rss"
 RSSL="$D/cargo-sem.rss.lock"
+# The rolling window's high-water mark, which never rotates. $RSSF answers "what
+# have recent builds cost"; this answers "what is the worst this box has ever
+# handed a build", which is the only one of the two questions MEM_PER_BUILD is
+# derived from. Keeping them in separate files is what stops a window full of
+# light `clippy` runs from reading as evidence that the heavy stage got cheaper.
+# NOT under $D. $D defaults to /tmp, and a mark that resets on reboot is one a
+# quiet window can outlive — which is the whole failure this file exists to
+# close. It feeds nothing (SLOTS derives from MemTotal and the two declared
+# constants), so it carries none of the "every caller must agree" constraint
+# that pins the rest of the state directory, and it is free to be durable.
+RSSMAXF="${CARGO_SEM_RSS_MAX_FILE:-${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify/cargo-sem.peak-rss.max}"
+mkdir -p "$(dirname "$RSSMAXF")" 2>/dev/null || true
 # How many recent builds to KEEP for reporting. This no longer feeds the cap —
 # it is the evidence you read when deciding whether MEM_PER_BUILD is still the
 # right declaration for this box.
@@ -426,7 +438,17 @@ MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 # but it is the reason not to read the local record as "big builds cost 8 GiB".
 # Given cores, the same compile will take four times that.
 #
-# Raise it only with recorded peaks in hand — $RSSF is exactly that record.
+# Raise it only with recorded peaks in hand. $RSSF holds the recent window and
+# $RSSMAXF the high-water mark; the second is the one this constant answers to.
+#
+# READ $RSSMAXF BEFORE PROPOSING A CHANGE TO THIS NUMBER. $RSSF is a rolling
+# window, so a run of light `clippy` builds flushes every heavy `test --lib`
+# peak out of it, and the window then shows a maximum far below the declaration.
+# That reading — "the recorded peaks are all under MEM_PER_BUILD, so it was
+# rounded up" — is the argument the block above refutes, and it is reachable
+# from $RSSF alone at any moment. It is not reachable from $RSSMAXF, which only
+# ever rises. The measurement this constant rests on is named above in prose;
+# $RSSMAXF is where the box keeps checking it.
 MEM_PER_BUILD="${CARGO_SEM_MEM_PER_BUILD:-11534336}"
 [ "$MEM_PER_BUILD" -ge 1 ] 2>/dev/null || MEM_PER_BUILD=11534336
 # Lowest codegen-unit count any stage may be reduced to. 8: measured, CGU=1 cost
@@ -693,6 +715,16 @@ run() {
         printf '%s\n' "$m"; } \
         | awk 'NF' | tail -n "$RSSWIN" > "$RSSF.new" 2>/dev/null \
         && mv -f "$RSSF.new" "$RSSF"
+      # Raise the high-water mark under the same lock. This is the record
+      # MEM_PER_BUILD answers to; the window above rotates and cannot be.
+      _cur=0
+      [ -r "$RSSMAXF" ] && _cur=$(tr -dc '0-9' 2>/dev/null < "$RSSMAXF")
+      [ -n "$_cur" ] || _cur=0
+      if [ "$m" -gt "$_cur" ] 2>/dev/null; then
+        printf '%s\n' "$m" > "$RSSMAXF.new" 2>/dev/null \
+          && mv -f "$RSSMAXF.new" "$RSSMAXF"
+      fi
+      unset _cur
       flock -u 8; exec 8>&-
     fi
     return $rc
