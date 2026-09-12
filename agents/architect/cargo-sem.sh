@@ -364,16 +364,51 @@ RSSL="$D/cargo-sem.rss.lock"
 # How many recent builds to KEEP for reporting. This no longer feeds the cap —
 # it is the evidence you read when deciding whether MEM_PER_BUILD is still the
 # right declaration for this box.
-RSSWIN="${CARGO_SEM_RSS_WINDOW:-5}"
-[ "$RSSWIN" -ge 1 ] 2>/dev/null || RSSWIN=5
+#
+# KEEP ENOUGH TO OUTLIVE THE ARGUMENT. At 5 entries this file rotated within
+# hours, and a run of light `clippy` builds was enough to flush every heavy
+# `test --lib` peak out of it. The declaration below then had nothing to check
+# it against, and the absence of the cited peaks was read as evidence they had
+# never existed — a proposal to lower MEM_PER_BUILD and admit a second build
+# rested on it. A retention window shorter than the interval between arguments
+# about the constant makes the constant unfalsifiable. 25 spans a full day of
+# verifies, and the file is 25 lines.
+RSSWIN="${CARGO_SEM_RSS_WINDOW:-25}"
+[ "$RSSWIN" -ge 1 ] 2>/dev/null || RSSWIN=25
 MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 [ "$MEMPCT" -ge 1 ] 2>/dev/null && [ "$MEMPCT" -le 100 ] || MEMPCT=70
-# Declared worst-case peak RSS of one build, in kB. 11 GiB, from recorded peaks:
-# 10.95 GiB and 10.06 GiB on two consecutive verifies, and 8.1-8.5 GiB as the
-# routine cost of the `test --lib` stage ($RSSF holds the running record). On
-# this box that yields (31.06 GiB x 70%) / 11 GiB = 1 slot; JOBS is unchanged at
-# 2, because the sqrt split below returns 2 for a per-slot budget of both 4 and
-# 8 threads.
+# Declared worst-case peak RSS of one build, in kB. 11 GiB, from recorded peaks
+# — carried here as raw kB, the unit $RSSF is written in, so they stay checkable
+# after the window has rotated past them:
+#
+#   11484736 kB  10.95 GiB   consecutive verifies, each warning against the
+#   10551360 kB  10.06 GiB   then-declared 8 GiB
+#   11541284 kB  11.01 GiB   one window held four entries above 10.6 GiB:
+#   11476760 kB  10.95 GiB   11541284, 11476760, 11387272, 11209436, with a
+#   11387272 kB  10.86 GiB   fifth at 8392532 (8.00 GiB)
+#   11209436 kB  10.69 GiB
+#
+# and 8.1-8.5 GiB as the routine cost of the `test --lib` stage. Every figure
+# above is a `test --lib` peak recorded WITH `CARGO_SEM_CGU_DIV=2` already
+# applied — the wrappers pass it on that stage unconditionally — so 11 GiB is
+# the cost of the cheaper spelling of the heaviest stage, not of an untuned one.
+#
+# On this box that yields (31.06 GiB x 70%) / 11 GiB = 1 slot; JOBS is unchanged
+# at 2, because the sqrt split below returns 2 for a per-slot budget of both 4
+# and 8 threads.
+#
+# THE MARGIN TO 2 SLOTS IS NOT SLACK. Two slots need MEM_PER_BUILD <= 11398906
+# kB (10.87 GiB), which the derivation misses by 1.17% — close enough to read as
+# a rounding artifact worth tuning away, and that reading has been proposed. It
+# is backwards: the recorded maximum is 11541284 kB, which is ABOVE the 11 GiB
+# declared here, so the declaration is already slightly optimistic. Lowering it
+# to buy the second slot would admit 2 x 11.01 GiB = 22.0 GiB against a 21.74
+# GiB budget — i.e. declaring a ceiling the measurements exceed on arrival.
+# That is the configuration whose consequences are recorded above: 7 GiB
+# available of 31 with 7 GiB of swap in use, wrappers alive 38h, and the
+# Coordinator holding every dispatch because the census never drained. If the
+# queue is the problem, the lever is the cloud-overflow lane or a cheaper
+# heaviest stage, not a second slot this box's memory cannot pay for.
 #
 # This was 8 GiB, which sat in the GAP of a bimodal distribution rather than
 # above it: `clippy` peaks ~3.9 GiB and the `test --lib` link ~8.1-11 GiB, so
