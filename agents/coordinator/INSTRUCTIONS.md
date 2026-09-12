@@ -436,8 +436,15 @@ For each parent `{task-id}`:
      operator's call. → [why a closed PR is a decision, not an absence](rationale/closed-pr-is-a-decision.md)
    - **Open PR** → nothing to do; skip to step 5.
    - **Nothing at all** → `git push origin task/{task-id}` then `gh pr create --head
-     task/{task-id} --base main`, body noting cargo result + base SHA + "PR opened by Coordinator
-     decoupled-land step". Skip the push if the branch is already on origin.
+     task/{task-id} --base main`. Skip the push if the branch is already on origin.
+     **Use the same four-section body the Architect uses** (§Landing in
+     `agents/architect/INSTRUCTIONS.md`): `## What changed`, `## Why`,
+     `## Review focus`, `## Task`, `## Verification` — plus, in Verification, the
+     cargo result, the base SHA, and the line "PR opened by Coordinator
+     decoupled-land step" so the producer is on the record. Two producers writing
+     two shapes is why half the PR history has a `## Summary` and half does not,
+     and a reviewer cannot tell a `data-only` PR that never needed cargo from one
+     whose Verification was simply omitted.
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
    *opened*, now met). Comment the PR link on the parent; leave the parent
    `in_review` until the human merges (§Merge sweep tears down on merge).
