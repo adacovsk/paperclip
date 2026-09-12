@@ -534,15 +534,32 @@ if ! gh pr list --head "task/{task-id}" --state all --json number -q '.[0].numbe
     --head "task/{task-id}" \
     --title "<task title>" \
     --body "$(cat <<EOF
-## Summary
-<1–3 bullets describing what changed>
+## What changed
+<1-3 bullets. The behaviour or capability, not a file list — the diffstat is
+already on the PR.>
+
+## Why
+<The defect, constraint or rule this serves. Carry the reasoning that is already
+in the branch's commits rather than restating the diff: if a commit records that
+an approach was tried and rejected, or that a line stays on an allowlist because
+no faithful mechanic exists, that is exactly what a reviewer needs and it is lost
+if only the commit says it.>
+
+## Review focus
+<The hunk most likely to be wrong, the invariant it could break, and the gate
+that covers it. "Mechanical; no risky hunk" is a valid answer — write it rather
+than dropping the section, so its absence always means the section was skipped.>
 
 ## Task
-Closes #<task-id>
+[<task-id>](\${PAPERCLIP_PUBLIC_URL:-\$PAPERCLIP_API_URL}/AA/issues/<task-id>)
 
-## Test plan
-- [ ] cargo clippy (zero warnings; subsumes check)
-- [ ] cargo test --lib (passed)
+## Verification
+- cargo clippy --all-targets: <result>
+- cargo test --lib: <n passed>
+- cargo clippy --no-default-features: <result>
+- cargo test --tests: <result; report-only>
+- schema: <regenerated, or "no schema-relevant change">
+- base: origin/main at <sha>; \`git merge-tree\` <n> conflicts
 EOF
 )"
 fi
@@ -559,6 +576,29 @@ rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{ta
 # clear sentinel + base + freshness counter + report-only integration result so a stray re-wake won't re-land or re-report
 echo "PR confirmed for task/{task-id}"
 ```
+
+**The body is four sections and none of them is optional.** `## What changed`
+alone is what produced PRs a reviewer could not act on: the diff already says
+what moved, so a body that only restates it carries no information. `## Why` and
+`## Review focus` are the two that do, and they are cheap — the reasoning is
+already written in the branch's commit messages by the time Landing runs, so
+this is a copy, not an analysis. A section with nothing to say still gets a
+line saying so; a missing heading is indistinguishable from a forgotten one.
+
+**Do not write `Closes #<task-id>`.** It was in this template and it never
+worked: GitHub resolves `Closes #` against *numeric* refs, so a tracker id after
+the `#` renders as dead text and closes nothing — and the bare-number form it
+invites would close whatever unrelated issue or PR happens to hold that number.
+Tracker tasks are not GitHub issues and no keyword links them; a plain link is
+the whole mechanism. Coordinator marks the task, not GitHub.
+
+**The link is built from the environment, never a literal host.** A hardcoded
+`localhost` port is wrong for anyone whose instance is not on this machine, and
+it is baked into the PR body permanently once written.
+
+**Verification records results, not intent.** The old block was unchecked
+`- [ ]` boxes, which say what was planned; a reviewer needs `3754 passed` and
+the name of anything that failed and why it was acceptable.
 
 **Always run `gh auth switch --user "$PAPERCLIP_GH_USER"` first.** If a
 different account is active (codex / system default), the push may
