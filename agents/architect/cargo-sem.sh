@@ -621,6 +621,22 @@ command -v sccache >/dev/null 2>&1 && sccache --start-server >/dev/null 2>&1 || 
 # cap; a ceiling that moves under running builds is the defect this replaced.
 # Strictly best-effort: no `/usr/bin/time`, no measurement, and nothing is lost
 # but the warning. Never allowed to affect the build's exit status.
+# THE BUILD RUNS WITH THE LOCK FDS CLOSED. Every lock that gates progress here
+# is an flock, and an flock belongs to the open file description — so it lives
+# as long as *any* fd on it stays open, in any process. The parent holds fds 3
+# (per-worktree) and 9 (slot) for the build's whole duration, which is what
+# makes the lock mean something; a child inheriting them adds nothing and can
+# outlive us. Cargo cold-starts the sccache *server* when it is not already up,
+# and that daemon detaches and stays resident: it inherits fd 9, and the slot is
+# then held by a process that never exits. Capacity drops by one, permanently,
+# and `reap_escaped_orphans` cannot help — its predicate matches rustc and cargo
+# only, deliberately, because reaping a shared daemon is worse than the leak.
+# The pre-start above is the first line of defence and is not sufficient on its
+# own: a waiter pre-starts the server, then queues (measured: over three hours
+# on a deep FIFO), the server passes its idle timeout and exits, and the build
+# that finally wins the slot cold-starts it again from *under* the lock.
+# Closing the fds in the child makes the whole class impossible rather than
+# racing it, and costs the build nothing — it never reads them.
 run() {
   local rss="$D/.rss.$$" rc=0
   if [ -x /usr/bin/time ]; then
@@ -628,7 +644,7 @@ run() {
       nice -n19 ionice -c3 env \
       CARGO_BUILD_JOBS="$JOBS" \
       CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
-      "$@"
+      "$@" 3>&- 5>&- 7>&- 9>&-
     rc=$?
     local m; m=$(tail -n1 "$rss" 2>/dev/null | tr -dc '0-9')
     rm -f "$rss"
@@ -649,7 +665,7 @@ run() {
   nice -n19 ionice -c3 env \
     CARGO_BUILD_JOBS="$JOBS" \
     CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
-    "$@"
+    "$@" 3>&- 5>&- 7>&- 9>&-
 }
 
 # --- tell the server the clock should start NOW ---
