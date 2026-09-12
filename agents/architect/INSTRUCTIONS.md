@@ -551,7 +551,7 @@ that covers it. "Mechanical; no risky hunk" is a valid answer — write it rathe
 than dropping the section, so its absence always means the section was skipped.>
 
 ## Task
-[<task-id>](\${PAPERCLIP_PUBLIC_URL:-\$PAPERCLIP_API_URL}/AA/issues/<task-id>)
+[<task-id>](${PAPERCLIP_PUBLIC_URL:-$PAPERCLIP_API_URL}/AA/issues/<task-id>)
 
 ## Verification
 - cargo clippy --all-targets: <result>
@@ -595,6 +595,14 @@ the whole mechanism. Coordinator marks the task, not GitHub.
 **The link is built from the environment, never a literal host.** A hardcoded
 `localhost` port is wrong for anyone whose instance is not on this machine, and
 it is baked into the PR body permanently once written.
+
+**Leave the `$` in that line unescaped.** The body is an *unquoted* heredoc, so
+`${PAPERCLIP_PUBLIC_URL:-$PAPERCLIP_API_URL}` expands to the real host as the PR
+is created, which is the entire point. Writing `\$` to make it read as a
+placeholder is the obvious-looking edit and it ships a dead link: `\$` is an
+escape the heredoc consumes, so the literal text `${PAPERCLIP_PUBLIC_URL:-...}`
+lands in the PR body and GitHub renders it as the URL. Every other `<...>` in
+this template is filled in by hand; this one is filled in by the shell.
 
 **Verification records results, not intent.** The old block was unchecked
 `- [ ]` boxes, which say what was planned; a reviewer needs `3754 passed` and
