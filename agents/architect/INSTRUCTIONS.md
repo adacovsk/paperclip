@@ -551,7 +551,7 @@ that covers it. "Mechanical; no risky hunk" is a valid answer — write it rathe
 than dropping the section, so its absence always means the section was skipped.>
 
 ## Task
-[<task-id>](http://127.0.0.1:3100/AA/issues/<task-id>)
+[<task-id>](\${PAPERCLIP_PUBLIC_URL:-\$PAPERCLIP_API_URL}/AA/issues/<task-id>)
 
 ## Verification
 - cargo clippy --all-targets: <result>
@@ -586,11 +586,15 @@ this is a copy, not an analysis. A section with nothing to say still gets a
 line saying so; a missing heading is indistinguishable from a forgotten one.
 
 **Do not write `Closes #<task-id>`.** It was in this template and it never
-worked: GitHub resolves `Closes #` against *numeric* refs in this repo, so
-`Closes #AA-7498` renders as dead text and closes nothing — and the numeric
-form it invites (`Closes #7498`) would close an unrelated issue or PR. Paperclip
-tasks are not GitHub issues and no keyword links them; a plain link is the whole
-mechanism. Coordinator marks the task, not GitHub.
+worked: GitHub resolves `Closes #` against *numeric* refs, so a tracker id after
+the `#` renders as dead text and closes nothing — and the bare-number form it
+invites would close whatever unrelated issue or PR happens to hold that number.
+Tracker tasks are not GitHub issues and no keyword links them; a plain link is
+the whole mechanism. Coordinator marks the task, not GitHub.
+
+**The link is built from the environment, never a literal host.** A hardcoded
+`localhost` port is wrong for anyone whose instance is not on this machine, and
+it is baked into the PR body permanently once written.
 
 **Verification records results, not intent.** The old block was unchecked
 `- [ ]` boxes, which say what was planned; a reviewer needs `3754 passed` and
