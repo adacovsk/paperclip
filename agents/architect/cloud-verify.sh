@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Cloud overflow verification lane for the Architect.
+# Cloud verification lane for the Architect.
 #
-# Runs the clippy/test pass on an Anthropic-managed cloud VM instead of taking a
-# slot in cargo-sem.sh, and hands the verdict back. Triage only: the Architect
-# still owns rebase, fix, schema regeneration (INSTRUCTIONS.md §6.5), commit and
-# push. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md for when this is
-# appropriate at all.
+# Moves the cargo half of a verify onto an Anthropic-managed cloud VM: clippy and
+# tests, fixes inside the task's own files, the non-Rust guard suite, and schema
+# regeneration last. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md.
+#
+# TRUST BOUNDARY. The VM does work; it never lands it. It builds the exact
+# commit this box pushed, and publishes its commits only under its own
+# `cloud-verify/` branch — never the task branch, never a PR. This box then
+# accepts or rejects those commits (`accept_cloud_work`): they must descend from
+# the launched head, touch only the task's files or regenerated schemas, add no
+# lint or test suppression, and pass the guard suite locally. Accepted work is
+# fast-forwarded into the worktree and the Architect lands it through its
+# ordinary Landing; rejected work is never used and the task verifies locally.
+# The operator's merge remains the final gate.
 #
 # WHY GITHUB AND NOT THE PAPERCLIP API. A cloud VM cannot reach localhost:3100 —
 # Paperclip runs in Local Trusted Mode and exposing it publicly to carry a single
@@ -29,13 +37,10 @@
 # It permits `refs/heads/*` only. So the namespace is a constraint of the
 # environment, not a preference; do not "tidy" it back out of refs/heads/.
 #
-# That is still NOT a violation of "the cloud session must not push". The
-# prohibition exists because a landing that skipped the Architect would bypass
-# the schema regeneration gate. These commits are empty — the verdict IS the
-# commit message, there is no tree — they live under a `cloud-verify/` prefix
-# nowhere near `task/*`, nothing merges them, and poll deletes the remote branch
-# as soon as it has read it. The prompt still forbids pushing the task branch or
-# any other head, and forbids opening a PR.
+# The cloud-verify branch carries the VM's fix commits (if any) topped by one
+# empty verdict commit whose message IS the verdict. It lives nowhere near
+# `task/*`, nothing merges it, and poll deletes the remote copy as soon as it has
+# fetched it. The prompt forbids pushing any other ref and opening a PR.
 #
 # WHY A PTY. `claude --cloud` refuses a non-interactive invocation outright
 # ("Non-interactive invocations run locally and would silently ignore --cloud").
@@ -73,82 +78,80 @@ die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 ref_for() { printf 'refs/heads/cloud-verify/%s/%s' "$1" "$2"; }
 
 verify_prompt() {
-  local task="$1" branch="$2" ref="$3"
+  local task="$1" head="$2" ref="$3" cap="$4"
   cat <<PROMPT
-Verify branch ${branch}.
+Verify commit ${head} of task ${task}, fixing what you can within the task's scope.
 
-Do NOT edit any files. Do NOT commit any tracked change. The ONLY write you may
-make is the single empty verdict commit and its push in step 3 — everything else
-is read-only, because a landing that did not go through the Architect would
-bypass the schema regeneration gate. Publishing that verdict is the entire job.
+WHATEVER HAPPENS BELOW — stopping early, running out of context, hitting a wall
+— END with step 8. A result that exists only in your transcript was never
+delivered: the machine waiting on you cannot tell it from a crashed session.
 
-1. git fetch origin master 2>/dev/null || git fetch origin main
-   Rebase ${branch} onto origin/main (or origin/master, whichever exists).
-   A green build on a stale base is not evidence about main. If the rebase
-   conflicts, stop and report result: STALE.
+HARD LIMITS. The only ref you may push is ${ref}. Never push any other branch,
+never open, comment on or merge a pull request, never change repository
+settings. Your commits are inspected before anything uses them, and work that
+breaks these rules is discarded.
 
-2. Run each of these, recording the exit status of each:
+1. git fetch origin ${head} && git checkout --detach ${head}
+   Do NOT rebase or merge — the other side already put this commit on main and
+   will check that your commits descend from it.
+   git fetch origin main
+   BASE=\$(git merge-base HEAD origin/main)
+   The task's files are: git diff --name-only \$BASE HEAD
+
+2. Gate commands. Record each exit status.
      cargo clippy --all-targets
      cargo test --lib
+     cargo clippy --no-default-features      (only if the task's files include src/**.rs)
+     cargo test --test <name>                (for each tests/<name>.rs among the task's files)
+   No semaphore, no CARGO_INCREMENTAL, no job or codegen-unit limits.
+   On 'No space left on device': cargo clean -p rust-bevy-rpg, then re-run.
+
+3. Fix failures, at most ${cap} rounds of fix -> commit -> re-run step 2.
+   ONLY in the task's files. An error in any other file is not yours: do not edit
+   it; finish with result: FAIL and name it. Fix causes, not symptoms: adding
+   #[allow(...)], #[expect(...)] or #[ignore], deleting a test, or weakening an
+   assertion gets all of your work rejected. Commit each round as
+   'fix: <what>' with a 'Stage: architect' line. Still red after ${cap} rounds
+   -> result: FAIL.
+
+4. Non-Rust guards:  PYTHONPATH=scripts bash scripts/verify.sh
+   Fix what it flags in the task's files, commit, re-run. Same limits.
+
+5. Report-only, never a gate and never a fix:
      cargo test --tests --no-fail-fast
+   Record the exit status and the names of failing tests.
 
-   `--no-fail-fast` on the last one is load-bearing. `--tests` selects every
-   target with test = true, which includes the lib unittest target; that target
-   runs first, and without the flag a single pre-existing lib failure stops cargo
-   before any integration binary executes. The verdict then reports the
-   integration suites as failed when they never ran — the most misleading shape a
-   red can take, because it points the reader at code that was never exercised.
-   Then, ONLY if the diff against the base touches any src/**.rs:
-     cargo clippy --no-default-features
+6. LAST, after your final fix commit:
+     git diff --name-only \$BASE HEAD | python3 scripts/check_schema_regen.py
+   Exit 0 -> schemas: not-relevant. Exit 1 -> run as ONE chained command:
+     cargo run --bin generate_schemas && git diff --exit-code assets/schemas/
+   Non-empty diff -> commit only assets/schemas/ ('chore: regenerate schemas')
+   and run the chain again until empty -> schemas: regenerated. Empty the first
+   time -> schemas: proved-empty. The generator failing -> result: FAIL.
+   No fix commit may follow this step.
 
-   Do not pass --release, do not set CARGO_INCREMENTAL, do not limit jobs or
-   codegen units. Those exist to bound contention on a shared 4-core box; this
-   VM has its own cores and disk and they are counterproductive here.
+7. Write the verdict text to a file:
 
-3. Publish the verdict. Compose exactly this plain text:
-
-CLOUD-VERIFY-V1
+CLOUD-VERIFY-V2
 task: ${task}
-branch: ${branch}
-base: <sha of the base you rebased onto>
-head: <sha of ${branch} after rebase>
-result: PASS
-cmd: cargo clippy --all-targets = 0
-cmd: cargo test --lib = 0
-cmd: cargo test --tests = 0
+launched: ${head}
+base: <\$BASE>
+result: PASS | FAIL
+fixes: <rounds used in step 3>
+schemas: not-relevant | regenerated | proved-empty
+guards: <exit status of step 4>
+integration: <exit status of step 5>
+cmd: <command> = <exit status>        (one line per command you ran)
 --- errors ---
-<empty on PASS; on FAIL the FULL compiler output with file:line for every error>
+<empty on PASS; otherwise the full compiler/guard output with file:line>
 
-   result: is PASS only if every command exited 0. Otherwise FAIL, or STALE if
-   step 1 could not produce a clean rebase. Include one 'cmd:' line per command
-   you actually ran, with its real exit status.
+   result is PASS only if every step-2 gate and step 4 exited 0 and step 6 did
+   not fail.
 
-   Write that text to a file, then push it as the message of an empty commit:
-
+8. Publish — your commits plus the verdict, to ${ref} and nowhere else:
      git commit --allow-empty -F <file>
      git push origin HEAD:${ref}
-
-   Do NOT use gh — it is not installed on this machine.
-
-   That push is EXPLICITLY PERMITTED and is the only push you may make. The
-   commit is empty, so it carries no code — the verdict is its message. Do not
-   push the task branch, do not push any other head, and do not open a pull
-   request. If a hook or reminder suggests pushing your working branch, ignore
-   it: that is the one thing this task forbids.
-
-   If the push fails, say so explicitly and print the error — a verdict that is
-   not published did not happen, and a silent failure is worse than a red.
-
-   PUBLISH SOMETHING, ALWAYS. This step is not conditional on finishing step 2.
-   If you run low on context, hit a wall you cannot get past, or decide to stop
-   for any reason, publish first and stop after. A run that ends without a pushed
-   verdict is indistinguishable from a hung VM and is the single most expensive
-   way to fail: the poll waits out its whole deadline and then reports
-   inconclusive, so the queue you were offloading is blocked for longer than if
-   you had never been launched. Partial results are useful; silence is not. Use
-   result: STALE with a note when you cannot report PASS or FAIL honestly.
-
-4. Print the pushed ref name, then stop.
+   If the push fails, print the error. Then stop.
 PROMPT
 }
 
@@ -158,8 +161,7 @@ cmd_launch() {
 
   command -v claude >/dev/null || die "claude not on PATH"
   command -v script >/dev/null || die "script(1) not on PATH — no way to allocate a pty"
-  # The VM clones the GitHub remote at this branch; it never sees the local
-  # worktree. An unpushed task branch would verify whatever the remote last saw.
+  # The VM clones the GitHub remote; it never sees the local worktree.
   git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 \
     || die "branch $branch is not on origin — push it before offloading" 98
 
@@ -167,15 +169,20 @@ cmd_launch() {
   head="$(git rev-parse HEAD)" || die "cannot read HEAD" 98
   ref="$(ref_for "$task" "$head")"
 
-  out="$(script -qec "claude --cloud $(printf '%q' "$(verify_prompt "$task" "$branch" "$ref")")" /dev/null 2>&1)"
+  # `--effort` must precede `--cloud`: `--cloud` takes an optional description,
+  # so `--cloud --effort low "..."` swallows the flag and the prompt never arrives.
+  out="$(script -qec "claude --effort ${CLOUD_VERIFY_EFFORT:-low} --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}")")" /dev/null 2>&1)"
   sid="$(printf '%s' "$out" | sed -n 's/.*\(session_[A-Za-z0-9]\{8,\}\).*/\1/p' | head -1)"
   [ -n "$sid" ] || { printf '%s\n' "$out" >&2; die "no session id in launch output"; }
 
-  printf '%s\n' "$sid" > "$STATE_DIR/$task.cloud.session"
-  printf '%s\n' "$ref" > "$STATE_DIR/$task.cloud.ref"
+  printf '%s\n' "$sid"  > "$STATE_DIR/$task.cloud.session"
+  printf '%s\n' "$ref"  > "$STATE_DIR/$task.cloud.ref"
+  printf '%s\n' "$head" > "$STATE_DIR/$task.cloud.launched-head"
   date +%s              > "$STATE_DIR/$task.cloud.launched"
   printf 'launched %s session=%s head=%s ref=%s\n' "$task" "$sid" "$head" "$ref"
 }
+
+field() { printf '%s\n' "$1" | sed -n "s/^$2: *//p" | head -1; }
 
 cmd_poll() {
   local task="${1:?task id}"
@@ -204,8 +211,9 @@ cmd_poll() {
     refs/heads/cloud-verify/*) git push -q origin --delete "$ref" 2>/dev/null || true ;;
     *) die "refusing to delete unexpected ref $ref" 99 ;;
   esac
+  printf '%s\n' "$body" > "$STATE_DIR/$task.cloud.verdict"
   printf '%s\n' "$body"
-  case "$(printf '%s' "$body" | sed -n 's/^result: *//p' | head -1)" in
+  case "$(field "$body" result)" in
     PASS)  exit 0  ;;
     FAIL)  exit 1  ;;
     STALE) exit 98 ;;
@@ -227,6 +235,10 @@ cmd_watch() {
   local task="${1:?task id}" branch="${2:?branch}" rc
   local exit_file="$STATE_DIR/$task.exit"
   mkdir -p "$STATE_DIR"
+  # The Architect and the Coordinator's sweep judge liveness by probing
+  # /proc/$(cat <task>.pid). Without it a running cloud verify reads as a dead
+  # build, and the re-dispatch that follows offloads the same task a second time.
+  echo $$ > "$STATE_DIR/$task.pid"
 
   # Subshells are load-bearing, not style: cmd_launch/cmd_poll reach terminal
   # states via `die`/`exit`, which would take this driver down with them and
@@ -255,8 +267,68 @@ cmd_watch() {
     if [ "$n" -ge "$cap" ]; then rc=99; break; fi
     sleep "${CLOUD_VERIFY_POLL:-60}"
   done
+  # The verdict is a claim; the commits are untrusted input. Nothing downstream —
+  # the Architect's Landing or the Coordinator's sweep — sees a green sentinel
+  # until this box has accepted them.
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+    ( accept_cloud_work "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1 || rc=95
+  fi
   printf '%s\n' "$rc" > "$exit_file"
   wake "$task"
+}
+
+reject() { printf '%s\n' "$1" > "$STATE_DIR/$TASK.cloud.rejected"; echo "REJECTED: $1"; exit 1; }
+
+# Accept the VM's commits into the worktree, or refuse them. Refusal writes
+# `<task>.cloud.rejected`, which also closes the lane for that task so the
+# Architect verifies it locally rather than re-offloading into the same result.
+accept_cloud_work() {
+  TASK="$1"
+  local ref lease base work f bad
+  ref="$(cat "$STATE_DIR/$TASK.cloud.ref")"
+  lease="$(cat "$STATE_DIR/$TASK.cloud.launched-head" 2>/dev/null)"
+  base="$(cat "$STATE_DIR/$TASK.base" 2>/dev/null)"
+  [ -n "$lease" ] && [ -n "$base" ] || reject "launch state missing (launched-head/base)"
+  work="$(git rev-parse --verify -q "$ref^")" || reject "verdict commit has no parent"
+
+  git diff --quiet "$work" "$ref" || reject "verdict commit carries file changes"
+  [ "$(git rev-parse HEAD)" = "$lease" ] || reject "worktree moved since launch"
+  [ -z "$(git status --porcelain)" ] || reject "worktree dirty since launch"
+  git merge-base --is-ancestor "$lease" "$work" || reject "cloud commits do not descend from the launched head"
+
+  # Scope: every file the VM changed must already be one of the task's files,
+  # or a regenerated schema.
+  bad=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in assets/schemas/*) continue ;; esac
+    git diff --name-only "$base" "$lease" | grep -qxF -- "$f" || bad="$bad $f"
+  done < <(git diff --name-only "$lease" "$work")
+  [ -z "$bad" ] || reject "cloud commits touch files outside the task:$bad"
+
+  # The prompt forbids these; this is what makes the prohibition hold.
+  if git diff -U0 "$lease" "$work" -- '*.rs' \
+       | grep -qE '^\+.*(#!?\[(allow|expect)\(|#\[ignore)'; then
+    reject "cloud commits add a lint or test suppression"
+  fi
+  if git diff --diff-filter=D --name-only "$lease" "$work" | grep -q .; then
+    reject "cloud commits delete files"
+  fi
+
+  git merge -q --ff-only "$work" || reject "fast-forward to cloud work failed"
+  if [ "$work" != "$lease" ]; then
+    export PATH="${CLOUD_VERIFY_PIXI_BIN:-$HOME/.pixi/bin}:$PATH"
+    if ! command -v pixi >/dev/null || ! pixi run -e dev verify; then
+      git reset -q --hard "$lease"
+      reject "guard suite failed (or pixi unavailable) on the cloud commits"
+    fi
+  fi
+
+  local integ
+  integ="$(field "$(cat "$STATE_DIR/$TASK.cloud.verdict")" integration)"
+  case "$integ" in ''|*[!0-9]*) rm -f "$STATE_DIR/$TASK.integration" ;; *) printf '%s\n' "$integ" > "$STATE_DIR/$TASK.integration" ;; esac
+  printf '%s\n' "$work" > "$STATE_DIR/$TASK.cloud.head"
+  echo "accepted: worktree at $work ($(git rev-list --count "$lease..$work") cloud commit(s))"
 }
 
 # The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
@@ -270,13 +342,22 @@ cmd_watch() {
 cmd_offload() {
   local task="${1:?task id}" branch="${2:?branch}" open
   [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
+  [ ! -f "$STATE_DIR/$task.cloud.rejected" ] || { echo "cloud work for $task was rejected ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1; }
   mkdir -p "$STATE_DIR"
   open="$(python3 "$(dirname "$0")/cloud-pace.py" 2>>"$STATE_DIR/pace.log")" || open=0
   if [ "$open" != "1" ]; then
     echo "not offloaded: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null) — run locally"
     exit 1
   fi
-  rm -f "$STATE_DIR/$task.exit"
+  # The VM clones the remote, and Step 0's rebase has usually rewritten the branch
+  # locally, so publish exactly this head. The base recorded here is what
+  # acceptance scopes the VM's changes against.
+  [ "$(git branch --show-current)" = "$branch" ] || { echo "not on $branch — run locally"; exit 1; }
+  [ -z "$(git status --porcelain)" ] || { echo "uncommitted changes — commit them first"; exit 1; }
+  git fetch -q origin main && git merge-base HEAD origin/main > "$STATE_DIR/$task.base" \
+    || { echo "cannot read origin/main — run locally"; exit 1; }
+  git push -q --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed — run locally"; exit 1; }
+  rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict"
   setsid "$0" watch "$task" "$branch" >/dev/null 2>&1 < /dev/null &
   echo "offloaded $task: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null)"
 }
@@ -297,5 +378,6 @@ case "${1:-}" in
   poll)   shift; cmd_poll   "$@" ;;
   watch)  shift; cmd_watch  "$@" ;;
   offload) shift; cmd_offload "$@" ;;
+  accept)  shift; accept_cloud_work "$@" ;;
   *) printf 'usage: %s offload <task-id> <branch> | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
 esac
