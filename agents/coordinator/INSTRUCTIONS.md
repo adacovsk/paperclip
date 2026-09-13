@@ -265,8 +265,24 @@ never preempts a running build. **The bar is "this unblocks other queued work", 
 matters", and the lane stops working for anyone if it is crowded** — one or two in a queue, at
 most. About to write a third? Say so in your record instead. → [why scarcity is the lane](rationale/priority-verify-lane.md)
 
-**Cap concurrent verifies at 2x the semaphore's ceiling; leave the surplus undispatched.** Read
-the ceiling, never assume it:
+**While the cloud lane is open there is no cap: dispatch every `Verify:`, held ones included,
+oldest first, in the same fire.** Read the lane from the gate the Architect's `offload` uses, never
+from queue depth or the last fire's comment:
+
+```sh
+LANE=$(python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0
+# LANE=1 → dispatch all;  LANE=0 → apply the local cap below
+```
+
+A cloud verify runs on its own VM and never takes a `cargo-sem.sh` ticket, so the cap below has
+nothing to protect for it; holding one only idles quota the gate has already judged spare. The
+gate fails closed, so an unreadable meter falls back to the local cap. If the lane closes between
+your dispatch and the Architect's `offload`, those verifies run locally over the cap — the
+semaphore still bounds what runs, and the next fire's `LIVE` census holds the rest.
+→ [why cloud verifies are uncapped](rationale/verify-dispatch-cap.md#why-cloud-verifies-are-not-capped)
+
+**With the lane closed, cap concurrent verifies at 2x the semaphore's ceiling; leave the surplus
+undispatched.** Read the ceiling, never assume it:
 
 ```sh
 SLOTS=$(cat /tmp/cargo-sem.slots 2>/dev/null || echo 2)
@@ -307,7 +323,7 @@ dispatch, and `in_review` is not a parking status. So for each surplus `needs-bu
 
 - Create the `Verify:` subtask as normal, but `assigneeAgentId: null`, status `todo`.
 - Record `Intended assignee: Architect (held — LIVE=<n> >= 2*SLOTS=<m>)` in the subtask body.
-- A later fire, once `LIVE < 2 * SLOTS`, PATCHes the assignee and `status` to `in_review`. *That*
+- A later fire, once `LANE=1` or `LIVE < 2 * SLOTS`, PATCHes the assignee and `status` to `in_review`. *That*
   PATCH is the dispatch.
 
 **§Landing sweep's predicate changes with it**: "in_review + assignee = Architect" means
