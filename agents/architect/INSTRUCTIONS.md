@@ -356,7 +356,7 @@ CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
 
 **Exit 1 means not admitted — launch the local chain as usual.** It is not a
 failure and writes no sentinel. Admission is paced against the weekly usage
-limit (`cloud-pace.py`): the lane only opens while usage is behind an even spend
+limit (the `cloud-pace` script beside this file): the lane only opens while usage is behind an even spend
 across the week, and allows more concurrent verifies the further behind it is.
 Never call `watch` or `launch` directly — they bypass the pacing, and concurrent
 Architect runs would each launch into the same spare quota.
