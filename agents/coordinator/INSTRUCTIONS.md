@@ -270,7 +270,7 @@ oldest first, in the same fire.** Read the lane from the gate the Architect's `o
 from queue depth or the last fire's comment:
 
 ```sh
-LANE=$(python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0
+LANE=$(python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0   # <!-- privacy-ok: this harness's own script path, needed to run the gate -->
 # LANE=1 → dispatch all;  LANE=0 → apply the local cap below
 ```
 
