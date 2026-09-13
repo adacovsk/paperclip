@@ -1,0 +1,45 @@
+# Why a fire drains to the Worker's run slots, and wakes the Planner when it runs dry
+
+**Justifies:** *Promote backlog → `todo` until the Worker's run slots are full*, *No per-fire cap while the cloud lane is open* and *Drained → wake the Planner, once.* (Run steps 5, 9d, 9j)
+
+## Why the ceiling is the Worker's own run slots
+
+Step 5 promoted only while fewer than 2 Worker tasks were active. The Worker's
+`maxConcurrentRuns` was 4, so half its capacity sat idle every fire while backlog held a dozen
+dispatchable tasks. The Coordinator fires every two hours, so a fixed low promotion ceiling is a
+throughput ceiling for the whole pipeline.
+
+The number that actually bounds Worker parallelism is the agent's `maxConcurrentRuns`: the server
+starts at most that many runs and queues the rest with no timeout. Promoting to exactly that
+ceiling fills every slot without parking worktrees behind queued wakes. It is read from the agent
+on every fire rather than written into these instructions, because a literal drifts silently the
+moment someone retunes the agent — the instructions keep obeying the old value.
+
+The contended-edit-surface hold still applies inside the ceiling. It exists to prevent merge
+conflicts, not to limit load, so draining harder does not relax it.
+
+## Why intake follows the lane
+
+The cap of 3 new roadmap promotions per fire protected the local cargo slots: every `needs-build`
+item taken in eventually competes for them. While the cloud lane is open, verifies build on VMs
+and the Architect is not the binding resource, so the cap only defers supply that step 5 could
+already dispatch. Backlog is supply; step 5 bounds dispatch. With the lane closed the local
+constraint is back, and so is the cap.
+
+The same reasoning removes the `inflight` row of the capacity gate while the lane is open — see
+the verify-dispatch-cap rationale.
+
+## Why one drained fire wakes the Planner
+
+The escalation used to wait for two consecutive wraps with zero promotions. That was a guard
+against a capped scan: a fire that took in 3 items and stopped mid-index could not tell "nothing
+left" from "not reached yet", so it needed a second pass. An uncapped fire scans the whole index,
+so one fire that scanned all of it, dispatched what it found, and still has zero dispatchable
+backlog has measured the drain directly. Waiting another two hours for a second wrap just idles
+the Worker.
+
+The Planner restocks to a band rather than a per-fire quota, runs one fire at a time, and is the
+most expensive agent in the fleet. A second restock request while one is open only queues a
+duplicate fire, so the escalation is skipped while any `Roadmap intake starved` task for the
+Planner is still open. The title prefix is kept so that dedupe also recognises requests filed
+under the older wording.

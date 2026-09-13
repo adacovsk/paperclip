@@ -22,7 +22,7 @@ is why it ran so long unnoticed.
 Everything above is about the local box: semaphore tickets, per-worktree `target/` disk, sccache
 contention. A verify the Architect offloads through `cloud-verify.sh` touches none of it — it
 builds on its own VM, and the only local cost is a sleeping watch process. Its limit is account
-quota, and `cloud-pace.py` already meters that: open while weekly usage trails the calendar and
+quota, and the Architect's `cloud-pace` gate already meters that: open while weekly usage trails the calendar and
 the session limit has headroom, closed otherwise, and closed whenever the meter cannot be read.
 The Architect's offload has no concurrency bound while the lane is open.
 
