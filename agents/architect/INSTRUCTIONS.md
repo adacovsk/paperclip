@@ -347,14 +347,21 @@ count as a floor that stops the lane firing on an empty queue, not as something
 that will ration it. If every task starts going to the cloud and that is not what
 you want, raise the threshold rather than assuming the queue will fall below it.
 
-Launch it detached, exactly as you would the local chain:
+Ask for admission; it detaches the watch itself when admitted:
 
 ```sh
 CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
-( "$CV" watch "{task-id}" "task/{task-id}" >/dev/null 2>&1 & )
+"$CV" offload "{task-id}" "task/{task-id}"
 ```
 
-Then exit the run. `watch` polls to a terminal verdict, writes
+**Exit 1 means not admitted — launch the local chain as usual.** It is not a
+failure and writes no sentinel. Admission is paced against the weekly usage
+limit (`cloud-pace.py`): the lane only opens while usage is behind an even spend
+across the week, and allows more concurrent verifies the further behind it is.
+Never call `watch` or `launch` directly — they bypass the pacing, and concurrent
+Architect runs would each launch into the same spare quota.
+
+On exit 0, exit the run. `watch` polls to a terminal verdict, writes
 `{task-id}.exit`, and fires the same wakeup callback the local wrapper does, so
 the next wake reads the sentinel through the **unchanged** state machine above:
 `0` → Landing, non-zero → fix loop, `96`/`98` → environment/base, `99` →

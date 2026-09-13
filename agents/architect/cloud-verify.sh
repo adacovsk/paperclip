@@ -237,6 +237,7 @@ cmd_watch() {
   if [ "$rc" -ne 0 ]; then
     # A launch failure is an environment/base failure, never a build failure —
     # cargo did not run, so the code is not implicated.
+    rm -f "$STATE_DIR/$task.cloud.launched"
     printf '%s\n' "$rc" > "$exit_file"
     wake "$task"; return 0
   fi
@@ -255,8 +256,46 @@ cmd_watch() {
     if [ "$n" -ge "$cap" ]; then rc=99; break; fi
     sleep "${CLOUD_VERIFY_POLL:-60}"
   done
+  # The launched stamp doubles as the in-flight marker `offload` counts, so it
+  # goes the moment there is a verdict — not when the Architect lands, which may
+  # be a wake later.
+  rm -f "$STATE_DIR/$task.cloud.launched"
   printf '%s\n' "$rc" > "$exit_file"
   wake "$task"
+}
+
+# The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
+# detached; exit the run as for a local launch). Exit 1 = not admitted; run the
+# local chain instead. Declining is never an error and writes no sentinel.
+#
+# WHY ADMISSION LIVES HERE AND NOT IN INSTRUCTIONS. Architect runs are
+# concurrent, and each would read the same free capacity and all launch. The
+# count and the reservation happen under one flock, so the bound holds however
+# many runs ask at once.
+cmd_offload() {
+  local task="${1:?task id}" branch="${2:?branch}"
+  [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
+  mkdir -p "$STATE_DIR"
+  exec 8>"$STATE_DIR/offload.lock"
+  flock 8
+
+  local allowed inflight
+  allowed="$(python3 "$(dirname "$0")/cloud-pace.py" 2>>"$STATE_DIR/pace.log")" || allowed=0
+  case "$allowed" in ''|*[!0-9]*) allowed=0 ;; esac
+  # A stamp older than the poll deadline belongs to a watch that was killed
+  # before it could clean up; counting it forever would close the lane for good.
+  inflight="$(find "$STATE_DIR" -maxdepth 1 -name '*.cloud.launched' \
+    -mmin "-$(( (DEADLINE + 600) / 60 ))" | wc -l)"
+  if [ "$inflight" -ge "$allowed" ]; then
+    echo "not admitted: $inflight in flight, pace allows $allowed — run locally"
+    tail -1 "$STATE_DIR/pace.log" 2>/dev/null
+    exit 1
+  fi
+  date +%s > "$STATE_DIR/$task.cloud.launched"
+  rm -f "$STATE_DIR/$task.exit"
+  setsid "$0" watch "$task" "$branch" >/dev/null 2>&1 8>&- < /dev/null &
+  echo "offloaded $task: $((inflight + 1))/$allowed in flight"
+  tail -1 "$STATE_DIR/pace.log" 2>/dev/null
 }
 
 # Mirrors the local wrapper's callback so a verdict does not wait for the next
@@ -274,5 +313,6 @@ case "${1:-}" in
   launch) shift; cmd_launch "$@" ;;
   poll)   shift; cmd_poll   "$@" ;;
   watch)  shift; cmd_watch  "$@" ;;
-  *) printf 'usage: %s launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
+  offload) shift; cmd_offload "$@" ;;
+  *) printf 'usage: %s offload <task-id> <branch> | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
 esac
