@@ -233,6 +233,7 @@ cmd_poll() {
 # already cost real cycles when misread.
 cmd_watch() {
   local task="${1:?task id}" branch="${2:?branch}" rc
+  WAKE_ISSUE="${3:-$task}"
   local exit_file="$STATE_DIR/$task.exit"
   mkdir -p "$STATE_DIR"
   # The Architect and the Coordinator's sweep judge liveness by probing
@@ -250,7 +251,7 @@ cmd_watch() {
     # A launch failure is an environment/base failure, never a build failure —
     # cargo did not run, so the code is not implicated.
     printf '%s\n' "$rc" > "$exit_file"
-    wake "$task"; return 0
+    wake; return 0
   fi
 
   # Iteration cap as well as the wall-clock DEADLINE poll enforces. The two guard
@@ -274,7 +275,7 @@ cmd_watch() {
     ( accept_cloud_work "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1 || rc=95
   fi
   printf '%s\n' "$rc" > "$exit_file"
-  wake "$task"
+  wake
 }
 
 reject() { printf '%s\n' "$1" > "$STATE_DIR/$TASK.cloud.rejected"; echo "REJECTED: $1"; exit 1; }
@@ -340,7 +341,7 @@ accept_cloud_work() {
 # it spends closing the gate. The gate is here rather than in INSTRUCTIONS.md so
 # no Architect run can offload without passing it.
 cmd_offload() {
-  local task="${1:?task id}" branch="${2:?branch}" open
+  local task="${1:?task id}" branch="${2:?branch}" verify_task="${3:-$1}" open
   [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
   [ ! -f "$STATE_DIR/$task.cloud.rejected" ] || { echo "cloud work for $task was rejected ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1; }
   mkdir -p "$STATE_DIR"
@@ -358,18 +359,21 @@ cmd_offload() {
     || { echo "cannot read origin/main — run locally"; exit 1; }
   git push -q --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed — run locally"; exit 1; }
   rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict"
-  setsid "$0" watch "$task" "$branch" >/dev/null 2>&1 < /dev/null &
+  setsid "$0" watch "$task" "$branch" "$verify_task" >/dev/null 2>&1 < /dev/null &
   echo "offloaded $task: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null)"
 }
 
 # Mirrors the local wrapper's callback so a verdict does not wait for the next
-# scheduled wake. Best-effort: a missed wake costs latency, not correctness.
+# scheduled wake. The payload names the Verify task: a wake without one is bound
+# by the server to whatever task this agent's resumed session last touched, so
+# the run lands on a finished task, reports nothing to do, and the green result
+# sits unlanded until the next Coordinator fire.
 wake() {
   [ -n "${PAPERCLIP_API_URL:-}" ] && [ -n "${PAPERCLIP_AGENT_ID:-}" ] || return 0
   curl -fsS -X POST "$PAPERCLIP_API_URL/api/agents/$PAPERCLIP_AGENT_ID/wakeup" \
     ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
     -H 'Content-Type: application/json' \
-    -d '{"source":"automation","triggerDetail":"callback","reason":"cloud-verify-ready"}' \
+    -d "{\"source\":\"automation\",\"triggerDetail\":\"callback\",\"reason\":\"verify-sentinel-ready\",\"payload\":{\"issueIdentifier\":\"${WAKE_ISSUE}\"}}" \
     >/dev/null 2>&1 || true
 }
 
@@ -379,5 +383,5 @@ case "${1:-}" in
   watch)  shift; cmd_watch  "$@" ;;
   offload) shift; cmd_offload "$@" ;;
   accept)  shift; accept_cloud_work "$@" ;;
-  *) printf 'usage: %s offload <task-id> <branch> | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
+  *) printf 'usage: %s offload <task-id> <branch> [verify-task-id] | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
 esac
