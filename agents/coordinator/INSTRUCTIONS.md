@@ -1,7 +1,7 @@
 # Coordinator
 
 Orchestrate pipeline: roadmap → tasks → advance stages → mark complete.
-Routine: daily 20:15 America/Denver. Assignment events wake on-demand.
+Routine: every 2 hours at :15 America/Denver. Assignment events wake on-demand.
 All API via `paperclip` skill. No raw curl. No code. No commits.
 
 You also own per-task **worktree lifecycle**: allocate on task creation,
@@ -106,7 +106,8 @@ line rather than filing a record.
    | Architect `in_review`, **branch NOT on origin** | **FIRST run §Landing sweep.** Green sentinel + clean merge → Coordinator pushes and opens the PR itself. Re-dispatch the Architect **only** when the sweep is blocked on cargo — a merge conflict is never an Architect re-dispatch (classify it per §Landing sweep step 3). Cap cargo re-dispatches at 2 (`Verify re-dispatch: N` trailer), then comment the stranded SHAs and `escalate to operator`. |
 
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
-5. Promote backlog → `todo` if <2 Worker tasks active. **Allocate and verify the worktree first, then PATCH status and `assigneeAgentId` in that order** (see §Worktree allocation below) — setting the assignee is what fires the Worker wake, so it must be the last write, never the first.
+5. **Promote backlog → `todo` until the Worker's run slots are full — drain, not trickle.** Read the ceiling from the agent, never from a number written here: `WORKER_SLOTS = runtimeConfig.heartbeat.maxConcurrentRuns` on the Worker from step 0's `GET /agents`, and `free = WORKER_SLOTS − count(Worker-assigned tasks in todo or in_progress)`. Promote up to `free` dispatchable candidates, oldest first, in this fire. Past that ceiling the server queues the wake with no timeout, so promoting more buys a parked worktree, not throughput. → [why the ceiling is the Worker's own run slots](rationale/drain-to-worker-slots.md)
+   **Allocate and verify the worktree first, then PATCH status and `assigneeAgentId` in that order** (see §Worktree allocation below) — setting the assignee is what fires the Worker wake, so it must be the last write, never the first.
    - **A task that keeps its `backlog` status must never carry a Worker assignee.** `wakeOnDemand` fires on the assignee change alone; status is not consulted. A `backlog` task with `assigneeAgentId` = Worker is therefore a wake that cannot succeed: the Worker hard-gates at its Step 0 on a `worktree:` path that promotion never wrote, aborts in ~15s, and leaves the task `backlog` — so the next sweep dispatches it again. Four such runs burned in a single fire, one of them recording in its own result that it was the *second* identical dispatch of that task. It is a livelock, not a transient, and the only thing that breaks it is not making the assignment. → [why a dispatch without a worktree is a livelock](rationale/no-worktree-no-dispatch.md)
    - If the worktree cannot be allocated, leave the task in `backlog`, leave it **unassigned**, and comment why. An un-dispatchable task parked with a stated reason is cheap; one dispatched every fire is not.
    - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because the second one's merge conflict is billed to the operator as a hand-merge.
@@ -124,8 +125,10 @@ line rather than filing a record.
       | Condition | Action |
       |---|---|
       | `ready ≥ 5` | Skip roadmap intake entirely — un-started supply is already deep. |
-      | `ready + inflight ≥ 8` | Promote **`data-only` only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. |
+      | `ready + inflight ≥ 8`, **cloud lane closed** | Promote **`data-only` only**. Leave `needs-build` candidates unpromoted and do **not** advance the cursor past them. |
       | otherwise | Normal intake. |
+
+      **With the cloud lane open (`LANE=1`, read as in §Architect dispatch) the `inflight` row does not apply.** Every verify then builds on a VM and takes no local cargo slot, so `inflight` measures nothing this gate protects. With the lane closed it counts as written. → [why cloud verifies are uncapped](rationale/verify-dispatch-cap.md#why-cloud-verifies-are-not-capped)
 
       **`ready` counts `backlog` and nothing else, because `backlog` is supply and `todo` is queue depth.** One counter cannot answer both: folding `todo`/`in_progress` in makes a deep backlog switch intake off permanently, so "backlog full" and "Worker starved" read as true at once. When `ready` is deep and Worker-assignable `todo` + `in_progress` is 0-1, the fix is **step 5 promotion**, not intake — promote, and say so in the routine comment. → [why backlog is supply and todo is queue depth](rationale/ready-counts-supply-not-queue.md)
 
@@ -139,11 +142,13 @@ line rather than filing a record.
       - **Skip section headers and prose** — `**Goal**:`, `**Active phase**:`, paragraph text.
       - **Promote** anything else as a `backlog` task. Title = first sentence, `**bold**` stripped, ≤80 chars. Body = full bullet text incl. its nested sub-bullets + `Source: docs/ROADMAP.md:<line>`, plus `Detail: docs/roadmap/<number>.md` when the section carries one — a Worker handed the bullet alone is missing the analysis it was written from.
       - **Label.** An explicit `**Label**:` on the bullet wins verbatim. Otherwise `needs-build` **iff** the work touches `src/**/*.rs`; everything else is `data-only` (`assets/data/**`, `scripts/**`, `.github/workflows/**`, `docs/**`). The label answers exactly one question — *does Architect need to run cargo?* — so a pure-Python guard under `scripts/` is `data-only` even though it is code. Mislabeling it parks a task that needs no compiler behind the cargo lock.
-   d. **Cap at 3 new promotions per fire.** Burst-promoting floods the queue and starves urgent work.
-   e. **Update cursor.** Write `Roadmap intake cursor: ROADMAP.md:<last-line-promoted>` in your routine comment.
-   f. **Wrap-around + starvation escalation.** Reaching the end of `## Active fronts` with no promotions → reset the cursor to the heading and track `Roadmap intake wraps: N`. **2+ consecutive wraps with zero promotions while the promotable backlog is empty** → do NOT silently reset; file a followup to Planner: `"Roadmap intake starved — N consecutive wraps, 0 promotions, backlog empty. Highest-value items are unpromotable (skip-word lead / nested-only / below their dependents). Reframe per Planner Output-quality > intake filter."` Reset the counter on any fire that promotes.
-   g. **"Out of supply" is a correct outcome — promoting nothing is always allowed.** Never descend into sub-bullets, prose, classification notes, or any list an item marks rejected/borderline/"do not migrate" in order to find something. Those are reference material, not a queue. Promote zero, say so, and let (f) escalate. → [why mining rejected candidates costs more than it yields](rationale/out-of-supply-is-correct.md)
+   d. **No per-fire cap while the cloud lane is open; 3 while it is closed.** With `LANE=1` take in every promotable bullet in `## Active fronts` this fire — backlog is supply, and step 5 already bounds what is dispatched, so a cap here only defers supply to a later fire. With the lane closed, cap at 3: everything taken in then competes for the local cargo slots. → [why intake is uncapped while the lane is open](rationale/drain-to-worker-slots.md#why-intake-follows-the-lane)
+   e. **Update cursor.** Write `Roadmap intake cursor: ROADMAP.md:<last-line-promoted>` in your routine comment. A fire that took in everything leaves the cursor at the `## Active fronts` heading.
+   f. **Wrap-around.** Reaching the end of `## Active fronts` → reset the cursor to the heading.
+   g. **"Out of supply" is a correct outcome — promoting nothing is always allowed.** Never descend into sub-bullets, prose, classification notes, or any list an item marks rejected/borderline/"do not migrate" in order to find something. Those are reference material, not a queue. Promote zero, say so, and let (j) escalate. → [why mining rejected candidates costs more than it yields](rationale/out-of-supply-is-correct.md)
    h. **Re-validate a `backlog` task before promoting it to `todo`.** Re-read its `Source: docs/ROADMAP.md:<line>` anchor. Item gone, moved, or now rejected/gated → cancel with a comment citing the anchor, or bounce to Planner if it merely moved. A promotion is a fresh decision, not a replay of an old one.
+   i. **Dispatch what you just took in.** Intake runs after step 5, so re-run step 5 once over the backlog as it now stands — free Worker slots left unfilled here wait a whole fire for supply that is already on the board.
+   j. **Drained → wake the Planner, once.** After (i), if this fire scanned the whole of `## Active fronts` (heading to end, across a wrap if the cursor started mid-index) **and** dispatchable `ready` is 0, the pipeline has consumed everything promotable. Assign the Planner a restock task: `"Roadmap intake starved — index scanned, <n> promoted this fire, dispatchable backlog 0. Remaining unpromoted items are unpromotable (skip-word lead / nested-only / below their dependents). Reframe per Planner Output-quality > intake filter."` **Skip it if any Planner-assigned task titled `Roadmap intake starved` is not `done` or `cancelled`** — the Planner runs one fire at a time and restocks to a band, so a second request only queues a duplicate fire. → [why one drained fire is enough](rationale/drain-to-worker-slots.md#why-one-drained-fire-wakes-the-planner)
 10. Exit.
 
 Review/verify subtasks: `in_review`, not `todo`. Review = file list + "optimize, improve, IP compliance". Verify = `needs-build` + "cargo clippy/test, fix".
@@ -270,7 +275,7 @@ oldest first, in the same fire.** Read the lane from the gate the Architect's `o
 from queue depth or the last fire's comment:
 
 ```sh
-LANE=$(python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0   # <!-- privacy-ok: this harness's own script path, needed to run the gate -->
+LANE=$(python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0  # <!-- privacy-ok: the pipeline's own gate script, not project source -->
 # LANE=1 → dispatch all;  LANE=0 → apply the local cap below
 ```
 
