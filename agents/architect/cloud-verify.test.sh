@@ -285,8 +285,22 @@ check "worktree reset to launched head" "$(g rev-parse HEAD)" "$LEASE"
 
 setup AA-29; commit src/a.rs "fn fixed() {}" fix; publish AA-29
 printf 'dirty\n' >> "$R/src/a.rs"
-accept AA-29;                                   check "dirty worktree -> rejected, untouched" "$?" 1
+accept AA-29;                                   check "uncommitted edit to a file the cloud changed -> rejected" "$?" 1
 check "uncommitted edit preserved" "$(tail -1 "$R/src/a.rs")" dirty
+
+# A pre-push guard rewriting an unrelated tracked file must not block the work.
+setup AA-33; commit src/a.rs "fn fixed() {}" fix; WORK="$(g rev-parse HEAD)"; publish AA-33
+printf 'reseeded\n' >> "$R/src/b.rs"
+accept AA-33;                                   check "unrelated uncommitted edit -> accepted" "$?" 0
+check "worktree fast-forwarded past unrelated dirt" "$(g rev-parse HEAD)" "$WORK"
+check "unrelated edit preserved" "$(tail -1 "$R/src/b.rs")" reseeded
+
+setup AA-34; commit src/a.rs "fn fixed() {}" fix; publish AA-34
+printf 'reseeded\n' >> "$R/src/b.rs"
+( cd "$R" && PATH="$REALPATH" PIXI_RC=1 CLOUD_VERIFY_PIXI_BIN="$PIXI" "$CV" accept AA-34 >/dev/null 2>&1 )
+check "guard failure with unrelated dirt -> rejected" "$?" 1
+check "rollback keeps unrelated edit" "$(tail -1 "$R/src/b.rs")" reseeded
+check "rollback returns to launched head" "$(g rev-parse HEAD)" "$LEASE"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
