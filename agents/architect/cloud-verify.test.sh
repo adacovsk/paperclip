@@ -190,6 +190,27 @@ echo "guard suite failed" > "$CLOUD_VERIFY_DIR/AA-12.cloud.rejected"
 OFFLOAD_TASK=AA-12 "$CV" offload AA-12 task/AA-12 >/dev/null 2>&1; check "rejected task is not re-offloaded -> 1" "$?" 1
 unset ARCHITECT_CLOUD_LANE
 
+echo "completion wake:"
+# The wake must name the Verify task; unnamed, the server binds it to a stale one.
+cat > "$BIN/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$DIR/curl.log"
+EOF
+chmod +x "$BIN/curl"
+cat > "$BIN/git" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = "ls-remote" ] && exit 2
+exit 0
+EOF
+chmod +x "$BIN/git"
+rm -f "$DIR/curl.log"
+PAPERCLIP_API_URL=http://x PAPERCLIP_AGENT_ID=a "$CV" watch AA-30 task/AA-30 AA-31 >/dev/null 2>&1
+check "wake names the verify task" "$(grep -c '"issueIdentifier":"AA-31"' "$DIR/curl.log" 2>/dev/null)" 1
+rm -f "$DIR/curl.log"
+PAPERCLIP_API_URL=http://x PAPERCLIP_AGENT_ID=a "$CV" watch AA-32 task/AA-32 >/dev/null 2>&1
+check "wake falls back to the task id" "$(grep -c '"issueIdentifier":"AA-32"' "$DIR/curl.log" 2>/dev/null)" 1
+rm -f "$BIN/curl"
+
 echo "acceptance of cloud commits (real git):"
 # The trust boundary, so it runs against real repositories rather than stubs.
 REALPATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$BIN" | paste -sd:)"

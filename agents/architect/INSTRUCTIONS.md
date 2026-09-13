@@ -320,8 +320,13 @@ chain, from the worktree with everything committed:
 
 ```sh
 CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
-"$CV" offload "{task-id}" "task/{task-id}"
+"$CV" offload "{task-id}" "task/{task-id}" "{verify-task-id}"
 ```
+
+`{verify-task-id}` is your own `Verify:` subtask id, substituted as a literal
+exactly as in the local launch block. It is what the completion wake binds to;
+without it the wake lands on whatever task your session last touched, and the
+green result waits for the next Coordinator fire.
 
 It pushes the branch, records its base, and detaches the watch. **Exit 0 → exit
 the run. Exit 1 → the lane is closed for this task; launch the local chain as
@@ -449,7 +454,7 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
     rm -f "$VERIFY_DIR/{task-id}.exit"
     # Re-verify in the cloud when the lane admits it (it pushes the rebased head);
     # otherwise fall through to the local launch.
-    if "$HOME/code/paperclip/agents/architect/cloud-verify.sh" offload "{task-id}" "task/{task-id}"; then
+    if "$HOME/code/paperclip/agents/architect/cloud-verify.sh" offload "{task-id}" "task/{task-id}" "{verify-task-id}"; then
       echo "origin/main advanced (freshness re-verify $((N + 1))/$FRESHNESS_CAP) — re-verifying in the cloud; a later wake lands it"
       exit 0
     fi
