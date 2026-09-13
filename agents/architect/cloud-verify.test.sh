@@ -138,43 +138,39 @@ rm -f "$CLOUD_VERIFY_DIR/AA-4.exit"
 "$CV" watch AA-4 task/AA-4 >/dev/null 2>&1
 check "red verdict lands as .exit=1" "$(cat "$CLOUD_VERIFY_DIR/AA-4.exit" 2>/dev/null)" 1
 
-echo "offload admission:"
-# setsid is where the detached watch starts; stubbing it keeps admission under
+echo "offload gate:"
+# setsid is where the detached watch starts; stubbing it keeps the gate under
 # test without a real watch racing the next case.
 cat > "$BIN/setsid" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "$DIR/setsid.log"
 EOF
 chmod +x "$BIN/setsid"
-RESET="$(date -u -d @$((NOW + 4 * 86400)) +%Y-%m-%dT%H:%M:%S+00:00)"   # 3/7 of the week elapsed
+RESET="$(date -u -d @$((NOW + 4 * 86400)) +%Y-%m-%dT%H:%M:%S+00:00)"   # 3/7 (43%) of the week elapsed
 usage() {  # weekly%, session%
   printf '{"five_hour":{"utilization":%s},"seven_day":{"utilization":%s,"resets_at":"%s"}}' \
     "$2" "$1" "$RESET" > "$DIR/usage.json"
 }
-clear_stamps() { rm -f "$CLOUD_VERIFY_DIR"/*.cloud.launched "$DIR/setsid.log"; }
 export CLOUD_PACE_USAGE_FILE="$DIR/usage.json" CLOUD_PACE_NOW="$NOW"
-PACE="$HERE/cloud-pace.py"
-pace() { python3 "$PACE" 2>/dev/null; }
+pace() { python3 "$HERE/cloud-pace.py" 2>/dev/null; }
 
-usage 38 6;  check "38% at 3/7 of week, target 95 -> 1 slot" "$(pace)" 1
-usage 20 6;  check "20% at 3/7 -> deficit 20.7pt -> capped 4" "$(pace)" 4
-usage 45 6;  check "ahead of pace -> 0"                       "$(pace)" 0
-usage 20 85; check "session ceiling -> 0"                     "$(pace)" 0
+usage 38 6;  check "38% used at 43% elapsed -> open" "$(pace)" 1
+usage 43 6;  check "on pace -> closed"               "$(pace)" 0
+usage 60 6;  check "ahead of pace -> closed"         "$(pace)" 0
+usage 20 85; check "session ceiling -> closed"       "$(pace)" 0
 echo 'not json' > "$DIR/usage.json"
-check "unreadable usage fails closed -> 0" "$(pace)" 0
+check "unreadable usage fails closed" "$(pace)" 0
 
-clear_stamps; usage 20 6
+rm -f "$DIR/setsid.log"; usage 38 6
 ARCHITECT_CLOUD_LANE= "$CV" offload AA-5 task/AA-5 >/dev/null 2>&1; check "flag unset -> 1" "$?" 1
 export ARCHITECT_CLOUD_LANE=1
-CLOUD_PACE_MAX=2 "$CV" offload AA-5 task/AA-5 >/dev/null 2>&1; check "first admitted -> 0"  "$?" 0
-CLOUD_PACE_MAX=2 "$CV" offload AA-6 task/AA-6 >/dev/null 2>&1; check "second admitted -> 0" "$?" 0
-CLOUD_PACE_MAX=2 "$CV" offload AA-7 task/AA-7 >/dev/null 2>&1; check "over pace -> 1"       "$?" 1
-check "only admitted tasks detached a watch" "$(wc -l < "$DIR/setsid.log")" 2
-# A killed watch leaves its stamp behind; it must age out rather than hold a slot.
-touch -d '-3 hours' "$CLOUD_VERIFY_DIR/AA-5.cloud.launched"
-CLOUD_PACE_MAX=2 "$CV" offload AA-7 task/AA-7 >/dev/null 2>&1; check "stale stamp not counted -> 0" "$?" 0
-clear_stamps; usage 45 6
-"$CV" offload AA-8 task/AA-8 >/dev/null 2>&1;                   check "ahead of pace -> 1"   "$?" 1
+for t in 5 6 7 8 9 10; do
+  "$CV" offload "AA-$t" "task/AA-$t" >/dev/null 2>&1 || bad "offload AA-$t" "refused while open"
+done
+check "open lane has no concurrency bound" "$(wc -l < "$DIR/setsid.log")" 6
+usage 60 6
+"$CV" offload AA-11 task/AA-11 >/dev/null 2>&1; check "ahead of pace -> 1" "$?" 1
+check "closed lane detached nothing" "$(wc -l < "$DIR/setsid.log")" 6
 unset ARCHITECT_CLOUD_LANE
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

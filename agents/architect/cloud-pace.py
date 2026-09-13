@@ -1,26 +1,21 @@
 #!/usr/bin/env python3
-"""How many cloud verifies the weekly usage limit can afford right now.
+"""Whether the weekly usage limit has quota to spare on cloud verifies.
 
-Prints one integer: the number of cloud-verify sessions allowed in flight. The
-cloud lane spends the same account quota as every local agent, so it is paced
-against the weekly window rather than bounded by a fixed number: when usage is
-behind where an even spend would put it, the surplus goes to cloud verifies;
-when usage is on or ahead of pace, the lane closes and the local build box
-carries the queue as it always has.
-
-    target_now = elapsed_fraction_of_week * CLOUD_PACE_TARGET
-    deficit    = target_now - weekly_utilization          (percentage points)
-    slots      = 0 if deficit <= 0 else min(MAX, 1 + deficit // STEP)
+Prints 1 (lane open) or 0 (lane closed). Open means weekly utilization is
+behind the fraction of the week that has elapsed — quota an even spend would
+already have used is going unused — and while it is, every verify goes to the
+cloud with no concurrency bound. The deficit self-corrects: cloud sessions
+spend the same account quota, so a flood closes the lane once usage catches up
+with the calendar, and the local build box carries the queue again.
 
 The window is read from the usage response's own `resets_at`, never from a
-hardcoded weekday, so a moved reset cannot desynchronise the pacing.
+hardcoded weekday, so a moved reset cannot desynchronise the gate.
 
-FAILS CLOSED. Any error reading usage prints 0. A pacing gate that opens when
-it cannot see the meter is how a lane meant to spend *spare* quota exhausts the
-whole week and stalls every agent until the reset. The endpoint is the one
-Claude Code's own usage display reads; it is not a published API, so a changed
-shape is expected eventually and must degrade to "lane off", not to a crash
-that a caller might read as permission.
+FAILS CLOSED. Any error reading usage prints 0. An unbounded lane that opens
+when it cannot see the meter is how a week's quota is exhausted and every agent
+stalls until the reset. The endpoint is the one Claude Code's own usage display
+reads; it is not a published API, so a changed shape is expected eventually and
+must degrade to "lane off", not to a crash a caller might read as permission.
 
 The session (five-hour) limit is a separate ceiling for the same reason: a
 week with plenty of headroom can still hit the session limit, and that blocks
@@ -66,39 +61,31 @@ def read_usage() -> dict:
         return json.load(resp)
 
 
-def slots(usage: dict, now: float) -> tuple[int, str]:
-    target = env_float("CLOUD_PACE_TARGET", 95)
-    step = env_float("CLOUD_PACE_STEP", 5)
-    cap = int(env_float("CLOUD_PACE_MAX", 4))
+def is_open(usage: dict, now: float) -> tuple[bool, str]:
     session_ceiling = env_float("CLOUD_PACE_SESSION_CEILING", 80)
 
     week = usage["seven_day"]
     used = float(week["utilization"])
     reset = datetime.fromisoformat(week["resets_at"]).timestamp()
-    elapsed = min(1.0, max(0.0, 1 - (reset - now) / WEEK))
+    elapsed = min(100.0, max(0.0, 100 * (1 - (reset - now) / WEEK)))
     session = float((usage.get("five_hour") or {}).get("utilization") or 0)
 
-    target_now = elapsed * target
-    deficit = target_now - used
-    why = (
-        f"week {used:.0f}% used, {elapsed * 100:.0f}% elapsed, "
-        f"pace {target_now:.0f}%, deficit {deficit:+.1f}pt, session {session:.0f}%"
-    )
+    why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed, session {session:.0f}%"
     if session >= session_ceiling:
-        return 0, f"{why}: session ceiling {session_ceiling:.0f}% reached"
-    if used >= target or deficit <= 0:
-        return 0, f"{why}: on or ahead of pace"
-    return min(cap, 1 + int(deficit // step)), why
+        return False, f"{why}: session ceiling {session_ceiling:.0f}% reached"
+    if used >= elapsed:
+        return False, f"{why}: on or ahead of pace"
+    return True, f"{why}: behind pace"
 
 
 def main() -> int:
     now = env_float("CLOUD_PACE_NOW", time.time())
     try:
-        n, why = slots(read_usage(), now)
+        open_, why = is_open(read_usage(), now)
     except Exception as exc:  # fail closed on every read or shape error
-        n, why = 0, f"usage unreadable ({type(exc).__name__}: {exc}): lane closed"
-    print(n)
-    print(f"cloud-pace: {n} slot(s) — {why}", file=sys.stderr)
+        open_, why = False, f"usage unreadable ({type(exc).__name__}: {exc})"
+    print(1 if open_ else 0)
+    print(f"cloud-pace: {'open' if open_ else 'closed'} — {why}", file=sys.stderr)
     return 0
 
 

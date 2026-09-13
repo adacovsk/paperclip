@@ -315,51 +315,21 @@ you still rebase, fix, regenerate schemas (§6.5), commit, push and open the PR.
 The cloud session is read-only by construction: a landing that did not go through
 you bypasses the schema gate.
 
-Use it only when **all** hold:
-
-- Two or more tasks are waiting on you, so the queue — not this build — is what
-  the pipeline is stuck behind. Measure it; do not guess it from how busy the box
-  feels:
-
-  ```sh
-  curl -fsS "$PAPERCLIP_API_URL/api/companies/<companyId>/issues?limit=200" \
-    ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
-  | python3 -c 'import json,sys,os
-  xs = json.load(sys.stdin)
-  xs = xs if isinstance(xs, list) else xs.get("issues", xs.get("data", []))
-  me = os.environ["PAPERCLIP_AGENT_ID"]
-  print(sum(1 for i in xs
-            if i.get("assigneeAgentId") == me
-            and i.get("status") in ("in_review", "blocked")))'
-  ```
-
-  **Depth is assignee + status, NOT the pipeline label.** `needs-build` /
-  `data-only` are described in the project's `CLAUDE.md`, but `labels` and
-  `labelIds` come back empty on every issue in this instance — a label-based
-  filter silently counts zero and the lane would never fire. If labels are
-  populated later, add them as a *narrowing* filter on top of this count, not as
-  a replacement for it.
-- The branch is pushed. The VM clones the remote and never sees your worktree;
-  `cloud-verify.sh` refuses with `98` rather than verifying stale code.
-
-**A threshold of 2 is not a throttle — measured depth was 13.** So treat the
-count as a floor that stops the lane firing on an empty queue, not as something
-that will ration it. If every task starts going to the cloud and that is not what
-you want, raise the threshold rather than assuming the queue will fall below it.
-
-Ask for admission; it detaches the watch itself when admitted:
+**Offload every verify — no queue-depth floor.** Once the branch is pushed (the
+VM clones the remote and never sees your worktree; `cloud-verify.sh` refuses
+with `98` rather than verifying stale code), ask the lane before launching the
+local chain:
 
 ```sh
 CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
 "$CV" offload "{task-id}" "task/{task-id}"
 ```
 
-**Exit 1 means not admitted — launch the local chain as usual.** It is not a
-failure and writes no sentinel. Admission is paced against the weekly usage
-limit (the `cloud-pace` script beside this file): the lane only opens while usage is behind an even spend
-across the week, and allows more concurrent verifies the further behind it is.
-Never call `watch` or `launch` directly — they bypass the pacing, and concurrent
-Architect runs would each launch into the same spare quota.
+**Exit 1 means the lane is closed — launch the local chain as usual.** It is not
+a failure and writes no sentinel. The lane is open exactly while weekly usage is
+behind the fraction of the week elapsed (the `cloud-pace` script beside this
+file), and while it is open there is no concurrency bound: every verify goes to
+the cloud. Never call `watch` or `launch` directly — they bypass the gate.
 
 On exit 0, exit the run. `watch` polls to a terminal verdict, writes
 `{task-id}.exit`, and fires the same wakeup callback the local wrapper does, so
@@ -370,10 +340,10 @@ inconclusive, relaunch.
 Two things this does **not** buy, and misreading either wastes a cycle:
 
 - **No quota relief.** Cloud draws the same account rate limits. What you reclaim
-  is the build box's cores and memory. If the queue is short, waiting is cheaper
-  than offloading — the VM starts cold with no sccache, so a single cloud verify
-  is *slower* than a warm local one. This lane trades per-build latency for
-  parallelism, and it is only a win when something else is genuinely blocked.
+  is the build box's cores and memory, and what it spends is weekly quota that
+  would otherwise go unused. The VM starts cold with no sccache, so a single
+  cloud verify is *slower* than a warm local one; offload anyway while the lane
+  is open — the gate, not your read of the queue, decides.
 - **No verdict you can skip your own verification over.** It is triage. Its value
   is that a *broken* branch goes back to the Worker without ever consuming a
   cargo slot; a green one still gets verified locally before Landing.
