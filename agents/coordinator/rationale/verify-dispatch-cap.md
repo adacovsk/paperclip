@@ -1,7 +1,8 @@
 # Why verifies are capped, and why the only hold is a NULL assignee
 
-**Justifies:** *Cap concurrent verifies at 2x the semaphore's ceiling* and *Holding the surplus
-means leaving `assigneeAgentId` NULL* (§Architect dispatch)
+**Justifies:** *While the cloud lane is open there is no cap*, *With the lane closed, cap
+concurrent verifies at 2x the semaphore's ceiling* and *Holding the surplus means leaving
+`assigneeAgentId` NULL* (§Architect dispatch)
 
 ## Why a cap at all, when the semaphore already bounds concurrency
 
@@ -15,6 +16,23 @@ Throughput does not merely plateau past the cap, it **degrades**: cold dependenc
 for sccache, whose Rust hit rate was measured decaying under exactly this load. Meanwhile the
 pipeline reports healthy on every cheap probe — moving log mtimes, busy slots, live scopes — which
 is why it ran so long unnoticed.
+
+## Why cloud verifies are not capped
+
+Everything above is about the local box: semaphore tickets, per-worktree `target/` disk, sccache
+contention. A verify the Architect offloads through `cloud-verify.sh` touches none of it — it
+builds on its own VM, and the only local cost is a sleeping watch process. Its limit is account
+quota, and `cloud-pace.py` already meters that: open while weekly usage trails the calendar and
+the session limit has headroom, closed otherwise, and closed whenever the meter cannot be read.
+The Architect's offload has no concurrency bound while the lane is open.
+
+Applying the local cap anyway makes the Coordinator a second, stricter quota gate that measures
+the wrong thing. With the lane open and `LIVE` reading 0, verifies sat held and unassigned across
+fires while the Architect was idle — a ceiling of a couple of builds per fire, on quota the gate
+had declared unused.
+
+The cap is keyed off the gate, not off whether `ARCHITECT_CLOUD_LANE` is set, because a closed
+lane sends every verify down the local chain, which is exactly the load the cap exists for.
 
 ## Why the hold has to be a NULL assignee
 
