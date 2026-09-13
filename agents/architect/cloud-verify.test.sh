@@ -138,5 +138,40 @@ rm -f "$CLOUD_VERIFY_DIR/AA-4.exit"
 "$CV" watch AA-4 task/AA-4 >/dev/null 2>&1
 check "red verdict lands as .exit=1" "$(cat "$CLOUD_VERIFY_DIR/AA-4.exit" 2>/dev/null)" 1
 
+echo "offload gate:"
+# setsid is where the detached watch starts; stubbing it keeps the gate under
+# test without a real watch racing the next case.
+cat > "$BIN/setsid" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$DIR/setsid.log"
+EOF
+chmod +x "$BIN/setsid"
+RESET="$(date -u -d @$((NOW + 4 * 86400)) +%Y-%m-%dT%H:%M:%S+00:00)"   # 3/7 (43%) of the week elapsed
+usage() {  # weekly%, session%
+  printf '{"five_hour":{"utilization":%s},"seven_day":{"utilization":%s,"resets_at":"%s"}}' \
+    "$2" "$1" "$RESET" > "$DIR/usage.json"
+}
+export CLOUD_PACE_USAGE_FILE="$DIR/usage.json" CLOUD_PACE_NOW="$NOW"
+pace() { python3 "$HERE/cloud-pace.py" 2>/dev/null; }
+
+usage 38 6;  check "38% used at 43% elapsed -> open" "$(pace)" 1
+usage 43 6;  check "on pace -> closed"               "$(pace)" 0
+usage 60 6;  check "ahead of pace -> closed"         "$(pace)" 0
+usage 20 85; check "session ceiling -> closed"       "$(pace)" 0
+echo 'not json' > "$DIR/usage.json"
+check "unreadable usage fails closed" "$(pace)" 0
+
+rm -f "$DIR/setsid.log"; usage 38 6
+ARCHITECT_CLOUD_LANE= "$CV" offload AA-5 task/AA-5 >/dev/null 2>&1; check "flag unset -> 1" "$?" 1
+export ARCHITECT_CLOUD_LANE=1
+for t in 5 6 7 8 9 10; do
+  "$CV" offload "AA-$t" "task/AA-$t" >/dev/null 2>&1 || bad "offload AA-$t" "refused while open"
+done
+check "open lane has no concurrency bound" "$(wc -l < "$DIR/setsid.log")" 6
+usage 60 6
+"$CV" offload AA-11 task/AA-11 >/dev/null 2>&1; check "ahead of pace -> 1" "$?" 1
+check "closed lane detached nothing" "$(wc -l < "$DIR/setsid.log")" 6
+unset ARCHITECT_CLOUD_LANE
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

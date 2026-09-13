@@ -259,6 +259,28 @@ cmd_watch() {
   wake "$task"
 }
 
+# The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
+# detached; exit the run as for a local launch). Exit 1 = lane closed; run the
+# local chain instead. Declining is never an error and writes no sentinel.
+#
+# There is deliberately no concurrency bound: while weekly usage is behind the
+# calendar every verify goes to the cloud, and the flood is bounded by the quota
+# it spends closing the gate. The gate is here rather than in INSTRUCTIONS.md so
+# no Architect run can offload without passing it.
+cmd_offload() {
+  local task="${1:?task id}" branch="${2:?branch}" open
+  [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
+  mkdir -p "$STATE_DIR"
+  open="$(python3 "$(dirname "$0")/cloud-pace.py" 2>>"$STATE_DIR/pace.log")" || open=0
+  if [ "$open" != "1" ]; then
+    echo "not offloaded: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null) — run locally"
+    exit 1
+  fi
+  rm -f "$STATE_DIR/$task.exit"
+  setsid "$0" watch "$task" "$branch" >/dev/null 2>&1 < /dev/null &
+  echo "offloaded $task: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null)"
+}
+
 # Mirrors the local wrapper's callback so a verdict does not wait for the next
 # scheduled wake. Best-effort: a missed wake costs latency, not correctness.
 wake() {
@@ -274,5 +296,6 @@ case "${1:-}" in
   launch) shift; cmd_launch "$@" ;;
   poll)   shift; cmd_poll   "$@" ;;
   watch)  shift; cmd_watch  "$@" ;;
-  *) printf 'usage: %s launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
+  offload) shift; cmd_offload "$@" ;;
+  *) printf 'usage: %s offload <task-id> <branch> | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
 esac
