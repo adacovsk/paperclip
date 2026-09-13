@@ -156,10 +156,12 @@ case "$1" in
   branch)     echo "task/${OFFLOAD_TASK}" ;;
   status)     ;;
   merge-base) echo aaa111 ;;
+  push)       printf '%s\n' "$*" >> "$PUSH_LOG" ;;
   *)          exit 0 ;;
 esac
 EOF
 chmod +x "$BIN/git"
+export PUSH_LOG="$DIR/push.log"
 RESET="$(date -u -d @$((NOW + 4 * 86400)) +%Y-%m-%dT%H:%M:%S+00:00)"   # 3/7 (43%) of the week elapsed
 usage() {  # weekly%, session%
   printf '{"five_hour":{"utilization":%s},"seven_day":{"utilization":%s,"resets_at":"%s"}}' \
@@ -182,6 +184,9 @@ for t in 5 6 7 8 9 10; do
   OFFLOAD_TASK="AA-$t" "$CV" offload "AA-$t" "task/AA-$t" >/dev/null 2>&1 || bad "offload AA-$t" "refused while open"
 done
 check "open lane has no concurrency bound" "$(wc -l < "$DIR/setsid.log")" 6
+# A pre-push hook outlives the Architect's run and strands the launch.
+check "offload pushes each task"             "$(wc -l < "$PUSH_LOG")" 6
+check "offload push skips the pre-push hook" "$(grep -vc -- '--no-verify' "$PUSH_LOG")" 0
 usage 60 6
 OFFLOAD_TASK=AA-11 "$CV" offload AA-11 task/AA-11 >/dev/null 2>&1; check "ahead of pace -> 1" "$?" 1
 check "closed lane detached nothing" "$(wc -l < "$DIR/setsid.log")" 6
