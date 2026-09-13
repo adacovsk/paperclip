@@ -31,7 +31,7 @@ Required env vars (see `$PAPERCLIP_REPO/docs/specs/per-task-worktrees.md`
 either is unset — never guess.
 
 No Paperclip API. No curl. No network *for paperclip*. `gh` is allowed
-for opening the PR at the end. No task creation (Coordinator). No
+for opening the PR at the end, and `cloud-verify.sh offload` for the cloud lane. No task creation (Coordinator). No
 merges to main (human only).
 
 **Scope: build gate only.** You do not review code, judge quality, suggest
@@ -263,7 +263,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
      - **Timed out still building** → *now* exit the run. A later wake lands it, exactly as before. One poll per 15 minutes instead of one per 30 seconds.
 
      **Keep the bound well under your watchdog.** The hard watchdog starts at dispatch, not at slot acquisition (§Architect dispatch in coordinator INSTRUCTIONS), so an unbounded wait here is the blocking form rule 2 forbids — it would burn the whole budget and die with nothing compiled. `sleep 20` between probes, not a tight loop: the thing being polled changes on a scale of tens of minutes.
-   - **absent + no build** → launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run. **Unless the cloud overflow lane applies — see §Cloud overflow lane below**, in which case launch that instead and exit the run. Everything downstream of this branch is identical either way: the cloud lane writes the same `{task-id}.exit` sentinel with the same vocabulary.
+   - **absent + no build** → **first try `cloud-verify.sh offload` (§Cloud overflow lane)**; exit 0 → exit the run. Otherwise launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run. Both write the same `{task-id}.exit` sentinel; the cloud lane adds `95` and gives `0`/`1` the meanings listed in its section — read those when `{task-id}.cloud.verdict` exists.
    - **present, `0`** → cargo passed → **read `{task-id}.integration` (see below), then** go to *Identify your task's changed files* then §Landing.
    - **`{task-id}.integration` — report-only, never a gate.** Written by the fourth stage (§Cargo discipline rule 5). Absent = the stage was skipped (no Rust under `src/` or `tests/` changed) or the gating stages failed, so there is nothing to report. `0` = integration suites passed; say nothing. **Non-zero = they failed, and you Land anyway** — this does not block the PR and you must not enter the fix loop for it. Post one comment on the task naming the failing tests from `{task-id}.integration.log` (`grep -E "^(test .* FAILED|failures:|---- .* stdout ----)"` and the `test result:` line), state whether any failing suite is in your changed-files list, and continue to §Landing in the same run. `137` means OOM, not a real failure — report it as inconclusive rather than as a broken suite.
      - If a failing suite **is** in your changed-files list, it is yours: fix it before landing, as a normal in-scope failure.
@@ -286,6 +286,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
     git diff --name-only main..HEAD | python3 scripts/check_schema_regen.py
     ```
     - **Exit 0** → nothing schema-relevant changed. Land.
+    - **Cloud result** (`{task-id}.cloud.verdict` exists) → do not regenerate; the VM ran this step last. Follow §Cloud overflow lane for the PR-body token.
     - **Exit 1** → it lists the offending files. Run the regeneration (same command as Cargo discipline §Schema-drift verification — default `dev` profile, **never** `--no-default-features`) once `cargo test --lib` is green:
       ```sh
       sccache --start-server >/dev/null 2>&1 || true
@@ -309,49 +310,55 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 skip this section entirely and launch the local chain as always. The flag is the
 rollback: clearing it restores the previous behaviour with no other edit.
 
-When it is set, run the clippy/test pass on a cloud VM instead of taking a
-`cargo-sem.sh` slot. **This changes where verification runs, not who owns it** —
-you still rebase, fix, regenerate schemas (§6.5), commit, push and open the PR.
-The cloud session is read-only by construction: a landing that did not go through
-you bypasses the schema gate.
+When it is set, the cargo half of the verify runs on a cloud VM: clippy and
+tests, fixes inside the task's files (at most 3 rounds), the non-Rust guard
+suite, and schema regeneration last. **You still own landing** — the push to
+`task/{task-id}` and the PR come from your §Landing, never from the VM.
 
-**Offload every verify — no queue-depth floor.** Once the branch is pushed (the
-VM clones the remote and never sees your worktree; `cloud-verify.sh` refuses
-with `98` rather than verifying stale code), ask the lane before launching the
-local chain:
+**Offload every verify — no queue-depth floor.** In place of launching the local
+chain, from the worktree with everything committed:
 
 ```sh
 CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
 "$CV" offload "{task-id}" "task/{task-id}"
 ```
 
-**Exit 1 means the lane is closed — launch the local chain as usual.** It is not
-a failure and writes no sentinel. The lane is open exactly while weekly usage is
-behind the fraction of the week elapsed (the `cloud-pace` script beside this
-file), and while it is open there is no concurrency bound: every verify goes to
-the cloud. Never call `watch` or `launch` directly — they bypass the gate.
+It pushes the branch, records its base, and detaches the watch. **Exit 0 → exit
+the run. Exit 1 → the lane is closed for this task; launch the local chain as
+usual.** Exit 1 is never a failure. The lane is open while weekly usage is behind
+the fraction of the week elapsed (the `cloud-pace` script beside this file), and
+while open there is no concurrency bound. Never call `watch` or `launch`
+directly — they bypass the gate.
 
-On exit 0, exit the run. `watch` polls to a terminal verdict, writes
-`{task-id}.exit`, and fires the same wakeup callback the local wrapper does, so
-the next wake reads the sentinel through the **unchanged** state machine above:
-`0` → Landing, non-zero → fix loop, `96`/`98` → environment/base, `99` →
-inconclusive, relaunch.
+**The VM's commits are untrusted until this box accepts them.** The VM builds the
+exact head you pushed and publishes only to its own `cloud-verify/` branch.
+Before any sentinel is written, the watch checks that its commits descend from
+that head, touch only the task's files or `assets/schemas/`, add no
+`#[allow]`/`#[expect]`/`#[ignore]`, delete nothing, and pass
+`pixi run -e dev verify`; only then does it fast-forward your worktree.
+Otherwise it writes **`95`**. The sentinel then reads through the state machine
+above, with these cloud-specific meanings (you can tell a cloud result by
+`{task-id}.cloud.verdict` existing):
 
-Two things this does **not** buy, and misreading either wastes a cycle:
+- **`0`** → accepted and green. Go to §Landing. **Do not run
+  `generate_schemas` in §6.5** — read `schemas:` from `{task-id}.cloud.verdict`
+  instead: `proved-empty` means put `[skip-schema-regen]` in the PR body;
+  `regenerated` and `not-relevant` need nothing.
+- **`1`** → accepted but still red: the VM already spent its fix rounds, and its
+  in-scope fixes are now in your worktree. That *is* your 3-cycle hard stop —
+  do not fix locally. Comment the `--- errors ---` block from the verdict and
+  escalate to operator.
+- **`95`** → rejected; the reason is in `{task-id}.cloud.rejected` and the tail
+  of `{task-id}.cloud.log`. Your worktree was left at the head you pushed, and
+  `offload` now refuses this task. Comment the reason, `rm -f "$EXIT"`, and
+  launch the **local** chain.
+- **`99`** → the VM never published; `rm -f "$EXIT"` and offload again. Twice
+  running → escalate.
 
-- **No quota relief.** Cloud draws the same account rate limits. What you reclaim
-  is the build box's cores and memory, and what it spends is weekly quota that
-  would otherwise go unused. The VM starts cold with no sccache, so a single
-  cloud verify is *slower* than a warm local one; offload anyway while the lane
-  is open — the gate, not your read of the queue, decides.
-- **No verdict you can skip your own verification over.** It is triage. Its value
-  is that a *broken* branch goes back to the Worker without ever consuming a
-  cargo slot; a green one still gets verified locally before Landing.
-
-If the VM cannot publish its verdict you will get `99`, not a red. Do not read
-that as a build failure and do not edit Rust — escalate, it is an environment
-gap. The verdict travels as a git ref (`refs/cloud-verify/<task>/<sha>`), not a
-gist, precisely so it does not depend on `gh`, which the cloud image lacks.
+**It spends quota, not relief from it.** Cloud draws the same account limits; the
+lane exists to use weekly quota that would otherwise go unused. A cold VM with no
+sccache is slower per build than a warm local one — offload anyway while the
+lane is open; the gate, not your read of the queue, decides.
 
 ## Landing: commit, push, and open the PR (ONE atomic block)
 
@@ -440,6 +447,12 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
     # the detached build, exit. A later wake re-evaluates the sentinel.
     echo "$((N + 1))" > "$FRESH"
     rm -f "$VERIFY_DIR/{task-id}.exit"
+    # Re-verify in the cloud when the lane admits it (it pushes the rebased head);
+    # otherwise fall through to the local launch.
+    if "$HOME/code/paperclip/agents/architect/cloud-verify.sh" offload "{task-id}" "task/{task-id}"; then
+      echo "origin/main advanced (freshness re-verify $((N + 1))/$FRESHNESS_CAP) — re-verifying in the cloud; a later wake lands it"
+      exit 0
+    fi
     # The chain is built once and launched below. Keeping the body in a
     # variable is not cosmetic: it has to be handed to two different launchers
     # (transient scope, or bare setsid as the fallback) and a second copy would
@@ -547,7 +560,8 @@ git ls-remote --exit-code --heads origin "task/{task-id}" >/dev/null \
   || { echo "NO REMOTE BRANCH task/{task-id} — push failed silently"; exit 1; }
 gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q . \
   || { echo "NO PR CREATED for task/{task-id} — run failed"; exit 1; }
-rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{task-id}.freshness" "$VERIFY_DIR/{task-id}.pid" "$VERIFY_DIR/{task-id}.integration" "$VERIFY_DIR/{task-id}.integration.log"
+rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{task-id}.freshness" "$VERIFY_DIR/{task-id}.pid" "$VERIFY_DIR/{task-id}.integration" "$VERIFY_DIR/{task-id}.integration.log" "$VERIFY_DIR/{task-id}".cloud.*
+git for-each-ref --format='%(refname)' "refs/heads/cloud-verify/{task-id}/" | xargs -r -n1 git update-ref -d   # fetched cloud work, now in the task branch
 [ -n "$PAPERCLIP_ISSUE_IDENTIFIER" ] && [ "$PAPERCLIP_ISSUE_IDENTIFIER" != "{task-id}" ] \
   && rm -f "$VERIFY_DIR/$PAPERCLIP_ISSUE_IDENTIFIER".{pid,exit,base,log,integration}   # the subtask-keyed aliases (§Detached-build liveness)
 # clear sentinel + base + freshness counter + report-only integration result so a stray re-wake won't re-land or re-report
