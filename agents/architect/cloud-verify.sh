@@ -294,7 +294,6 @@ accept_cloud_work() {
 
   git diff --quiet "$work" "$ref" || reject "verdict commit carries file changes"
   [ "$(git rev-parse HEAD)" = "$lease" ] || reject "worktree moved since launch"
-  [ -z "$(git status --porcelain)" ] || reject "worktree dirty since launch"
   git merge-base --is-ancestor "$lease" "$work" || reject "cloud commits do not descend from the launched head"
 
   # Scope: every file the VM changed must already be one of the task's files,
@@ -306,6 +305,17 @@ accept_cloud_work() {
     git diff --name-only "$base" "$lease" | grep -qxF -- "$f" || bad="$bad $f"
   done < <(git diff --name-only "$lease" "$work")
   [ -z "$bad" ] || reject "cloud commits touch files outside the task:$bad"
+
+  # Uncommitted edits are refused only where the cloud commits land. A guard run
+  # by the pre-push hook during offload can rewrite a tracked baseline file, so
+  # "any dirt" rejected every cloud fix; dirt elsewhere survives the fast-forward
+  # and the `reset --keep` rollback untouched.
+  bad=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    git diff --name-only "$lease" "$work" | grep -qxF -- "$f" && bad="$bad $f"
+  done < <(git status --porcelain | cut -c4-)
+  [ -z "$bad" ] || reject "uncommitted edits to files the cloud commits change:$bad"
 
   # The prompt forbids these; this is what makes the prohibition hold.
   if git diff -U0 "$lease" "$work" -- '*.rs' \
@@ -320,7 +330,7 @@ accept_cloud_work() {
   if [ "$work" != "$lease" ]; then
     export PATH="${CLOUD_VERIFY_PIXI_BIN:-$HOME/.pixi/bin}:$PATH"
     if ! command -v pixi >/dev/null || ! pixi run -e dev verify; then
-      git reset -q --hard "$lease"
+      git reset -q --keep "$lease"
       reject "guard suite failed (or pixi unavailable) on the cloud commits"
     fi
   fi
