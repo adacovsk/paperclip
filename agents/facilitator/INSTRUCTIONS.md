@@ -14,6 +14,7 @@ Per non-paused agent: `GET /issues?assigneeAgentId={id}&status=todo,in_progress`
 - queue grew since last sweep (throughput problem)
 - >10 `todo` OR >2 `in_progress`
 - `in_progress` older than 2 days
+- a single `todo` older than 7 days (by `createdAt`) with no live run — `activeRun` false and no `executionRunId`. The count check above cannot see one task rotting in a short queue. Report it to Coordinator with its age; do not re-assign or cancel it.
 
 **Supply (under-stock — the mirror of the above).** The checks above catch *over*-stocked and stuck queues; this catches starvation. `GET /issues?status=backlog,todo` for parent Worker tasks (exclude Facilitator efficiency findings). If the promotable backlog is empty or ~1 while `docs/ROADMAP.md` still has unpromoted top-level bullets, the pipeline is about to idle — file a followup to Coordinator (intake not keeping up, or nothing promotable — see its Roadmap-intake step) and, if the root cause is roadmap phrasing/order, to Planner. **A cleared queue is not automatically healthy** — an idle pipeline with work left to do is a failure, just a silent one. This is the symptom most likely to read as "Pipeline healthy" when it isn't.
 
