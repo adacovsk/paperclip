@@ -1,6 +1,6 @@
 # Why a fire drains to the Worker's run slots, and wakes the Planner when it runs dry
 
-**Justifies:** *Promote backlog → `todo` until the Worker's run slots are full*, *No per-fire cap while the cloud lane is open* and *Drained → wake the Planner, once.* (Run steps 5, 9d, 9j)
+**Justifies:** *Promote backlog → `todo` until the Worker's run slots are full*, *No per-fire cap while the cloud lane is open* and *Drained → wake the Planner, once.* (Run steps 5, 9d, 9j), and *Every wake refills free Worker slots* (Wake triage)
 
 ## Why the ceiling is the Worker's own run slots
 
@@ -17,6 +17,21 @@ moment someone retunes the agent — the instructions keep obeying the old value
 
 The contended-edit-surface hold still applies inside the ceiling. It exists to prevent merge
 conflicts, not to limit load, so draining harder does not relax it.
+
+## Why slot refill is not debounced
+
+The debounce exists because a full sweep re-derives the whole pipeline, and most wakes change
+nothing that sweep would find. Filling Worker slots is a different cost: a promotion is a
+worktree and two PATCHes, and the alternative is Worker capacity sitting idle. A Worker stage
+finishes in minutes, so a slot freed just after a sweep stayed empty until the next scheduled
+fire — up to 30 minutes per slot, four slots at a time, while the cloud lane had quota to spare
+and the Architect was running a dozen verifies. That made the Coordinator's timer, not the
+Architect, the pipeline's binding constraint.
+
+Only step 5 runs on these wakes. Intake, landing, audits and the routine record keep their
+debounce, because those are the expensive re-derivations it was written for. The
+contended-edit-surface hold is unchanged: refilling faster must not become merging-in-parallel
+on one file.
 
 ## Why intake follows the lane
 

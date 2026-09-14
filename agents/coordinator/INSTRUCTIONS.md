@@ -43,10 +43,10 @@ So branch on the wake:
   `payload.issueIdentifier`) → run **only §Landing sweep, for that one task**.
   One sentinel became readable; nothing else changed. Do not run steps 1–3, do
   not re-scan the graph, and **file no routine record** — a targeted landing is
-  recorded on the task it landed. Then exit.
+  recorded on the task it landed. Then refill slots (below) and exit.
 - **`subtask_completed` / assignment wakes** → advance **that task's** stage
-  (step 3's signal table) and exit. A single stage completing does not require
-  re-deriving the whole pipeline.
+  (step 3's signal table), refill slots (below), and exit. A single stage
+  completing does not require re-deriving the whole pipeline.
 - **The scheduled routine fire, an operator message, or an inbox item** → run
   the full sweep below.
 
@@ -54,6 +54,15 @@ So branch on the wake:
 completed less than 20 minutes ago (your own most recent routine record is the
 timestamp), do the targeted work for this wake and skip the rest. Say so in one
 line rather than filing a record.
+
+**Every wake refills free Worker slots — the debounce never covers step 5.**
+After the targeted work on *any* wake, debounced ones included, compute `free`
+exactly as step 5 does. If `free > 0` and `backlog` holds a candidate, run
+**step 5 alone** — worktree allocation, the contended-edit-surface hold and
+assign-last all apply unchanged. Run no other step and file no routine record:
+comment the promotion on each promoted task, and name any holds in the wake
+summary. `free == 0` or an empty backlog → skip it.
+→ [why slot refill is not debounced](rationale/drain-to-worker-slots.md#why-slot-refill-is-not-debounced)
 
 ## Run (do all steps every fire)
 
