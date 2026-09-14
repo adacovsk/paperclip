@@ -14,6 +14,7 @@ Per non-paused agent: `GET /issues?assigneeAgentId={id}&status=todo,in_progress`
 - queue grew since last sweep (throughput problem)
 - >10 `todo` OR >2 `in_progress`
 - `in_progress` older than 2 days
+- a single `todo` older than 7 days (by `createdAt`) with no live run — `activeRun` false and no `executionRunId`. The count check above cannot see one task rotting in a short queue. Report it to Coordinator with its age; do not re-assign or cancel it.
 
 **Supply (under-stock — the mirror of the above).** The checks above catch *over*-stocked and stuck queues; this catches starvation. `GET /issues?status=backlog,todo` for parent Worker tasks (exclude Facilitator efficiency findings). If the promotable backlog is empty or ~1 while `docs/ROADMAP.md` still has unpromoted top-level bullets, the pipeline is about to idle — file a followup to Coordinator (intake not keeping up, or nothing promotable — see its Roadmap-intake step) and, if the root cause is roadmap phrasing/order, to Planner. **A cleared queue is not automatically healthy** — an idle pipeline with work left to do is a failure, just a silent one. This is the symptom most likely to read as "Pipeline healthy" when it isn't.
 
@@ -144,9 +145,16 @@ sat stranded 18 days and were found only by walking `git worktree list` by hand.
 |---|---|---|
 | 1 | Tip is ancestor of `origin/main` | `git push origin --delete` |
 | 2 | Tip not ancestor, but `git diff main...<branch>` empty (squash dup) | `git push origin --delete` |
-| 3 | Unique commits + linked task `done`/`cancelled`, **or an open PR that is merged/closed** | Followup to Coordinator with SHA + subject + diff stat. Do NOT delete. |
+| 3 | Unique commits + linked task `done`/`cancelled`, **or a PR that is merged/closed** | Leave. **Do not report, file, or comment.** |
 | 4 | Unique commits + linked task `in_progress`/`todo`, **or an open PR** | Leave |
-| 5 | No linked task and no PR, idle >14d | Mention in report. Do NOT delete. |
+| 5 | No linked task and no PR | Leave. **Do not report, file, or comment.** |
+
+**Cases 3 and 5 are silent, and must not be turned back into followups.** A closed PR or a
+`done`/`cancelled` task *is* the operator's recover-vs-discard decision, already made — the
+leftover commits are superseded work, not stranded work. Reporting them asked the operator to
+re-decide something decided, and it recurred as a fresh filing every sweep however many times the
+filing was closed. `rescue/*`, `archive/*`, `park/*` and idle `claude/*` refs are the same class.
+The sweep's only jobs on the remote are deleting cases 1–2 and leaving everything else alone.
 
 **Resolving the "linked task" for a non-`task/` branch.** `planner/*`, `op/*` and `claude/*`
 carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/<task-id>` returns
@@ -157,7 +165,7 @@ only a branch with neither a linked task nor any PR is genuinely case 5.
 
 Auto-delete only cases 1 & 2. Never force-push. **Case 1 and 2 are safe to widen** because both
 delete only branches whose commits are provably on `origin/main`; the cases that could lose work
-(3, 4, 5) are all report-only, so widening the glob cannot destroy anything the narrow glob
+(3, 4, 5) are all leave-alone, so widening the glob cannot destroy anything the narrow glob
 protected.
 
 ### 7b. Stranded local-commit sweep
@@ -177,11 +185,10 @@ done
 
 1. commits not on `origin/main`, **and**
 2. no open PR for the branch, **and**
-3. its linked `AA-nnnn` task is terminal or non-advancing — `done`/`cancelled`, or **no `activeRun` and no live `executionRunId`** (cross-reference via `GET /issues?q=`), **and**
+3. its linked `AA-nnnn` task is still open but non-advancing — **no `activeRun` and no live `executionRunId`** (cross-reference via `GET /issues?q=`), **and**
 4. `updatedAt` older than one fire interval.
 
-Condition (3) is the load-bearing filter. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. (Contrast §7 cases 1–2, which delete only *merged/duplicate remote* branches whose commits are safely on `origin/main`.)
-
+Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, same as §7 case 3, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. (Contrast §7 cases 1–2, which delete only *merged/duplicate remote* branches whose commits are safely on `origin/main`.)
 ### 8. Report
 
 Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a — list the task ids), stuck tasks cleared, branches deleted, followups filed. Or `Pipeline healthy` if nothing.
