@@ -75,7 +75,9 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    - **Four files, not ten, and skippable.** This is the most expensive step in the loop and it
      exists to *generate supply*, so it is the first thing to drop when supply is not what is
      short: **skip it entirely when step 6's queue check — which you ran first — found the queue
-     leaky or the ready index already at its step-8 floor**, and say in the summary that you did.
+     leaky or the ready index already at its step-8 floor** (promotable fronts, not the guard's
+     free count), and say in the summary that you did. Never skip it on a fire woken by a
+     `Roadmap intake starved` task.
      Reading files to add a bullet to a file nobody is reading is the most expensive way this
      fire can fail.
 5. **GitHub issue intake — the operator's other insertion point.** (fill)
@@ -154,7 +156,32 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
      active-fronts: 19 fronts (needs-build=11, data-only=8), ...
    ```
 
-   **One floor: restock until the ready index holds at least 20 fronts.** Not a
+   **The floor is measured in *promotable* fronts, and promotable is the Coordinator's
+   definition, not the guard's.** The guard's `(N free)` counts bullets with no
+   `claimed`/`gated` marker. It cannot see Paperclip, so it is an upper bound. The
+   Coordinator additionally skips any bullet that overlaps a task active or closed in the
+   last 7 days (its roadmap-intake step c). A multi-slice front whose last slice just
+   landed carries no marker, so the guard counts it free while the Coordinator skips it
+   as taken. Measuring the floor on the guard's number is how the two agents deadlocked:
+   the index read 38 deep with 30 free, the Planner skipped scan and restock as
+   above-floor, the Coordinator promoted zero and escalated again, and nothing moved.
+   So before comparing against the floor, subtract every guard-free front that has an
+   active or last-7-days task matching its `Where` paths or distinctive identifier,
+   and apply the floor to what is left.
+   **Each subtracted front needs one of two edits, and either counts as restock:**
+   delete it if its section is finished on `origin/main`, or rewrite the bullet to
+   name the *next* slice (its files and member, and a done-when the closed task did not
+   satisfy) so that it no longer overlaps. A bullet left identical to one that just
+   closed is not supply, however many slices remain behind it.
+
+   **A `Roadmap intake starved` task is itself a depth reading, and it outranks the
+   guard.** It means the Coordinator scanned the whole index and found zero promotable
+   fronts. Never close one because `check_roadmap.py` reports the index above the floor.
+   That reading is the one the escalation disputes. Close it only after this fire
+   rewrote or added promotable fronts, or after it recorded, per front, why none can be
+   written (all contended behind in-flight branches, or gated on the operator).
+
+   **One floor: restock until the ready index holds at least 20 promotable fronts.** Not a
    per-band pair. Two numbers invite the arithmetic that went wrong last time —
    a deep `data-only` target and a shallow `needs-build` one were each defensible
    alone, and together they meant the pipeline stocked whatever was cheapest to
@@ -216,7 +243,9 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
 
     **Report the band depth you are leaving behind, in the same comment.** Run
     `python scripts/check_roadmap.py` on the branch you are about to push and put
-    its `active-fronts:` line in the summary verbatim. A PR URL proves the work
+    its `active-fronts:` line in the summary verbatim, followed by the promotable
+    count from step 8 (guard-free minus recent-task overlap), which is the one the floor is
+    judged on. A PR URL proves the work
     *shipped*; the band line proves it shipped *enough* — those are different
     failures and the delivery gate only caught the first. If either band is below
     its step-8 target, say so explicitly and why (leaky queue, research budget,
