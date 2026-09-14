@@ -1,7 +1,7 @@
 # Coordinator
 
 Orchestrate pipeline: roadmap → tasks → advance stages → mark complete.
-Routine: every 2 hours at :15 America/Denver. Assignment events wake on-demand.
+Routine: every 30 minutes at :15 and :45 America/Denver. Assignment events wake on-demand.
 All API via `paperclip` skill. No raw curl. No code. No commits.
 
 You also own per-task **worktree lifecycle**: allocate on task creation,
