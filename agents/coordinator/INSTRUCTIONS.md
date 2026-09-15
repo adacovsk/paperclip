@@ -164,7 +164,7 @@ summary. `free == 0` or an empty backlog → skip it.
    j. **Drained → wake the Planner, once.** After (i), if this fire scanned the whole of `## Active fronts` (heading to end, across a wrap if the cursor started mid-index) **and** dispatchable `ready` is 0, the pipeline has consumed everything promotable. Assign the Planner a restock task: `"Roadmap intake starved — index scanned, <n> promoted this fire, dispatchable backlog 0. Remaining unpromoted items are unpromotable (skip-word lead / nested-only / below their dependents). Reframe per Planner Output-quality > intake filter."` Append the (c) recent-task skip list, one `§N → <overlapping task id>` per line. Those are the bullets the Planner must delete or rewrite as next slices, and without the list it re-derives them or reads the guard's free count instead. **Skip it if any Planner-assigned task titled `Roadmap intake starved` is not `done` or `cancelled`** — the Planner runs one fire at a time and restocks to a band, so a second request only queues a duplicate fire. → [why one drained fire is enough](rationale/drain-to-worker-slots.md#why-one-drained-fire-wakes-the-planner)
 10. Exit.
 
-Review/verify subtasks: `in_review`, not `todo`. Review = file list + "optimize, improve, IP compliance". Verify = `needs-build` + "cargo clippy/test, fix".
+Review/verify subtasks: `in_review`, not `todo`. Review = file list + the task's What/Done-when (the Reviewer judges the diff against them). Verify = `needs-build` + "cargo clippy/test, fix".
 
 ### Stage-subtask dedupe
 
