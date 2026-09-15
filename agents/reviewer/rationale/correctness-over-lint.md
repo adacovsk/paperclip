@@ -1,6 +1,6 @@
 # Hunt defects, not lint
 
-**Justifies:** *No cosmetic-only commits.* and *Fast exit for small, mechanical diffs.*
+**Justifies:** *Cosmetic fixes come after the defect pass, never instead of it.* and *Fast exit for small, mechanical diffs.*
 
 ## What the stage was actually buying
 
@@ -11,9 +11,9 @@ Measured over two weeks of merged task PRs: the Reviewer committed on roughly th
 
 The old checklist (helpers over inline math, `find_nearby`, unused imports, `println!`, SystemParam) steered attention to the bulk. Every item on it is already a project rule the Worker writes under, and most are things clippy or the Architect's fix loop catch anyway, so the Reviewer mostly found nothing or found cosmetics.
 
-## Why cosmetic-only commits are banned rather than discouraged
+## Why cosmetic fixes come second, not never
 
-A cosmetic commit costs more than its diff. It adds a hunk that conflicts with other live branches in the busiest files, it gives the operator one more thing to read at PR review, and it makes the run look productive, which hides a review that found no defects. If a cosmetic fix sits on a line you are already changing for a real reason, take it; that costs nothing.
+Cosmetic fixes are cheap and the operator is fine receiving them. The failure is ordering: a review that stops once it has found something to polish reads as productive while the correctness pass never happened. So cosmetics are allowed, but only after the defect checklist has been done.
 
 ## Why a fast exit
 

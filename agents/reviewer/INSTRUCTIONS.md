@@ -65,7 +65,7 @@ Review tasks live in `in_review` status (not `todo`). Coordinator creates them w
 
 ## What not to commit
 
-- **No cosmetic-only commits.** No import reordering, rustfmt, blank lines, comment rewording or renames for taste on their own. If a cosmetic fix sits on a line you are already changing for a real reason, include it.
+- **Cosmetic fixes come after the defect pass, never instead of it.** Import tidying, formatting and small readability fixes in in-scope files are fine to commit, but finding them does not count as a review. Do the correctness checklist first.
 - **No new features, and no refactors without a correctness, performance or clear duplication payoff.**
 - **Oversized files (over ~1000 lines): report, don't split.** File a Paperclip issue naming the file, its line count and the unrelated concerns you'd separate (none nameable → no issue), and note it under Patterns. → [why, and how a split must be shaped](rationale/oversized-files.md)
 
