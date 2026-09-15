@@ -70,6 +70,7 @@ pruned, left it `todo`, and the pipeline sat with zero dispatchable backlog for 
 every Coordinator fire succeeded in about a minute. Nothing in the fleet read as failing.
 
 Re-dispatching the same task keeps the one-request dedupe and closes the loop. The live-run check
-stops it double-waking a fire in progress. The 2-hour idle bound stops a Planner that is genuinely
-out of writable fronts — everything contended or operator-gated — from being re-fired every 30
-minutes at the fleet's highest per-run cost.
+is the only brake: it stops a second fire landing on one already in flight. There is deliberately
+no idle cooldown on top of it. A drained backlog is the pipeline stopped, so throttling the restock
+to protect per-run cost buys idle Worker slots at a far worse price, and a Planner with nothing
+writable left says so in a run measured in seconds.
