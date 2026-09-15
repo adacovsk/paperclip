@@ -117,9 +117,11 @@ summary. `free == 0` or an empty backlog → skip it.
 4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
 5. **Promote backlog → `todo` until the Worker's run slots are full — drain, not trickle.** Read the ceiling from the agent, never from a number written here: `WORKER_SLOTS = runtimeConfig.heartbeat.maxConcurrentRuns` on the Worker from step 0's `GET /agents`, and `free = WORKER_SLOTS − count(Worker-assigned tasks in todo or in_progress)`. Promote up to `free` dispatchable candidates, oldest first, in this fire. Past that ceiling the server queues the wake with no timeout, so promoting more buys a parked worktree, not throughput. → [why the ceiling is the Worker's own run slots](rationale/drain-to-worker-slots.md)
    **Allocate and verify the worktree first, then PATCH status and `assigneeAgentId` in that order** (see §Worktree allocation below) — setting the assignee is what fires the Worker wake, so it must be the last write, never the first.
+   - **`backlog` holds only work step 5 could dispatch this fire; everything else is `blocked`.** A task that cannot be handed to a Worker — held on a contended edit surface, waiting on an operator ruling or errand, missing a worktree, or not Worker work at all — is PATCHed to `blocked`, **unassigned**, with a comment whose first line is a hold marker: `Held: waiting on <task-id>`, `Held: operator — <what is needed>`, or `Held: <other concrete condition>`. Non-Worker work goes to its owner's `todo` instead (Planner work to the Planner). A backlog that mixes supply with parked work gets misread by every consumer that counts it: the Planner's gate, the operator, and this sweep all read "six in backlog" while the Worker had nothing to run. Keeping the status literal is what makes the count true without an exclusion list.
+   - **Release holds first.** Before promoting, re-check every `blocked` task whose latest block comment starts with `Held:`. `Held: waiting on <task-id>` is released when that task is `done`/`cancelled` **or no longer in-flight** (its PR is open — see the in-flight rule below). `Held: operator` is released only by an operator comment answering it. Released → PATCH back to `backlog` with a comment quoting the `Held:` line and naming what resolved it; it is then a normal candidate this same fire. `Held:` markers are this sweep's own bookkeeping, so rule 2 of §Status writes does not restrict clearing them whoever wrote them — the quote-and-name requirement still applies.
    - **A task that keeps its `backlog` status must never carry a Worker assignee.** `wakeOnDemand` fires on the assignee change alone; status is not consulted. A `backlog` task with `assigneeAgentId` = Worker is therefore a wake that cannot succeed: the Worker hard-gates at its Step 0 on a `worktree:` path that promotion never wrote, aborts in ~15s, and leaves the task `backlog` — so the next sweep dispatches it again. Four such runs burned in a single fire, one of them recording in its own result that it was the *second* identical dispatch of that task. It is a livelock, not a transient, and the only thing that breaks it is not making the assignment. → [why a dispatch without a worktree is a livelock](rationale/no-worktree-no-dispatch.md)
-   - If the worktree cannot be allocated, leave the task in `backlog`, leave it **unassigned**, and comment why. An un-dispatchable task parked with a stated reason is cheap; one dispatched every fire is not.
-   - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, leave the candidate in `backlog` and say so in your routine comment** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because both are rewriting the same region at once.
+   - If the worktree cannot be allocated, PATCH the task to `blocked`, leave it **unassigned**, and comment `Held: worktree allocation failed — <reason>`. An un-dispatchable task parked with a stated reason is cheap; one dispatched every fire is not.
+   - **Hold on a contended edit surface.** Before promoting, compare the candidate's stated `Where:` paths against the paths in-flight tasks are already touching (`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per active worktree). **If they overlap, PATCH the candidate to `blocked` with `Held: waiting on <in-flight task-id>`** — promote the next non-overlapping candidate instead. Two concurrent tasks on one file do not finish sooner than two sequential ones; they finish *later*, because both are rewriting the same region at once.
      **In-flight means still being written — a branch whose PR is open holds nothing.** Count only worktrees whose parent has a live Worker, Reviewer or Architect stage. A parent `in_review` with an open PR is finished work waiting on a human merge, and holding behind it turns the operator's merge cadence into the pipeline's supply: every backlog task behind an open PR sat until someone merged, while Worker slots stood empty and the Coordinator reported "awaiting merge, 0 promoted" fire after fire. Whichever of the two lands second meets the conflict at the clean-merge gate, where the rebase lane already owns it.
      **Same-shaped work is the tell.** If two roadmap bullets differ only in *which variant or entry* they handle, they share a dispatch surface — treat them as one chain, not as parallel work. Promote one; promote the next when the first has opened its PR. → [why shared surfaces finish later, not sooner](rationale/contended-edit-surface.md)
    - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it. → [why contention is removed rather than scheduled around](rationale/contention-is-a-file-defect.md)
@@ -129,7 +131,7 @@ summary. `free == 0` or an empty backlog → skip it.
 8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged. Any parent you close here, or anywhere else, needs a §Branch disposition on close record first.
 9. **Roadmap intake** — promote concrete top-level bullets from `docs/ROADMAP.md` into the backlog. Be concrete; the vague version ("stock backlog ≥5") no-op'd repeatedly because each fire re-read the same top items and skipped them as "already considered".
    a. **Capacity check — two gates, because the binding resource is Architect, not Worker.** Over parent tasks, excluding Facilitator-filed efficiency findings:
-      - `ready = count(status == backlog)`, **dispatchable only** — a task counts only if step 5 could hand it to a Worker on this fire. Skip unassigned tasks (step 0: unassigned = invisible), platform/pipeline/host bugs, which are Facilitator's and park for weeks, and **anything step 5 is holding** — parked on an operator question, missing its `worktree:` line, or held on a contended edit surface. **An assignee is not dispatchability.** Five reland tasks assigned to the Coordinator, every one of them waiting on an operator ruling or on a file an in-flight task held, counted as `ready = 5`, tripped the first gate exactly and switched intake off — while step 5 promoted nothing and the Worker ran zero tasks. Both halves read as true at once, which is the failure this gate exists to avoid. → [why undispatchable work is not queue depth](rationale/ready-counts-dispatchable-only.md)
+      - `ready = count(status == backlog)`, literally. Step 5 moves everything it cannot dispatch to `blocked`, so the status already means dispatchable. **If you find a `backlog` task step 5 would hold, block it now rather than excluding it from the count** — an exclusion list is the thing that let five reland tasks, every one waiting on an operator ruling or a held file, count as `ready = 5`, switch intake off, and leave the Worker running zero tasks. → [why undispatchable work is not queue depth](rationale/ready-counts-dispatchable-only.md)
       - `inflight = count(in_review parents genuinely queued for or running a build)` — an open Architect verify subtask, or a build slot held against the worktree. **Not "everything `in_review`"**: a parent whose PR is already open waits on a *human merge* and consumes no build capacity. This gate protects the cargo lock, so measure the cargo lock. → [why in_review is the wrong thing to count](rationale/inflight-measures-the-cargo-lock.md)
 
       | Condition | Action |
@@ -149,6 +151,7 @@ summary. `free == 0` or an empty backlog → skip it.
       - **Skip** if the title overlaps an active or recently-closed (7 days) task — search by file path or distinctive identifier. **Overlap is the slice, not the section number.** A bullet whose `§N` matches a closed task but whose files, member and done-when name work that task did not do is a *next slice* and is promotable. This is the same rule the Planner's step-8 floor subtracts by, and the two must stay one rule: when each agent used its own, the Planner counted 30 free fronts, the Coordinator counted 0, and each read the other's number as wrong. Record every front skipped under this rule by `§N` in the routine comment, so (j) can hand the list over.
       - **Skip research items** — "investigate", "decide", "audit", "review", "consider". Those need operator deliberation, not Worker execution.
       - **Skip meta items** (CLAUDE.md, ROADMAP.md edits) — Planner's territory.
+      - **Skip a bullet step 5 would hold.** Apply step 5's contended-edit-surface test to the bullet's `Where:` paths, and skip anything gated on the operator. It stays on the roadmap, not in the task list: filing it would only create a `blocked` task. Record it in the skip list as `§N → <holding task id>` so (j) hands it to the Planner; it becomes promotable on a later scan once the holder lands.
       - **Skip section headers and prose** — `**Goal**:`, `**Active phase**:`, paragraph text.
       - **Promote** anything else as a `backlog` task. Title = first sentence, `**bold**` stripped, ≤80 chars. Body = full bullet text incl. its nested sub-bullets + `Source: docs/ROADMAP.md:<line>`, plus `Detail: docs/roadmap/<number>.md` when the section carries one — a Worker handed the bullet alone is missing the analysis it was written from.
       - **Label.** An explicit `**Label**:` on the bullet wins verbatim. Otherwise `needs-build` **iff** the work touches `src/**/*.rs`; everything else is `data-only` (`assets/data/**`, `scripts/**`, `.github/workflows/**`, `docs/**`). The label answers exactly one question — *does Architect need to run cargo?* — so a pure-Python guard under `scripts/` is `data-only` even though it is code. Mislabeling it parks a task that needs no compiler behind the cargo lock.
@@ -215,7 +218,8 @@ If verification fails (worktree directory missing, wrong branch, etc.):
 - DO NOT assign the task to any agent — they'd fail step 0.
 - Comment on the task: `"Worktree allocation failed: {reason}.
   Investigate before reassigning."`
-- Leave the task in `backlog` (don't promote to `todo`).
+- PATCH the task to `blocked`, unassigned (don't promote to `todo`), with the
+  comment's first line as `Held: worktree allocation failed — {reason}`.
 
 Only after verification succeeds, PATCH the task with the worktree path
 and branch as a `worktree:` line in the description (custom fields
@@ -236,8 +240,8 @@ usually loses. Never set the assignee "to reserve it" and allocate afterwards.
 **Corollary — before dispatching any task, re-read it and confirm it carries a
 `worktree:` line and that the directory still exists.** This is cheap and catches
 the case allocation-time verification cannot: a worktree GC'd or hand-removed
-between fires. A task failing this check goes back to `backlog`, unassigned, with a
-comment — it is not re-dispatched in hope.
+between fires. A task failing this check goes to `blocked`, unassigned, with a
+`Held: worktree missing` comment — it is not re-dispatched in hope.
 
 Skip allocation if the worktree already exists (idempotent re-promote).
 
@@ -768,7 +772,7 @@ the check belongs to the caller.
 ## Repo scope: operator-owned filings
 
 A task whose fix lives in `$PAPERCLIP_REPO` (`server/`, `ui/`, `packages/`) is
-**operator-owned**. File it to `backlog` **unassigned**. Do not route it to any
+**operator-owned**. File it as `blocked`, **unassigned**, with `Held: operator — paperclip source fix`. Do not route it to any
 agent: Facilitator cannot commit, and Worker/Architect/Reviewer are scoped to
 `$PAPERCLIP_PROJECT` and never touch paperclip source. Assigning it cannot
 produce a fix — it only burns a wake on the assignee per comment.
@@ -801,7 +805,8 @@ Three rules, all mandatory:
    `blocked`, fetch that task's comments; your clearing comment must **quote the block comment it
    is clearing and name what resolved it** — a dependency now `done`, a merged PR, a specific
    cleared condition. If you cannot quote it, you did not read it, and you must leave the status
-   alone.
+   alone. The one exception to authorship is a block whose comment starts with `Held:` — step 5
+   releases those whoever wrote them, still quoting the line.
 3. **Direction, not presence.** "blocked on red main", "needs operator merge", "waiting on AA-nnnn"
    all contain status words and all point the opposite way. Match on what the comment says was
    **resolved**, never on the fact that it discusses status. Ambiguous → surface it in your record
