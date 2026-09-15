@@ -1,0 +1,22 @@
+# Hunt defects, not lint
+
+**Justifies:** *No cosmetic-only commits.* and *Fast exit for small, mechanical diffs.*
+
+## What the stage was actually buying
+
+Measured over two weeks of merged task PRs: the Reviewer committed on roughly three in five of them, but the commits split very unevenly by value.
+
+- **The catches that justify the stage** were correctness defects nothing downstream would find: a trigger that never carried the field its guard read, an AI action that dropped its target, a disposition shift that cost nothing, a resistance bypass keyed on the wrong damage type, an allowlist line cleared by re-pointing a key at an existing alias (reverted by the Reviewer). These compile, pass clippy, and often pass tests. The Architect's cargo run cannot see them; only a reader comparing the diff to the task can.
+- **The bulk** was import reordering, rustfmt wraps, blank lines, and comment rewording. It was cheap to make but not free to pay for, because the Reviewer is the most expensive stage per run. A fresh session reads the whole diff at depth either way.
+
+The old checklist (helpers over inline math, `find_nearby`, unused imports, `println!`, SystemParam) steered attention to the bulk. Every item on it is already a project rule the Worker writes under, and most are things clippy or the Architect's fix loop catch anyway, so the Reviewer mostly found nothing or found cosmetics.
+
+## Why cosmetic-only commits are banned rather than discouraged
+
+A cosmetic commit costs more than its diff. It adds a hunk that conflicts with other live branches in the busiest files, it gives the operator one more thing to read at PR review, and it makes the run look productive, which hides a review that found no defects. If a cosmetic fix sits on a line you are already changing for a real reason, take it; that costs nothing.
+
+## Why a fast exit
+
+Many diffs are small and mechanical: one allowlist reason, a handful of data rows, a one-line fix. The defect classes above either appear in those diffs at a glance or not at all. A full procedure plus a long completion essay spends the same tokens as a large task to say "looks right".
+
+The fast exit is **not** for data diffs as a class. Data-only PRs produce real catches too: re-authored feat text that no longer matched the rules, a key moved onto the wrong class, a ratchet line cleared by substitution. The deciding factor is size and mechanicalness, not the label.
