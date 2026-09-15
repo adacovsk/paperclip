@@ -121,6 +121,19 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
      `origin/main` is a delivered fire even if every fill step after it is lost; the same prune
      sitting in a local commit when the wall arrives is worth nothing to Coordinator, which
      reads `docs/ROADMAP.md` from `main`.
+   - **Merge your own PR — an open one delivers nothing.** `gh pr merge <n> --merge
+     --delete-branch`, immediately after `gh pr create`. Step 0 recreates `planner/roadmap` from
+     `origin/main` on the next fire, so deleting it on merge is the intended cycle. The roadmap
+     is yours alone (`check_roadmap_writer.py` enforces one writer), the operator's veto is a
+     revert on a file with no code in it, and the PR still records every change.
+     - **Your gate is the local `verify` you already ran, not the checks on the PR.** Actions is
+       frequently unable to run at all — a rejected run reports `failure` in about two seconds
+       with an empty `steps` list, which is a billing state and not a verdict on your diff.
+       Never wait on those checks to merge, and never read a zero-step failure as your change
+       being broken. A real failure has steps: read it and fix it before merging.
+     - **Supply only exists once it is on `main`.** Coordinator promotes from `main`, so an open
+       PR is a fire that restocked nothing — a starved backlog stays starved for exactly as long
+       as the merge waits.
 8. **Update `docs/ROADMAP.md` — restock *to a band*, do not cap your additions.** (fill)
 
    **The band is a target across fires, not a debt owed by this one.** Restocking is demand-driven
@@ -237,7 +250,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
     glance from a stalled stage — every Facilitator sweep re-examines it, and
     §2a's missed-wake heuristic will happily toggle the assignee and re-dispatch
     you onto work you already finished, burning a run each time.
-11. **Delivery gate — verify the push that step 7 already made.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). Step 7's checkpoint is what closes that hole; this step confirms it held. Before PATCHing the routine task to `done`, verify **both** `git rev-parse --verify origin/planner/roadmap` resolves **and** `gh pr list --head planner/roadmap` returns a PR, and **put the PR URL in the summary comment**. If a fill step added commits after the checkpoint, push them now — the check is that `git log origin/planner/roadmap..HEAD` is empty, not merely that the branch exists on the remote. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. Step 0 is what makes that resumable: the branch is always `planner/roadmap`, so an interrupted fire has a name to come back to.
+11. **Delivery gate — verify the push that step 7 already made.** Your peers each have this gate (Architect requires a pushed branch, Reviewer requires `git log origin/main..HEAD` non-empty); Planner is the hole. A **local commit satisfies "an updated ROADMAP.md" literally**, so a fire that commits and then dies has, by its own contract, "succeeded" — but Coordinator reads `docs/ROADMAP.md` from `main` and sees nothing, then wraps with zero promotions and escalates a *supply* shortage that is really a *delivery* failure (observed: a commit sat unpushed a full day). Step 7's checkpoint is what closes that hole; this step confirms it held. Before PATCHing the routine task to `done`, verify the PR you opened in step 7 is **merged** — `gh pr view <n> --json state,mergedAt` reads `MERGED` — and **put its URL in the summary comment**. An open PR is not delivery: Coordinator promotes from `main`, so a fire that leaves one open restocked nothing. If a fill step added commits after the checkpoint, push them now — the check is that `git log origin/planner/roadmap..HEAD` is empty, not merely that the branch exists on the remote. A fire that cannot produce a PR URL has **not** delivered — PATCH the routine task to `blocked` naming exactly what stopped the push (weekly limit, timeout, conflict), so the next fire resumes from the existing branch instead of silently redoing the work onto a conflicting parallel branch. Step 0 is what makes that resumable: the branch is always `planner/roadmap`, so an interrupted fire has a name to come back to.
 
     **Name the fill you did not reach, in the same comment.** Which of steps 4, 5, 8 and 9 you
     skipped or cut short, and why (budget spent, leaky queue, nothing to do). This is what makes
