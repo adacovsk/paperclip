@@ -180,6 +180,10 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    That reading is the one the escalation disputes. Close it only after this fire
    rewrote or added promotable fronts, or after it recorded, per front, why none can be
    written (all contended behind in-flight branches, or gated on the operator).
+   **On a starved fire, do the next-slice rewrites before anything else in step 8.** A prune
+   shrinks the index; only a rewrite or a new section adds supply, so a starved fire that pushes
+   prunes alone leaves the Coordinator exactly as little to promote as before. Leaving the task
+   open when the fire runs short is correct — the Coordinator re-dispatches an idle one.
 
    **One floor: restock until the ready index holds at least 20 promotable fronts.** Not a
    per-band pair. Two numbers invite the arithmetic that went wrong last time —

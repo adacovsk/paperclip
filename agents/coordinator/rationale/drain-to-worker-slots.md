@@ -58,3 +58,18 @@ most expensive agent in the fleet. A second restock request while one is open on
 duplicate fire, so the escalation is skipped while any `Roadmap intake starved` task for the
 Planner is still open. The title prefix is kept so that dedupe also recognises requests filed
 under the older wording.
+
+## Why an open request is re-dispatched, not just skipped
+
+Skipping while a request is open assumed the request would close. The Planner is told to keep it
+open until it has rewritten or added promotable fronts, and a bounded fire routinely ends short of
+that — prune pushed, next-slice rewrites not reached. Its instructions call the unmet floor "a
+signal the next fire is woken by", but the only waker was this escalation, and this escalation
+skipped because the request was open. The two rules deadlocked: the Planner ran once on a request,
+pruned, left it `todo`, and the pipeline sat with zero dispatchable backlog for eight hours while
+every Coordinator fire succeeded in about a minute. Nothing in the fleet read as failing.
+
+Re-dispatching the same task keeps the one-request dedupe and closes the loop. The live-run check
+stops it double-waking a fire in progress. The 2-hour idle bound stops a Planner that is genuinely
+out of writable fronts — everything contended or operator-gated — from being re-fired every 30
+minutes at the fleet's highest per-run cost.
