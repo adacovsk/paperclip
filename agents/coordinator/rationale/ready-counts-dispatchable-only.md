@@ -1,6 +1,6 @@
 # Why the capacity gate counts only dispatchable tasks
 
-**Justifies:** *dispatchable only — a task counts only if step 5 could hand it to a Worker on this fire* (Run step 9a)
+**Justifies:** *If you find a `backlog` task step 5 would hold, block it now rather than excluding it from the count* (Run step 9a)
 
 The gate asks one question — is there un-started work a Worker could pick up? — so it must
 count only tasks a Worker will ever be handed.
