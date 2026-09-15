@@ -1566,7 +1566,25 @@ export function issueRoutes(db: Db, storage: StorageService) {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
       const assigneeId = currentIssue.assigneeAgentId;
       const actorIsAgent = actor.actorType === "agent";
-      const selfComment = actorIsAgent && actor.actorId === assigneeId;
+      // A run's own summary comment must not wake the run's agent, or every fire
+      // that ends by commenting immediately starts the next one. Agent identity is
+      // the primary signal, but it is absent in `local_trusted`, where an
+      // unauthenticated loopback call is attributed to the operator no matter who
+      // sent it — a fleet ran six back-to-back no-op fires that way. The run id the
+      // caller carries survives that attribution, so it is the one that has to be
+      // consulted here. A comment with neither signal is treated as the operator's.
+      const runAgentId = actor.runId
+        ? await heartbeat
+          .getRun(actor.runId)
+          .then((run) => run?.agentId ?? null)
+          .catch((err) => {
+            logger.warn({ err, runId: actor.runId }, "failed to resolve comment run for self-wake check");
+            return null;
+          })
+        : null;
+      const selfComment =
+        (actorIsAgent && actor.actorId === assigneeId) ||
+        (Boolean(assigneeId) && runAgentId === assigneeId);
       const skipWake = selfComment || isClosed;
       if (assigneeId && (reopened || !skipWake)) {
         if (reopened) {
