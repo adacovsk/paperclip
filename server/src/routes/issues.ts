@@ -34,6 +34,8 @@ import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
+import { resolveSubtaskWakeTarget } from "../services/subtask-wake-target.js";
+import { coordinatorIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
   isDispatchableIssueStatus,
@@ -1181,14 +1183,39 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
-      // Wake parent issue's assignee when a subtask is marked done (pipeline advancement)
+      // Wake the next mover when a subtask is marked done (pipeline advancement).
+      //
+      // Who that is runs through `resolveSubtaskWakeTarget`, the same gate the run
+      // executor applies. Without it this path wakes `parent.assigneeAgentId`
+      // whenever any child reaches `done`, including for a parent parked at
+      // `in_review` with no live stage of its own: that agent cannot PATCH itself
+      // out while its verify is outstanding, so it re-reads its branch, finds the
+      // work already committed and exits. Measured at 10 of 60 runs — a full
+      // session load each. The Coordinator is the real next mover there, and it is
+      // the one that can create the next stage or merge.
       const statusChangedToDone =
         existing.status !== "done" && issue.status === "done" && issue.parentId;
       if (statusChangedToDone) {
         try {
           const parent = await svc.getById(issue.parentId!);
-          if (parent?.assigneeAgentId && !wakeups.has(parent.assigneeAgentId)) {
-            wakeups.set(parent.assigneeAgentId, {
+          const target = resolveSubtaskWakeTarget({
+            parentStatus: parent?.status ?? null,
+            hasOtherOpenChild: parent ? await svc.hasOpenChildExcept(parent.id, issue.id) : false,
+          });
+          const wakeTargetAgentId =
+            target.kind === "none"
+              ? null
+              : target.kind === "coordinator"
+                ? await coordinatorIdFor(db, issue.companyId)
+                : (parent?.assigneeAgentId ?? null);
+          if (target.kind !== "parent-assignee") {
+            logger.info(
+              { issueId: id, parentId: issue.parentId, parentStatus: parent?.status ?? null, target },
+              `subtask-completion wake resolved away from the parent assignee (${target.reason})`,
+            );
+          }
+          if (parent && wakeTargetAgentId && !wakeups.has(wakeTargetAgentId)) {
+            wakeups.set(wakeTargetAgentId, {
               source: "automation",
               triggerDetail: "callback",
               reason: "subtask_completed",

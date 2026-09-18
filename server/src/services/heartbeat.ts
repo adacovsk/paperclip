@@ -34,6 +34,7 @@ import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { shouldWakeNextMover } from "./stage-completion-wake.js";
 import { resolveSubtaskWakeTarget } from "./subtask-wake-target.js";
+import { coordinatorIdFor } from "./coordinator-lookup.js";
 import { isSweepWakeReason, wakeCoalesceScope } from "./sweep-wake-scope.js";
 import {
   buildWorkspaceReadyComment,
@@ -173,20 +174,6 @@ const STALE_QUEUED_EXECUTION_LOCK_MS = Math.max(
  * before reporting, so it always clears that bar. A child's own
  * `subtask.completed` callback is what legitimately re-wakes these parents.
  */
-/**
- * The company's Coordinator, the default next mover for anything with no live
- * stage of its own. Shared by the top-level arm of the subtask-completion wake
- * and by the redirect `resolveSubtaskWakeTarget` asks for, so the two cannot
- * disagree about who that is.
- */
-async function coordinatorIdFor(db: Db, companyId: string): Promise<string | null> {
-  return db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(and(eq(agents.companyId, companyId), eq(agents.role, "coordinator")))
-    .limit(1)
-    .then((rows) => rows[0]?.id ?? null);
-}
 
 export function inReviewOnlyWhenOwnStageIsLive(agentId: string) {
   return sql`NOT (
