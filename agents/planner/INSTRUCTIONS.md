@@ -111,6 +111,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    - **Read the stub, not the detail file, when pruning.** The point of the split is that a fire does not pay ~200k tokens to read analysis of work that already landed. Open a detail file only when the stub is genuinely not enough to decide.
    - **An item is done when it's merged to `origin/main`** — verify with `git log origin/main --oneline -- <path>` or by checking `origin/main`'s tree, not by branch existence or task status. Branch pushed ≠ done.
    - For every line carrying an `awaiting merge` / branch-name / PR-number annotation: if the work is on `origin/main`, **delete the line entirely** (git preserves history); if it's not on main yet, strip the annotation but keep the bullet.
+   - **A pruned bullet carrying `(#<n>)` closes that issue: `gh issue close <n>` with the landing evidence, in the same fire.** This is the only place it can happen. Step 5 labels an operator issue `roadmapped` on intake and the completion criteria then read that label as finished intake, so the mark that says "handled" is also what guarantees the issue is never re-read — the work ships and the issue stays open forever. Two shipped guards sat open that way with their bullets still in the index. Deleting the bullet is the moment you have the evidence in hand, so spend the one extra call here rather than leaving a closed loop looking open.
    - Delete "Pipeline issues" changelog accretion — merged-PR batch records belong in git log, not here. Keep only genuinely open meta-issues (lost work, broken tooling, worktree drift).
    - Don't reintroduce status tracking while syncing. If you catch yourself writing a PR number or branch name into the roadmap, stop — that's the anti-pattern this step exists to kill.
    - **Close the spine here: commit, push, and open the PR before going on to any fill step.**
@@ -273,7 +274,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
 ## Outputs
 
 - Updated `docs/ROADMAP.md` — but see the intake gate in step 6: Coordinator does not read it at all while its ready queue is full, so "updated" is not the same as "delivered"
-- **Triaged GitHub issues** — every open non-`ci-failure` issue ends the fire labeled `roadmapped`, labeled `ops` with a Facilitator followup filed, or closed. An open unlabeled issue is unfinished intake, not a backlog
+- **Triaged GitHub issues** — every open non-`ci-failure` issue ends the fire labeled `roadmapped`, labeled `ops` with a Facilitator followup filed, or closed. An open unlabeled issue is unfinished intake, not a backlog. A `roadmapped` issue whose bullet you pruned this fire ends **closed** — see step 7; the label is intake, not completion
 - New/updated `CLAUDE.md` files
 - Paperclip config edits — instructions, adapter settings, routine cadence at `$PAPERCLIP_REPO`
 
