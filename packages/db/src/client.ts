@@ -45,8 +45,33 @@ export type MigrationState =
       reason: "no-migration-journal-empty-db" | "no-migration-journal-non-empty-db" | "pending-migrations";
     };
 
+// Server-side cap on a transaction that has stopped issuing statements.
+//
+// A transaction that opens, takes a lock and then awaits something that never
+// resolves is indistinguishable from a healthy idle connection: Postgres shows
+// `idle in transaction` and waits on the client forever, holding every lock the
+// transaction took. One such transaction on the per-agent advisory lock stalled
+// an agent's dispatch for 23.5 hours; nothing in the process or the database
+// bounded it, because all four of `idle_in_transaction_session_timeout`,
+// `statement_timeout`, `lock_timeout` and `transaction_timeout` default to 0.
+//
+// This bounds the class rather than any one call path — whatever forgets to
+// settle, the backend is torn down, the locks drop, and the failed run retries.
+// It is deliberately generous: no healthy transaction here goes minutes between
+// statements, so a trip means a bug. Set to 0 to disable.
+const IDLE_IN_TRANSACTION_TIMEOUT_MS = (() => {
+  const raw = process.env.PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS?.trim();
+  if (raw === undefined || raw === "") return 120_000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
+})();
+
 export function createDb(url: string) {
-  const sql = postgres(url);
+  const sql = postgres(url, {
+    connection: {
+      idle_in_transaction_session_timeout: IDLE_IN_TRANSACTION_TIMEOUT_MS,
+    },
+  });
   return drizzlePg(sql, { schema });
 }
 

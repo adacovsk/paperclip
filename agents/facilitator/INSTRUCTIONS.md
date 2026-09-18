@@ -42,6 +42,16 @@ Steps 1 & 2 scan `todo`/`in_progress`/`blocked`; nothing else scans `in_review`.
 
 The parent Worker task that spawned a stalled Review/Verify child is usually itself `in_review` waiting on that child — re-dispatching the child is enough; it advances on its own once the child completes. Toggle the child, not the parent.
 
+### 2b. Wedged dispatcher (the inverse of §2a, and invisible to every other step)
+
+§2a finds an assigned task with **no** live run. The opposite shape is a queue that is **nothing but** live runs: an agent holding many `queued` runs and zero `running` ones, dispatching none of them. Every issue-shaped check reads healthy — the tasks *are* assigned, they *do* have runs — and the agent's own `status` still says `idle`, so nothing in steps 1, 2 or 2a can see it.
+
+`GET /api/companies/{companyId}/live-runs` returns every `queued` and `running` run for the company in one call. Group by `agentName` and flag an agent where **`queued` > 0, `running` == 0, and the oldest `createdAt` is more than ~15 minutes old**. A healthy agent at its cap shows `running` == `maxConcurrentRuns` alongside its queue; `running` == 0 with a queue that is not draining is the signature.
+
+**This is not a missed wake, so do not toggle the assignee** — that mints another queued run behind the same blockage and changes nothing. The dispatcher itself is stuck in-process, and the state that proves it is in the database: a backend sitting `idle in transaction` on the per-agent advisory lock. Recovery is a server restart (`systemctl --user restart paperclip.service`), which clears the in-memory lock and lets the startup sweep drain the queue. **File it as a platform bug (§3) with the agent name, the queue depth, and the age of the oldest queued run** — a restart is the remedy, not the fix, and a recurrence means the guard that bounds this regressed.
+
+Two guards should keep this short-lived: the per-agent start lock stops waiting on a holder that has run past `AGENT_START_LOCK_MAX_HOLD_MS` (5 min default), and `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS` (2 min default) tears down a wedged backend. If you find this shape lasting materially longer than either, say so in the report — it means one of them is disabled or ineffective.
+
 ### 3. Run productivity
 
 `GET /api/companies/{companyId}/heartbeat-runs?limit=50` — the run history for the whole company, newest first. The route is **company-scoped**; there is no per-agent spelling (`/api/agents/{id}/heartbeat-runs` 404s, which is what previously led this step to be wrongly descoped as "no such route"). Companion routes: `/api/heartbeat-runs/{runId}` (single run), `…/{runId}/log`, `…/{runId}/events`, `…/{runId}/issues`.
