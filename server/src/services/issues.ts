@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -878,6 +878,30 @@ export function issueService(db: Db) {
       if (!row) return null;
       const [enriched] = await withIssueLabels(db, [row]);
       return enriched;
+    },
+
+    /**
+     * "Is anyone still working on this parent?" — whether the parent has a child
+     * that is neither `done` nor `cancelled`, excluding the one that just
+     * finished (its own status may not be committed yet on the caller's path).
+     *
+     * Feeds `resolveSubtaskWakeTarget`. Exists as a service method because the
+     * REST mutation path has no table access of its own, and the wake decision
+     * must not differ between that path and the run executor's.
+     */
+    hasOpenChildExcept: async (parentId: string, excludeIssueId: string) => {
+      const rows = await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.parentId, parentId),
+            ne(issues.id, excludeIssueId),
+            notInArray(issues.status, ["done", "cancelled"]),
+          ),
+        )
+        .limit(1);
+      return rows.length > 0;
     },
 
     getByIdentifier: async (identifier: string) => {
