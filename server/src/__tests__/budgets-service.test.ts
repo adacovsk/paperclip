@@ -186,6 +186,7 @@ describe("budgetService", () => {
     const block = await service.getInvocationBlock("company-1", "agent-1");
 
     expect(block).toEqual({
+      kind: "budget",
       scopeType: "agent",
       scopeId: "agent-1",
       scopeName: "Budget Agent",
@@ -212,6 +213,7 @@ describe("budgetService", () => {
     const block = await service.getInvocationBlock("company-1", "agent-1");
 
     expect(block).toEqual({
+      kind: "budget",
       scopeType: "company",
       scopeId: "company-1",
       scopeName: "Paperclip",
@@ -307,5 +309,31 @@ describe("budgetService", () => {
         updatedAt: expect.any(Date),
       }),
     );
+  });
+  it("blocks an agent that is waiting out a provider usage limit, and stops once it resets", async () => {
+    // The gate that keeps a scheduler from re-firing into an exhausted quota —
+    // 46 runs burned that way in one ~17h window. Stored on the agent's runtime
+    // state, so it lifts when the reset instant passes with nothing to unset.
+    const agentRow = [{ status: "idle", pauseReason: null, companyId: "company-1", name: "Budget Agent" }];
+    const companyRow = [{ status: "active", name: "Paperclip" }];
+    const limitState = (resetAt: string) => [{ stateJson: { usageLimit: { resetAt, scope: "weekly" } } }];
+
+    const blocked = await budgetService(
+      createDbStub([agentRow, companyRow, [], [], limitState("2999-01-01T00:00:00.000Z")]).db as any,
+    ).getInvocationBlock("company-1", "agent-1");
+
+    expect(blocked).toEqual({
+      kind: "usage_limit",
+      scopeType: "agent",
+      scopeId: "agent-1",
+      scopeName: "Budget Agent",
+      reason: "Agent is waiting out its weekly usage limit; wakes resume at 2999-01-01T00:00:00.000Z.",
+    });
+
+    const lifted = await budgetService(
+      createDbStub([agentRow, companyRow, [], [], limitState("2000-01-01T00:00:00.000Z")]).db as any,
+    ).getInvocationBlock("company-1", "agent-1");
+
+    expect(lifted).toBeNull();
   });
 });

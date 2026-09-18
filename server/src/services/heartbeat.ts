@@ -35,6 +35,7 @@ import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js"
 import { shouldWakeNextMover } from "./stage-completion-wake.js";
 import { resolveSubtaskWakeTarget } from "./subtask-wake-target.js";
 import { coordinatorIdFor } from "./coordinator-lookup.js";
+import { usageLimitFromResult } from "./usage-limit.js";
 import { isSweepWakeReason, wakeCoalesceScope } from "./sweep-wake-scope.js";
 import {
   buildWorkspaceReadyComment,
@@ -1983,6 +1984,18 @@ export function heartbeatService(db: Db) {
       projectId: readNonEmptyString(context.projectId),
     });
     if (budgetBlock) {
+      // A usage limit leaves the run queued rather than cancelling it: the wait
+      // ends on its own, and the queue is the work the agent is meant to pick up
+      // when it does. A budget hard-stop is the opposite — it ends until an
+      // operator raises the budget, so holding runs against it just accumulates
+      // work nobody has approved.
+      if (budgetBlock.kind === "usage_limit") {
+        logger.info(
+          { runId: run.id, agentId: run.agentId, reason: budgetBlock.reason },
+          "leaving run queued — agent is waiting out a usage limit",
+        );
+        return null;
+      }
       await cancelRunInternal(run.id, budgetBlock.reason);
       return null;
     }
@@ -2252,6 +2265,18 @@ export function heartbeatService(db: Db) {
     const biller = resolveLedgerBiller(result);
     const ledgerScope = await resolveLedgerScopeForRun(db, agent.companyId, run);
 
+    // A usage limit is recorded on the agent rather than only on the run, because
+    // what has to change is the *next* wake, not this run's row. `getInvocationBlock`
+    // reads it back; it is cleared by the reset instant passing, so nothing has to
+    // remember to unset it.
+    const usageLimit = usageLimitFromResult(result, { runId: run.id });
+    if (usageLimit) {
+      logger.warn(
+        { agentId: agent.id, runId: run.id, resetAt: usageLimit.resetAt, scope: usageLimit.scope },
+        "agent hit a provider usage limit — suppressing wakes until it resets",
+      );
+    }
+
     await db
       .update(agentRuntimeState)
       .set({
@@ -2260,6 +2285,11 @@ export function heartbeatService(db: Db) {
         lastRunId: run.id,
         lastRunStatus: run.status,
         lastError: result.errorMessage ?? null,
+        ...(usageLimit
+          ? {
+              stateJson: sql`coalesce(${agentRuntimeState.stateJson}, '{}'::jsonb) || ${JSON.stringify({ usageLimit })}::jsonb`,
+            }
+          : {}),
         totalInputTokens: sql`${agentRuntimeState.totalInputTokens} + ${inputTokens}`,
         totalOutputTokens: sql`${agentRuntimeState.totalOutputTokens} + ${outputTokens}`,
         totalCachedInputTokens: sql`${agentRuntimeState.totalCachedInputTokens} + ${cachedInputTokens}`,
@@ -4054,7 +4084,17 @@ export function heartbeatService(db: Db) {
       projectId,
     });
     if (budgetBlock) {
-      await writeSkippedRequest("budget.blocked");
+      // A usage limit is a wait, so it is a skip rather than an error: throwing
+      // here would abort `tickTimers` mid-scan and take every agent after this one
+      // down with it, and a budget hard-stop only gets away with that because it
+      // pauses the agent as well. A user-requested wake still throws, so an
+      // operator asking for a run is told why it did not start.
+      if (budgetBlock.kind === "usage_limit" && opts.requestedByActorType !== "user") {
+        await writeSkippedRequest("usage_limit.blocked");
+        logger.info({ agentId, reason: budgetBlock.reason }, "suppressed wake — agent is waiting out a usage limit");
+        return null;
+      }
+      await writeSkippedRequest(budgetBlock.kind === "usage_limit" ? "usage_limit.blocked" : "budget.blocked");
       throw conflict(budgetBlock.reason, {
         scopeType: budgetBlock.scopeType,
         scopeId: budgetBlock.scopeId,

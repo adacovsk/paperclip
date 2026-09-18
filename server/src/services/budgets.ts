@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
+  agentRuntimeState,
   agents,
   approvals,
   budgetIncidents,
@@ -23,6 +24,7 @@ import type {
 } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
+import { activeUsageLimit, usageLimitBlockReason } from "./usage-limit.js";
 
 type ScopeRecord = {
   companyId: string;
@@ -742,6 +744,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       if (!company) throw notFound("Company not found");
       if (company.status === "paused") {
         return {
+          kind: "budget" as const,
           scopeType: "company" as const,
           scopeId: companyId,
           scopeName: company.name,
@@ -769,6 +772,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         const observed = await computeObservedAmount(db, companyPolicy);
         if (observed >= companyPolicy.amount) {
           return {
+            kind: "budget" as const,
             scopeType: "company" as const,
             scopeId: companyId,
             scopeName: company.name,
@@ -779,6 +783,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
 
       if (agent.status === "paused" && agent.pauseReason === "budget") {
         return {
+          kind: "budget" as const,
           scopeType: "agent" as const,
           scopeId: agentId,
           scopeName: agent.name,
@@ -803,12 +808,33 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         const observed = await computeObservedAmount(db, agentPolicy);
         if (observed >= agentPolicy.amount) {
           return {
+            kind: "budget" as const,
             scopeType: "agent" as const,
             scopeId: agentId,
             scopeName: agent.name,
             reason: "Agent cannot start because its budget hard-stop is still exceeded.",
           };
         }
+      }
+
+      // A provider usage limit blocks here rather than at each scheduler, so the
+      // timer path, the routine path and the claim of an already-queued run all
+      // see it without a new call site. It lifts on its own when the stored reset
+      // instant passes — nothing has to unset it.
+      const runtime = await db
+        .select({ stateJson: agentRuntimeState.stateJson })
+        .from(agentRuntimeState)
+        .where(eq(agentRuntimeState.agentId, agentId))
+        .then((rows) => rows[0] ?? null);
+      const usageLimit = activeUsageLimit(runtime?.stateJson);
+      if (usageLimit) {
+        return {
+          kind: "usage_limit" as const,
+          scopeType: "agent" as const,
+          scopeId: agentId,
+          scopeName: agent.name,
+          reason: usageLimitBlockReason(usageLimit),
+        };
       }
 
       const candidateProjectId = context?.projectId ?? null;
@@ -844,6 +870,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         const observed = await computeObservedAmount(db, projectPolicy);
         if (observed >= projectPolicy.amount) {
           return {
+            kind: "budget" as const,
             scopeType: "project" as const,
             scopeId: project.id,
             scopeName: project.name,
@@ -854,6 +881,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
 
       if (!project.pausedAt || project.pauseReason !== "budget") return null;
       return {
+        kind: "budget" as const,
         scopeType: "project" as const,
         scopeId: project.id,
         scopeName: project.name,

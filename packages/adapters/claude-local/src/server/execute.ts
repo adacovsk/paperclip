@@ -25,6 +25,7 @@ import {
   parseClaudeStreamJson,
   describeClaudeFailure,
   detectClaudeLoginRequired,
+  detectClaudeUsageLimit,
   isClaudeMaxTurnsResult,
   isClaudeUnknownSessionError,
 } from "./parse.js";
@@ -495,10 +496,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       stdout: proc.stdout,
       stderr: proc.stderr,
     });
+    // A usage limit outranks a login prompt in the classification: the text can
+    // mention both, and only one of them is a wait rather than an operator
+    // action. `usageLimitResetAt` is what the server suppresses wakes until.
+    const limitMeta = detectClaudeUsageLimit({
+      parsed,
+      stdout: proc.stdout,
+      stderr: proc.stderr,
+    });
+    const errorCodeFor = (fallback: string | null = null) =>
+      limitMeta.limited ? "claude_usage_limit" : loginMeta.requiresLogin ? "claude_auth_required" : fallback;
     const errorMeta =
-      loginMeta.loginUrl != null
+      loginMeta.loginUrl != null || limitMeta.limited
         ? {
-            loginUrl: loginMeta.loginUrl,
+            ...(loginMeta.loginUrl != null ? { loginUrl: loginMeta.loginUrl } : {}),
+            ...(limitMeta.limited
+              ? {
+                  usageLimited: true,
+                  ...(limitMeta.scope ? { usageLimitScope: limitMeta.scope } : {}),
+                  ...(limitMeta.resetAt ? { usageLimitResetAt: limitMeta.resetAt } : {}),
+                  ...(limitMeta.resetText ? { usageLimitResetText: limitMeta.resetText } : {}),
+                }
+              : {}),
           }
         : undefined;
 
@@ -520,7 +539,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         signal: proc.signal,
         timedOut: false,
         errorMessage: parseFallbackErrorMessage(proc),
-        errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+        errorCode: errorCodeFor(),
         errorMeta,
         // Carried on the failure path deliberately: a run that produced no
         // `result` event is precisely the one whose size we could not otherwise
@@ -569,7 +588,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         (proc.exitCode ?? 0) === 0
           ? null
           : describeClaudeFailure(parsed) ?? `Claude exited with code ${proc.exitCode ?? -1}`,
-      errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+      errorCode: errorCodeFor(),
       errorMeta,
       usage,
       // Peak single-turn context, surfaced so within-run growth is measurable.
