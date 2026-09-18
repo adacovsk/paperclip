@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { promisify } from "node:util";
 import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -404,9 +405,69 @@ function normalizeMaxConcurrentRuns(value: unknown) {
   return Math.max(HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, Math.min(HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, parsed));
 }
 
+// How long one holder of the per-agent start lock may run before the next
+// waiter stops waiting for it.
+//
+// The lock is a promise chain, so a holder that never settles is not slow — it
+// is permanent. Every later waiter chains onto it, the periodic
+// `resumeQueuedRuns` sweep included, so the one mechanism that exists to drive
+// persisted queued work forward becomes another link in the dead chain. The
+// agent still reports `idle` and its runs still read `queued`, which is what
+// makes it invisible: a stalled queue and an empty one look identical.
+//
+// Capping the wait bounds how long one wedged holder can hide the queue. It is
+// a backstop, not the fix, and the distinction is measured rather than assumed:
+// overlap is safe for the slot count, because the critical section takes
+// `pg_advisory_xact_lock` on the agent id and Postgres serializes it — but a
+// holder wedged *while holding that advisory lock* has only moved the deadlock
+// into the database, where the next holder blocks instead. What unblocks that
+// case is `idle_in_transaction_session_timeout` (see `createDb`), which tears
+// the stuck backend down; the run then fails and is retried by the periodic
+// sweep. The re-entrancy check in `startNextQueuedRunForAgent` is what stops
+// the cycle forming in the first place.
+const AGENT_START_LOCK_MAX_HOLD_MS = Math.max(
+  30_000,
+  Number(process.env.AGENT_START_LOCK_MAX_HOLD_MS) || 5 * 60 * 1000,
+);
+
+// Agent ids whose start lock is held by a frame above this one, so a nested
+// call can detect that awaiting it would deadlock against itself.
+const heldAgentStartLocks = new AsyncLocalStorage<ReadonlySet<string>>();
+
+function isHoldingAgentStartLock(agentId: string) {
+  return heldAgentStartLocks.getStore()?.has(agentId) ?? false;
+}
+
 async function withAgentStartLock<T>(agentId: string, fn: () => Promise<T>) {
   const previous = startLocksByAgent.get(agentId) ?? Promise.resolve();
-  const run = previous.then(fn);
+
+  // Wait for the previous holder, but not forever. A holder that wedged takes
+  // the whole agent down with it otherwise.
+  const gate = new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (timedOut: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timedOut) {
+        logger.error(
+          { agentId, maxHoldMs: AGENT_START_LOCK_MAX_HOLD_MS },
+          "agent start lock held past its cap; proceeding without the previous holder",
+        );
+      }
+      clearTimeout(timer);
+      resolve();
+    };
+    // `unref` so a pending cap never keeps the process alive on shutdown.
+    const timer = setTimeout(() => finish(true), AGENT_START_LOCK_MAX_HOLD_MS);
+    timer.unref?.();
+    previous.then(() => finish(false), () => finish(false));
+  });
+
+  const held = heldAgentStartLocks.getStore();
+  const nested = new Set(held ?? []);
+  nested.add(agentId);
+
+  const run = gate.then(() => heldAgentStartLocks.run(nested, fn));
   const marker = run.then(
     () => undefined,
     () => undefined,
@@ -2241,59 +2302,81 @@ export function heartbeatService(db: Db) {
   }
 
   async function startNextQueuedRunForAgent(agentId: string) {
-    return withAgentStartLock(agentId, async () => {
-      const agent = await getAgent(agentId);
-      if (!agent) return [];
-      if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
-        return [];
+    // Re-entrant call: a frame above this one already holds this agent's start
+    // lock, so awaiting it here would chain onto a promise that cannot settle
+    // until we return — and the whole agent stops dispatching, permanently.
+    // Detach instead; the dispatch still happens, once the outer holder
+    // releases, which is the ordering that was wanted anyway.
+    //
+    // The path that reaches here is `claimQueuedRun` auto-cancelling a run
+    // whose issue already finished, which promotes a successor and asks for it
+    // to be dispatched. Individual call sites guard this with `void`; this
+    // catches the ones that do not, including any added later.
+    if (isHoldingAgentStartLock(agentId)) {
+      void withAgentStartLock(agentId, () => dispatchQueuedRunsForAgent(agentId)).catch((err) =>
+        logger.error({ err, agentId }, "detached nested agent dispatch failed"),
+      );
+      return [];
+    }
+
+    return withAgentStartLock(agentId, () => dispatchQueuedRunsForAgent(agentId));
+  }
+
+  // The body of `startNextQueuedRunForAgent`, split out so the detached
+  // re-entrant path above can queue the work itself rather than calling back
+  // into the re-entrancy check and recursing.
+  async function dispatchQueuedRunsForAgent(agentId: string) {
+    const agent = await getAgent(agentId);
+    if (!agent) return [];
+    if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
+      return [];
+    }
+    const policy = parseHeartbeatPolicy(agent);
+
+    // Enforce maxConcurrentRuns durably. `withAgentStartLock` only serializes
+    // within this process; the count-then-claim below is a TOCTOU that a second
+    // process, or this process across a restart that clears the in-memory lock,
+    // would race — letting two wakes for the same agent (e.g. concurrent
+    // Coordinator fires on different parent issues) each claim a slot and exceed
+    // the cap. A transaction-scoped Postgres advisory lock keyed on the agent id
+    // serializes the critical section cluster-wide. The count/claim run on the
+    // autocommit pool (not this transaction) on purpose: each claim commits
+    // immediately, so the running-count is durable and visible to the next lock
+    // holder by the time this transaction commits and releases the lock.
+    const claimedRuns = await db.transaction(async (lockTx) => {
+      await lockTx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${agentId}::text, 0::int8))`,
+      );
+
+      const runningCount = await countRunningRunsForAgent(agentId);
+      const availableSlots = Math.max(0, policy.maxConcurrentRuns - runningCount);
+      if (availableSlots <= 0) return [];
+
+      const queuedRuns = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(and(eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.status, "queued")))
+        .orderBy(asc(heartbeatRuns.createdAt))
+        .limit(availableSlots);
+      if (queuedRuns.length === 0) return [];
+
+      const claimed: Array<typeof heartbeatRuns.$inferSelect> = [];
+      for (const queuedRun of queuedRuns) {
+        const claimedRun = await claimQueuedRun(queuedRun);
+        if (claimedRun) claimed.push(claimedRun);
       }
-      const policy = parseHeartbeatPolicy(agent);
-
-      // Enforce maxConcurrentRuns durably. `withAgentStartLock` only serializes
-      // within this process; the count-then-claim below is a TOCTOU that a second
-      // process, or this process across a restart that clears the in-memory lock,
-      // would race — letting two wakes for the same agent (e.g. concurrent
-      // Coordinator fires on different parent issues) each claim a slot and exceed
-      // the cap. A transaction-scoped Postgres advisory lock keyed on the agent id
-      // serializes the critical section cluster-wide. The count/claim run on the
-      // autocommit pool (not this transaction) on purpose: each claim commits
-      // immediately, so the running-count is durable and visible to the next lock
-      // holder by the time this transaction commits and releases the lock.
-      const claimedRuns = await db.transaction(async (lockTx) => {
-        await lockTx.execute(
-          sql`select pg_advisory_xact_lock(hashtextextended(${agentId}::text, 0::int8))`,
-        );
-
-        const runningCount = await countRunningRunsForAgent(agentId);
-        const availableSlots = Math.max(0, policy.maxConcurrentRuns - runningCount);
-        if (availableSlots <= 0) return [];
-
-        const queuedRuns = await db
-          .select()
-          .from(heartbeatRuns)
-          .where(and(eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.status, "queued")))
-          .orderBy(asc(heartbeatRuns.createdAt))
-          .limit(availableSlots);
-        if (queuedRuns.length === 0) return [];
-
-        const claimed: Array<typeof heartbeatRuns.$inferSelect> = [];
-        for (const queuedRun of queuedRuns) {
-          const claimedRun = await claimQueuedRun(queuedRun);
-          if (claimedRun) claimed.push(claimedRun);
-        }
-        return claimed;
-      });
-      if (claimedRuns.length === 0) return [];
-
-      // Fire executions after the advisory lock has been released (transaction
-      // committed) so long-running adapter work never holds the per-agent lock.
-      for (const claimedRun of claimedRuns) {
-        void executeRun(claimedRun.id).catch((err) => {
-          logger.error({ err, runId: claimedRun.id }, "queued heartbeat execution failed");
-        });
-      }
-      return claimedRuns;
+      return claimed;
     });
+    if (claimedRuns.length === 0) return [];
+
+    // Fire executions after the advisory lock has been released (transaction
+    // committed) so long-running adapter work never holds the per-agent lock.
+    for (const claimedRun of claimedRuns) {
+      void executeRun(claimedRun.id).catch((err) => {
+        logger.error({ err, runId: claimedRun.id }, "queued heartbeat execution failed");
+      });
+    }
+    return claimedRuns;
   }
 
   async function executeRun(runId: string) {
@@ -4948,6 +5031,11 @@ export function heartbeatService(db: Db) {
     markRunsInterruptedByShutdown,
 
     resumeQueuedRuns,
+
+    // Exposed for the start-lock re-entrancy regression test, which has to call
+    // the dispatcher directly: the deadlock it guards lives between this and the
+    // auto-cancel path, and is invisible through `wakeup`.
+    startNextQueuedRunForAgent,
 
     tickTimers: async (now = new Date()) => {
       let checked = 0;
