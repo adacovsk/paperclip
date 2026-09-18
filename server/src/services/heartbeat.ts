@@ -3865,7 +3865,20 @@ export function heartbeatService(db: Db) {
       },
     });
 
-    await startNextQueuedRunForAgent(promotedRun.agentId);
+    // Fire-and-forget, for the same reason the post-cancel dispatch below is:
+    // this runs on the `claimQueuedRun` auto-cancel path, which is already
+    // inside `withAgentStartLock` for this very agent. Awaiting a nested
+    // `startNextQueuedRunForAgent` chains on the outer `fn` that is still
+    // pending, so neither ever settles — the enclosing transaction keeps its
+    // `pg_advisory_xact_lock` and the agent's queue stalls until the process
+    // restarts. Detaching lets the nested dispatch run after the outer lock
+    // releases, which is the ordering that was wanted anyway.
+    void startNextQueuedRunForAgent(promotedRun.agentId).catch((err) =>
+      logger.error(
+        { err, agentId: promotedRun.agentId },
+        "startNextQueuedRunForAgent after issue-execution promote failed",
+      ),
+    );
   }
 
   async function enqueueWakeup(agentId: string, opts: WakeupOptions = {}) {
