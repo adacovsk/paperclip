@@ -170,6 +170,127 @@ export function detectClaudeLoginRequired(input: {
   };
 }
 
+/**
+ * A usage limit is a wall-clock wait, not a failure to retry.
+ *
+ * The CLI reports it through an ordinary `result` event — `subtype: success`,
+ * non-zero exit, the limit text in `result` — so nothing distinguishes it from a
+ * crash, and a scheduled agent re-fires into it every interval. One fleet burned
+ * 46 runs over ~17h that way, 35 of them one agent's cron hitting the same hard
+ * error, each a fresh process launch against a limit with a known reset time.
+ *
+ * Two shapes are emitted, and the zone is parenthesised when present:
+ *   You've hit your weekly limit · resets 8pm (America/Denver)
+ *   You've hit your usage limit · resets 3:30pm
+ */
+const CLAUDE_USAGE_LIMIT_RE =
+  /(?:hit|reached|exceeded)\s+(?:your|the)\s+(?:(weekly|monthly|daily)\s+)?(?:usage\s+)?limit|usage\s+limit\s+reached|rate\s+limit\s+exceeded/i;
+const CLAUDE_LIMIT_RESET_RE =
+  /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([A-Za-z_]+\/[A-Za-z_+-]+)\))?/i;
+
+export type ClaudeUsageLimit = {
+  limited: boolean;
+  /** The limit window the message named, when it named one. */
+  scope: string | null;
+  /** When the limit lifts, as an ISO string, or null when the text carried no time. */
+  resetAt: string | null;
+  /** The matched text, kept verbatim for the operator-facing error message. */
+  resetText: string | null;
+};
+
+/**
+ * The next instant at which it is `hour:minute` in `timeZone`.
+ *
+ * `Intl` is the only zone database available here, so the offset is read back
+ * out of a formatted timestamp rather than computed. Across a DST boundary the
+ * offset that applies is the one at the *target* instant, which is why the
+ * offset is resolved from a first guess and then re-applied.
+ */
+function nextWallClockInZone(hour: number, minute: number, timeZone: string | null, now: Date): Date | null {
+  const zone = timeZone ?? "UTC";
+  const offsetAt = (instant: Date): number | null => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).formatToParts(instant);
+      const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? NaN);
+      const asUtc = Date.UTC(
+        get("year"),
+        get("month") - 1,
+        get("day"),
+        get("hour") % 24,
+        get("minute"),
+        get("second"),
+      );
+      if (!Number.isFinite(asUtc)) return null;
+      return asUtc - instant.getTime();
+    } catch {
+      return null;
+    }
+  };
+
+  const initialOffset = offsetAt(now);
+  if (initialOffset === null) return null;
+
+  const localNow = new Date(now.getTime() + initialOffset);
+  const candidateLocal = Date.UTC(
+    localNow.getUTCFullYear(),
+    localNow.getUTCMonth(),
+    localNow.getUTCDate(),
+    hour,
+    minute,
+    0,
+  );
+  const dayMs = 24 * 60 * 60 * 1000;
+  for (const local of [candidateLocal, candidateLocal + dayMs]) {
+    const guess = new Date(local - initialOffset);
+    const settledOffset = offsetAt(guess) ?? initialOffset;
+    const resolved = new Date(local - settledOffset);
+    if (resolved.getTime() > now.getTime()) return resolved;
+  }
+  return null;
+}
+
+export function detectClaudeUsageLimit(input: {
+  parsed: Record<string, unknown> | null;
+  stdout: string;
+  stderr: string;
+  now?: Date;
+}): ClaudeUsageLimit {
+  const resultText = asString(input.parsed?.result, "").trim();
+  const messages = [resultText, ...extractClaudeErrorMessages(input.parsed ?? {}), input.stdout, input.stderr]
+    .join("\n")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const hit = messages.find((line) => CLAUDE_USAGE_LIMIT_RE.test(line));
+  if (!hit) return { limited: false, scope: null, resetAt: null, resetText: null };
+
+  const scope = hit.match(CLAUDE_USAGE_LIMIT_RE)?.[1]?.toLowerCase() ?? null;
+  const reset = hit.match(CLAUDE_LIMIT_RESET_RE);
+  if (!reset) return { limited: true, scope, resetAt: null, resetText: null };
+
+  const meridiem = reset[3]?.toLowerCase();
+  let hour = Number(reset[1]);
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  const minute = Number(reset[2] ?? 0);
+  if (!Number.isFinite(hour) || hour > 23 || !Number.isFinite(minute) || minute > 59) {
+    return { limited: true, scope, resetAt: null, resetText: reset[0] };
+  }
+
+  const resetAt = nextWallClockInZone(hour, minute, reset[4] ?? null, input.now ?? new Date());
+  return { limited: true, scope, resetAt: resetAt?.toISOString() ?? null, resetText: reset[0] };
+}
+
 export function describeClaudeFailure(parsed: Record<string, unknown>): string | null {
   const subtype = asString(parsed.subtype, "");
   const resultText = asString(parsed.result, "").trim();
