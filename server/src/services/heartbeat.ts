@@ -1249,8 +1249,11 @@ export function heartbeatService(db: Db) {
       : 0;
 
     let reason: string | null = null;
-    if (policy.maxSessionRuns > 0 && runs.length > policy.maxSessionRuns) {
-      reason = `session exceeded ${policy.maxSessionRuns} runs`;
+    // `runs` are the session's prior runs; the run being started is not among
+    // them. At maxSessionRuns prior runs, resuming would make this run number
+    // maxSessionRuns + 1, so the comparison is `>=`, not `>`.
+    if (policy.maxSessionRuns > 0 && runs.length >= policy.maxSessionRuns) {
+      reason = `session reached ${policy.maxSessionRuns} runs`;
     } else if (policy.maxRawInputTokens > 0 && latestContextTokens >= policy.maxRawInputTokens) {
       reason =
         `session raw input reached ${formatCount(latestContextTokens)} tokens ` +
