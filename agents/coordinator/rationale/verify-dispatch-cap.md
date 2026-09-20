@@ -34,6 +34,26 @@ had declared unused.
 The cap is keyed off the gate, not off whether `ARCHITECT_CLOUD_LANE` is set, because a closed
 lane sends every verify down the local chain, which is exactly the load the cap exists for.
 
+## Why the Coordinator reads the lane with a margin
+
+The Coordinator's `LANE=1` and the Architect's `offload` are two readings of the same gate taken
+minutes apart, and only the second decides where a build runs. Reading both with no margin sounds
+consistent, but it breaks when weekly usage sits right at pace, and at pace is where the gate's own
+feedback loop keeps usage. The gate then flickers. A fire that catches it open releases every held
+verify at once. By the time each Architect wakes and offloads, usage has caught the calendar again
+and the lane is closed, so the whole release goes down the local chain and past the cap.
+
+That is what happened in one day on record: twenty verify wrappers stacked on a one-slot
+semaphore. Nearly every dispatch comment read "cloud lane open, cap does not apply", yet only two
+of those verifies ever launched on a VM. The rest waited for a local slot, the oldest for over a
+day.
+
+`CLOUD_PACE_MARGIN` makes the Coordinator's reading stricter than `offload`'s. It uncaps only when
+usage trails the week by enough that a few minutes of cloud spend cannot close the lane before the
+Architects get there. The margin is **5 points** of the week, about eight hours of calendar. Do not
+drop it to 0 to "match" `offload`: the mismatch is the point. A reading that opens less often costs
+held verifies one extra fire. A reading that opens wrongly costs an uncapped local flood.
+
 ## Why the hold has to be a NULL assignee
 
 Setting `assigneeAgentId` = Architect fires an on-demand wake within seconds **regardless of

@@ -20,6 +20,15 @@ must degrade to "lane off", not to a crash a caller might read as permission.
 The session (five-hour) limit is a separate ceiling for the same reason: a
 week with plenty of headroom can still hit the session limit, and that blocks
 the local agents too.
+
+CLOUD_PACE_MARGIN (percentage points, default 0) demands that much headroom
+before reporting open. The Architect's offload reads the gate with no margin.
+The Coordinator reads it with a margin because it answers a different question:
+not "is quota spare now" but "will the lane still be open when the Architect
+offloads minutes from now". Its open reading uncaps every held verify at once.
+With usage hovering at pace, a margin-free reading flickers open, releases the
+whole held set, and the lane has closed again by the time each offload re-reads
+it — so the entire release runs locally, stacked behind the cargo semaphore.
 """
 
 import json
@@ -63,6 +72,7 @@ def read_usage() -> dict:
 
 def is_open(usage: dict, now: float) -> tuple[bool, str]:
     session_ceiling = env_float("CLOUD_PACE_SESSION_CEILING", 80)
+    margin = max(0.0, env_float("CLOUD_PACE_MARGIN", 0))
 
     week = usage["seven_day"]
     used = float(week["utilization"])
@@ -75,6 +85,8 @@ def is_open(usage: dict, now: float) -> tuple[bool, str]:
         return False, f"{why}: session ceiling {session_ceiling:.0f}% reached"
     if used >= elapsed:
         return False, f"{why}: on or ahead of pace"
+    if used >= elapsed - margin:
+        return False, f"{why}: behind pace by less than the {margin:.0f}-point margin"
     return True, f"{why}: behind pace"
 
 
