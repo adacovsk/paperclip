@@ -164,6 +164,24 @@ function collectTextFiles(root: string, current: string, files: Record<string, s
   }
 }
 
+/**
+ * Task bodies as the package carries them: frontmatter stripped, keyed by the
+ * `tasks/<slug>/TASK.md` path. A body that exports empty is the failure this
+ * guards -- a narrowed list row reaches the writer with a NULL description and
+ * the task ships as frontmatter only.
+ */
+function exportedTaskBodies(exportRoot: string) {
+  const files: Record<string, string> = {};
+  collectTextFiles(exportRoot, exportRoot, files);
+  const bodies: Record<string, string> = {};
+  for (const [relativePath, text] of Object.entries(files)) {
+    if (!relativePath.startsWith("tasks/") || !relativePath.endsWith("/TASK.md")) continue;
+    const match = /^---\n[\s\S]*?\n---\n([\s\S]*)$/.exec(text);
+    bodies[relativePath] = (match?.[1] ?? "").trim();
+  }
+  return bodies;
+}
+
 async function stopServerProcess(child: ServerProcess | null) {
   if (!child || child.exitCode !== null) return;
   child.kill("SIGTERM");
@@ -363,6 +381,29 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     expect(readFileSync(path.join(exportDir, "COMPANY.md"), "utf8")).toContain(sourceCompany.name);
     expect(readFileSync(path.join(exportDir, ".paperclip.yaml"), "utf8")).toContain('schema: "paperclip/v1"');
 
+    // The bulk export above selects issues through the list projection, which
+    // omits descriptions; the --issues selector below resolves them one by one
+    // through the detail read. Both must land the same body on disk.
+    const bulkTaskBodies = exportedTaskBodies(exportDir);
+    expect(Object.values(bulkTaskBodies)).toEqual([largeIssueDescription.trim()]);
+
+    const selectorExportDir = path.join(tempRoot, "exported-company-selector");
+    await runCliJson<{ ok: boolean }>(
+      [
+        "company",
+        "export",
+        sourceCompany.id,
+        "--out",
+        selectorExportDir,
+        "--include",
+        "company,agents,projects,issues",
+        "--issues",
+        sourceIssue.identifier,
+      ],
+      { apiBase, configPath },
+    );
+    expect(Object.values(exportedTaskBodies(selectorExportDir))).toEqual([largeIssueDescription.trim()]);
+
     const importedNew = await runCliJson<{
       company: { id: string; name: string; action: string };
       agents: Array<{ id: string | null; action: string; name: string }>;
@@ -402,6 +443,17 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     expect(importedAgents.map((agent) => agent.name)).toContain(sourceAgent.name);
     expect(importedProjects.map((project) => project.name)).toContain(sourceProject.name);
     expect(importedIssues.map((issue) => issue.title)).toContain(sourceIssue.title);
+
+    // Read the imported task through the detail endpoint: the list response
+    // nulls descriptions, so only the detail row proves the body survived the
+    // round trip.
+    const importedIssueId = importedIssues.find((issue) => issue.title === sourceIssue.title)?.id;
+    expect(importedIssueId).toBeTruthy();
+    const importedIssueDetail = await api<{ description: string | null }>(
+      apiBase,
+      `/api/issues/${importedIssueId}`,
+    );
+    expect(importedIssueDetail.description).toBe(largeIssueDescription.trim());
 
     const previewExisting = await runCliJson<{
       errors: string[];

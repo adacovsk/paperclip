@@ -37,6 +37,7 @@ const issueSvc = {
   list: vi.fn(),
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
+  descriptionsByIds: vi.fn(),
   create: vi.fn(),
 };
 
@@ -206,6 +207,7 @@ describe("company portability", () => {
     issueSvc.list.mockResolvedValue([]);
     issueSvc.getById.mockResolvedValue(null);
     issueSvc.getByIdentifier.mockResolvedValue(null);
+    issueSvc.descriptionsByIds.mockResolvedValue(new Map());
     routineSvc.list.mockResolvedValue([]);
     routineSvc.getDetail.mockImplementation(async (id: string) => {
       const rows = await routineSvc.list();
@@ -725,6 +727,63 @@ describe("company portability", () => {
 
     expect(preview.counts.issues).toBe(0);
     expect(preview.fileInventory.some((entry) => entry.path.startsWith("tasks/"))).toBe(false);
+  });
+
+  it("hydrates task bodies when issues arrive from the narrowed list projection", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    projectSvc.list.mockResolvedValue([
+      {
+        id: "project-1",
+        name: "Launch",
+        urlKey: "launch",
+        description: "Ship it",
+        leadAgentId: "agent-1",
+        targetDate: null,
+        color: null,
+        status: "planned",
+        executionWorkspacePolicy: null,
+        archivedAt: null,
+      },
+    ]);
+    // A row exactly as issueService.list() hands it over: the body is nulled off
+    // the wire and the narrowing is flagged. Exporting the row as-is ships a
+    // TASK.md with frontmatter and no body.
+    issueSvc.list.mockResolvedValue([
+      {
+        id: "issue-1",
+        identifier: "PAP-1",
+        title: "Write launch task",
+        description: null,
+        descriptionOmitted: true,
+        descriptionChars: 9,
+        projectId: "project-1",
+        assigneeAgentId: "agent-1",
+        status: "todo",
+        priority: "medium",
+        labelIds: [],
+        billingCode: null,
+        executionWorkspaceSettings: null,
+        assigneeAdapterOverrides: null,
+      },
+    ]);
+    issueSvc.descriptionsByIds.mockResolvedValue(new Map([["issue-1", "Task body"]]));
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: false,
+        projects: true,
+        issues: true,
+      },
+    });
+
+    const taskPath = Object.keys(exported.files).find((entry) => entry.startsWith("tasks/"));
+    expect(taskPath).toBeTruthy();
+    expect(asTextFile(exported.files[taskPath!])).toContain("Task body");
+    // One batched read for the whole selection, not a getById per task.
+    expect(issueSvc.descriptionsByIds).toHaveBeenCalledTimes(1);
+    expect(issueSvc.descriptionsByIds).toHaveBeenCalledWith(["issue-1"]);
   });
 
   it("exports portable project workspace metadata and remaps it on import", async () => {

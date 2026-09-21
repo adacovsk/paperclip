@@ -2892,6 +2892,23 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
 
     const selectedProjectRows = Array.from(selectedProjects.values())
       .sort((left, right) => left.name.localeCompare(right.name));
+    // Rows that arrived via issuesSvc.list() carry a NULL description: the list
+    // projection deliberately drops the body off the wire. Exporting those rows
+    // as-is writes a TASK.md with frontmatter and an empty body, silently losing
+    // every task description in the package. Hydrate the narrowed rows so a bulk
+    // export matches what an explicit --issues selector already produces.
+    const narrowedIssueIds = Array.from(selectedIssues.entries())
+      .filter(([, issue]) => (issue as { descriptionOmitted?: boolean } | null)?.descriptionOmitted)
+      .map(([issueId]) => issueId);
+    if (narrowedIssueIds.length > 0) {
+      const descriptionById = await issuesSvc.descriptionsByIds(narrowedIssueIds);
+      for (const issueId of narrowedIssueIds) {
+        const issue = selectedIssues.get(issueId);
+        if (!issue) continue;
+        selectedIssues.set(issueId, { ...issue, description: descriptionById.get(issueId) ?? null });
+      }
+    }
+
     const selectedIssueRows = Array.from(selectedIssues.values())
       .filter((issue): issue is NonNullable<typeof issue> => issue != null)
       .sort((left, right) => (left.identifier ?? left.title).localeCompare(right.identifier ?? right.title));
