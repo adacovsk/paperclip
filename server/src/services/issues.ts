@@ -881,6 +881,23 @@ export function issueService(db: Db) {
     },
 
     /**
+     * Bodies for rows that came back from `list()` with the description
+     * projection narrowed. Lets a caller that genuinely needs every body (the
+     * company export writes each one into a TASK.md) hydrate a whole page of
+     * list rows with one query instead of an N+1 of `getById`.
+     */
+    descriptionsByIds: async (ids: string[]) => {
+      const map = new Map<string, string | null>();
+      if (ids.length === 0) return map;
+      const rows = await db
+        .select({ id: issues.id, description: issues.description })
+        .from(issues)
+        .where(inArray(issues.id, ids));
+      for (const row of rows) map.set(row.id, row.description);
+      return map;
+    },
+
+    /**
      * "Is anyone still working on this parent?" — whether the parent has a child
      * that is neither `done` nor `cancelled`, excluding the one that just
      * finished (its own status may not be committed yet on the caller's path).
