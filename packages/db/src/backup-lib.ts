@@ -1,7 +1,45 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
+
+/**
+ * How many lines are joined per write. Small enough that no single joined chunk
+ * approaches the string limit, large enough that a multi-hundred-megabyte dump
+ * is thousands of writes rather than millions.
+ */
+const BACKUP_WRITE_CHUNK_LINES = 2000;
+
+/**
+ * Write `lines` to `file` newline-separated, without ever materializing the
+ * whole dump as one string.
+ *
+ * `lines.join("\n")` is the obvious spelling and it fails on exactly the
+ * databases most worth backing up: a join whose result exceeds V8's maximum
+ * string length throws `RangeError: Invalid string length`, and the scheduled
+ * backup then fails every night while the instance keeps running normally.
+ * Nothing else reports it, so the first symptom is an empty backup directory
+ * at the moment one is needed.
+ *
+ * Output is byte-identical to the join: separators between lines, no trailing
+ * newline.
+ */
+export async function writeBackupLines(
+  file: string,
+  lines: string[],
+  chunkLines: number = BACKUP_WRITE_CHUNK_LINES,
+): Promise<void> {
+  const handle = await open(file, "w");
+  try {
+    for (let start = 0; start < lines.length; start += chunkLines) {
+      const isFirst = start === 0;
+      const chunk = lines.slice(start, start + chunkLines).join("\n");
+      await handle.write(isFirst ? chunk : `\n${chunk}`);
+    }
+  } finally {
+    await handle.close();
+  }
+}
 
 export type RunDatabaseBackupOptions = {
   connectionString: string;
@@ -506,7 +544,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     // Write the backup file
     mkdirSync(opts.backupDir, { recursive: true });
     const backupFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
-    await writeFile(backupFile, lines.join("\n"), "utf8");
+    await writeBackupLines(backupFile, lines);
 
     const sizeBytes = statSync(backupFile).size;
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
