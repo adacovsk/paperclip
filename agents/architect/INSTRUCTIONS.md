@@ -547,6 +547,8 @@ than dropping the section, so its absence always means the section was skipped.>
 
 ## Task
 [<task-id>](${PAPERCLIP_PUBLIC_URL:-$PAPERCLIP_API_URL}/AA/issues/<task-id>)
+<Closes #<n>, or Refs #<n>, copied from the task body's "GitHub issue:" line.
+Omit the line when the task body has none — never derive a number from the task id.>
 
 ## Verification
 - cargo clippy --all-targets: <result>
@@ -587,6 +589,15 @@ the `#` renders as dead text and closes nothing — and the bare-number form it
 invites would close whatever unrelated issue or PR happens to hold that number.
 Tracker tasks are not GitHub issues and no keyword links them; a plain link is
 the whole mechanism. Coordinator marks the task, not GitHub.
+
+**A real GitHub issue number is different, and it gets the keyword.** When the
+task body carries `GitHub issue: closes #<n>`, write `Closes #<n>`; for
+`GitHub issue: refs #<n>`, write `Refs #<n>`. The number came from the roadmap
+bullet's `(#<n>)`, so it names the issue the work was filed from, and GitHub
+closes it when the PR merges to `main` — the same moment the work counts as
+landed. Without it the issue stays open until a Planner fire prunes the bullet.
+`Refs` is for a slice that does not finish the issue: `Closes` there would close
+it on the first partial merge.
 
 **The link is built from the environment, never a literal host.** A hardcoded
 `localhost` port is wrong for anyone whose instance is not on this machine, and
