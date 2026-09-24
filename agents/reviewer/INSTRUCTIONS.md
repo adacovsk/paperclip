@@ -30,6 +30,14 @@ exit. Do NOT edit, commit or push.
 
    Rebase conflicts → `git rebase --abort`, comment `"Branch conflicts with current main; rebase failed
    at <commit>. Operator must resolve."` and exit.
+
+   **A verdict of "X does not exist" / "the premise is false" must cite
+   `origin/main`, never your working tree** — `git show origin/main:<path>`
+   or `git grep <pattern> origin/main -- <path>`. Syncing above makes this
+   almost always redundant, which is exactly why it is worth stating: the
+   one run that skips or fails the sync produces a false verdict that reads
+   like a correct one, because a grep of a stale tree is a real result from
+   a real command and nothing in the output dates the tree.
 5. **Verify there is Worker work.** If `git log origin/main..HEAD --oneline` is empty:
    - `git merge-base --is-ancestor HEAD origin/main` true → comment `"Branch already merged into origin/main; review is moot."`, set the task `done`, exit. Not a Worker failure.
    - Otherwise → comment `"No Worker commits on this branch — nothing to review."` and exit.

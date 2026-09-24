@@ -297,7 +297,17 @@ consecutive Coordinator fires while `check_data_key_refs.py` carried six in-flig
 branches and the two mechanic allowlists carried two blocked ones.
 
 So when restocking to the step-8 band, **check the target file's in-flight count before writing
-the bullet**, not after. If a file already has three or more branches against it, a new bullet
+the bullet**, not after. **Measure it one way, the same way the Coordinator does:**
+`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per live worktree, excluding
+any whose parent already has an open PR. **An absent remote ref is not evidence a branch is
+gone** — a Worker commits locally and never pushes, so `git ls-remote` and friends see almost
+nothing of the real contention. Measured on one hot file, the remote-ref method scored one
+writer where the worktree-diff method scored eight, seven of which had no remote ref at all.
+Two methods that disagree by a factor of eight are not two views of the same number: the
+Coordinator holds a candidate this file has just called uncontended, and the bullet sits
+blocked from the moment it is written.
+
+If a file already has three or more branches against it, a new bullet
 touching it is not supply — it files cleanly and then blocks, which grows the file without
 moving anything. Two responses, in order: prefer a candidate that touches an uncontended file,
 and if the contention is what is actually blocking the programme, **write the de-contention

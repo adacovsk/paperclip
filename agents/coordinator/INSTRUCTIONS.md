@@ -244,6 +244,16 @@ the case allocation-time verification cannot: a worktree GC'd or hand-removed
 between fires. A task failing this check goes to `blocked`, unassigned, with a
 `Held: worktree missing` comment — it is not re-dispatched in hope.
 
+**Record how stale the worktree is in the same breath.** After the directory
+check, `git -C <worktree> rev-list --count HEAD..origin/main`, and put the number
+in the dispatch comment. A worktree is allocated once and never refreshed, so the
+count only grows: live trees have been measured at a median of ~176 commits behind
+with the oldest at 322. This changes no decision here and is not a refresh — a
+reset would destroy unlanded work on nearly every tree, since almost all of them
+are also *ahead*. It exists so a later reader of a surprising stage verdict can
+see the age of the tree it came from, which is the one thing the verdict itself
+never says.
+
 Skip allocation if the worktree already exists (idempotent re-promote).
 
 If the branch name collides (rare — e.g. an aborted task with the same
@@ -801,7 +811,7 @@ A status change without its reason recorded is not a status change you are allow
 not bookkeeping — a `blocked` with no comment is unrecoverable by every downstream consumer
 including this sweep. → [the 73-second batch, the asymmetric rollback, and the rest](rationale/paired-comment-invariant.md)
 
-Three rules, all mandatory:
+Four rules, all mandatory:
 
 1. **No bare status PATCH.** If you are about to write `status` and have no reason to write with
    it, you do not yet know why you are writing it — stop and read the task.
@@ -815,6 +825,14 @@ Three rules, all mandatory:
    all contain status words and all point the opposite way. Match on what the comment says was
    **resolved**, never on the fact that it discusses status. Ambiguous → surface it in your record
    and leave it untouched. Leaving a status alone is always available and always safe.
+4. **A `Held:` comment and a NULL `assigneeAgentId` are written in the same PATCH.** Same shape as
+   the paired-comment invariant this section opens with — two writes that must not come apart — so
+   it is stated once here rather than on each path that writes a hold. The rule was implicit on the
+   promotion path and absent everywhere else, and that is exactly where it leaked: the landing
+   sweep and the hold-re-pointing path both commented on tasks they left assigned. `wakeOnDemand`
+   fires on the assignee change alone and never consults status, so each re-point woke an agent
+   that could not act — six tasks needed their assignees cleared after the fact in a single sweep.
+   A held task is by definition one nobody should be woken for.
 
 ### `description` is write-once for a task you did not create
 
