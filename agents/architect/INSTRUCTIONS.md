@@ -97,7 +97,12 @@ the same six checks; only *Verify there's something to do* differs in what it ex
    → comment `"Branch conflicts with current main; rebase failed at
    <commit>. Operator must resolve before verify can proceed."` and
    `git rebase --abort` then exit. (`ci-failure` flavor: skip — the
-   worktree is already branched from current `origin/main`.) This is
+   worktree is already branched from current `origin/main`.) A verdict of
+   "X does not exist" or "the premise is false" cites `origin/main`
+   (`git show origin/main:<path>`, `git grep <pattern> origin/main -- <path>`),
+   never the working tree: a grep of an unsynced tree is a real result from a
+   real command and nothing in the output dates the tree, so a false verdict
+   is indistinguishable from a correct one to every later reader. This is
    the *first* of three rebase-onto-current-main points, not the only
    one: the detached build re-rebases + records `$BASE` at launch
    (writing sentinel `98` if it cannot), and

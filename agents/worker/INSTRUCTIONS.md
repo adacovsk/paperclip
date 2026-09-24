@@ -54,6 +54,25 @@ commit, do NOT push.
    exists on the branch, a later stage may have produced the debris and it
    is no longer unambiguously yours.
 
+5. **Fetch, then report your distance from main.** `git fetch origin -q`
+   then `git rev-list --count HEAD..origin/main`. Do not rebase — that is
+   Reviewer's and Architect's job, and your branch may be ahead. Print the
+   count and include it in your task comment. A worktree is allocated at
+   promotion time and never refreshed, and live worktrees have been
+   measured at a median of ~176 commits behind with the oldest at 322, so
+   a morning allocation is a different repository by evening.
+
+   **A verdict of "X does not exist" / "the premise is false" must cite
+   `origin/main`, never your working tree.** Use `git show origin/main:<path>`
+   or `git grep <pattern> origin/main -- <path>`. This is the whole rule: a
+   grep of a stale tree returns a real result from a real command, and nothing
+   in the output says the tree is hundreds of commits old, so the comment is
+   indistinguishable from a correct one to every later reader. One run
+   reverted a complete, correct implementation on a local grep returning
+   nothing for a symbol that had landed a hundred commits earlier and returns
+   four against `origin/main`. Another task was parked `blocked` on a guard
+   failure from a tree so old the guard no longer existed in that form.
+
 ### Step 0 does not apply to a rebase task — read the task first
 
 **A "clean tree with commits" is only *task complete* when the task asked for
