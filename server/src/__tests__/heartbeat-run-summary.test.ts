@@ -11,6 +11,7 @@ describe("summarizeHeartbeatRunResultJson", () => {
       total_cost_usd: 1.23,
       cost_usd: 0.45,
       costUsd: 0.67,
+      num_turns: 42,
       nested: { ignored: true },
     });
 
@@ -22,7 +23,17 @@ describe("summarizeHeartbeatRunResultJson", () => {
       total_cost_usd: 1.23,
       cost_usd: 0.45,
       costUsd: 0.67,
+      num_turns: 42,
     });
+  });
+
+  it("keeps a turn count under either spelling", () => {
+    expect(summarizeHeartbeatRunResultJson({ num_turns: 160 })).toEqual({ num_turns: 160 });
+    expect(summarizeHeartbeatRunResultJson({ numTurns: 7 })).toEqual({ numTurns: 7 });
+  });
+
+  it("keeps a zero turn count rather than dropping it as falsy", () => {
+    expect(summarizeHeartbeatRunResultJson({ num_turns: 0 })).toEqual({ num_turns: 0 });
   });
 
   it("returns null for non-object and irrelevant payloads", () => {
