@@ -17,6 +17,14 @@ stalls until the reset. The endpoint is the one Claude Code's own usage display
 reads; it is not a published API, so a changed shape is expected eventually and
 must degrade to "lane off", not to a crash a caller might read as permission.
 
+CLOUD_PACE_IGNORE_PACE=1 is the operator's "everything to the cloud" switch: it
+drops the pace comparison (and the margin) so the lane stays open regardless of
+how the week's spend compares with the calendar. It does not drop the ceilings —
+the session ceiling still applies, and CLOUD_PACE_WEEK_CEILING (default 90)
+closes the lane before the week is spent, because an exhausted weekly limit
+stalls every local agent too, not just the verifies. Unreadable usage still
+fails closed.
+
 The session (five-hour) limit is a separate ceiling for the same reason: a
 week with plenty of headroom can still hit the session limit, and that blocks
 the local agents too.
@@ -83,6 +91,11 @@ def is_open(usage: dict, now: float) -> tuple[bool, str]:
     why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed, session {session:.0f}%"
     if session >= session_ceiling:
         return False, f"{why}: session ceiling {session_ceiling:.0f}% reached"
+    if os.environ.get("CLOUD_PACE_IGNORE_PACE") == "1":
+        week_ceiling = env_float("CLOUD_PACE_WEEK_CEILING", 90)
+        if used >= week_ceiling:
+            return False, f"{why}: week ceiling {week_ceiling:.0f}% reached"
+        return True, f"{why}: pace ignored (operator override)"
     if used >= elapsed:
         return False, f"{why}: on or ahead of pace"
     if used >= elapsed - margin:
