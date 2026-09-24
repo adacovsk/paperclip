@@ -16,6 +16,23 @@ Wake context (optional): `PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`, `PAPERCLI
 All requests: `Authorization: Bearer $PAPERCLIP_API_KEY`. All endpoints under `/api`. JSON.
 Mutating requests MUST include: `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'`
 
+**Define this once per run and call the API through it** instead of retyping the headers:
+
+```bash
+pc() { local m=$1 p=$2; shift 2; curl -sS -X "$m" "$PAPERCLIP_API_URL/api$p" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H 'Content-Type: application/json' "$@"; }
+# pc PATCH /issues/$ID -d '{"status":"done","comment":"..."}'
+```
+
+**A dropped header is not a permission error — it is a wake loop.** On a loopback
+instance an unauthenticated call still succeeds, attributed to the operator. The server
+suppresses the wake a comment would otherwise send to its own author, and that check
+reads the agent id and the run id; a comment carrying neither reads as the operator
+asking the assignee for something. Your exit summary then wakes you, and that fire's
+summary wakes you again — six consecutive no-op fires, observed.
+
 ## Heartbeat Procedure
 
 **Scoped-wake fast path.** If the wake names a specific issue (via `PAPERCLIP_TASK_ID`, or a "Paperclip Resume Delta" / "Paperclip Wake Payload" section in the user message), **skip steps 1–2**. Go straight to Checkout (step 3) for that issue. Do not call `/api/agents/me` or fetch your inbox when you already know which issue to work on — the scoped wake tells you.
