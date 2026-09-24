@@ -296,21 +296,17 @@ matters", and the lane stops working for anyone if it is crowded** — one or tw
 most. About to write a third? Say so in your record instead. → [why scarcity is the lane](rationale/priority-verify-lane.md)
 
 **While the cloud lane is open there is no cap: dispatch every `Verify:`, held ones included,
-oldest first, in the same fire.** Read the lane from the gate the Architect's `offload` uses, with
-a margin, never from queue depth or the last fire's comment:
+oldest first, in the same fire.** Read the lane from the gate the Architect's `offload` uses, never
+from queue depth or the last fire's comment:
 
 ```sh
-LANE=$(CLOUD_PACE_MARGIN=5 python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0  # <!-- privacy-ok: the pipeline's own gate script, not project source -->
+LANE=$(python3 "$HOME/code/paperclip/agents/architect/cloud-pace.py" 2>/dev/null) || LANE=0  # <!-- privacy-ok: the pipeline's own gate script, not project source -->
 # LANE=1 → dispatch all;  LANE=0 → apply the local cap below
 ```
 
 A cloud verify runs on its own VM and never takes a `cargo-sem.sh` ticket, so the cap below has
 nothing to protect for it; holding one only idles quota the gate has already judged spare. The
-gate fails closed, so an unreadable meter falls back to the local cap. **Keep the margin.** The
-`offload` re-reads the gate with none, minutes after your dispatch, and a verify it finds closed
-runs locally *over the cap*. Without the margin, usage hovering at pace flickers the lane open, you
-release every held verify, and nearly all of them land on the local semaphore at once.
-→ [why the Coordinator reads the lane with a margin](rationale/verify-dispatch-cap.md#why-the-coordinator-reads-the-lane-with-a-margin)
+gate fails closed, so an unreadable meter falls back to the local cap.
 → [why cloud verifies are uncapped](rationale/verify-dispatch-cap.md#why-cloud-verifies-are-not-capped)
 
 **With the lane closed, cap concurrent verifies at 2x the semaphore's ceiling; leave the surplus

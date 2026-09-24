@@ -18,8 +18,8 @@ reads; it is not a published API, so a changed shape is expected eventually and
 must degrade to "lane off", not to a crash a caller might read as permission.
 
 CLOUD_PACE_IGNORE_PACE=1 is the operator's "everything to the cloud" switch: it
-drops the pace comparison (and the margin) so the lane stays open regardless of
-how the week's spend compares with the calendar. It does not drop the ceilings —
+drops the pace comparison so the lane stays open regardless of how the week's
+spend compares with the calendar. It does not drop the ceilings —
 the session ceiling still applies, and CLOUD_PACE_WEEK_CEILING (default 90)
 closes the lane before the week is spent, because an exhausted weekly limit
 stalls every local agent too, not just the verifies. Unreadable usage still
@@ -28,15 +28,6 @@ fails closed.
 The session (five-hour) limit is a separate ceiling for the same reason: a
 week with plenty of headroom can still hit the session limit, and that blocks
 the local agents too.
-
-CLOUD_PACE_MARGIN (percentage points, default 0) demands that much headroom
-before reporting open. The Architect's offload reads the gate with no margin.
-The Coordinator reads it with a margin because it answers a different question:
-not "is quota spare now" but "will the lane still be open when the Architect
-offloads minutes from now". Its open reading uncaps every held verify at once.
-With usage hovering at pace, a margin-free reading flickers open, releases the
-whole held set, and the lane has closed again by the time each offload re-reads
-it — so the entire release runs locally, stacked behind the cargo semaphore.
 """
 
 import json
@@ -80,7 +71,6 @@ def read_usage() -> dict:
 
 def is_open(usage: dict, now: float) -> tuple[bool, str]:
     session_ceiling = env_float("CLOUD_PACE_SESSION_CEILING", 80)
-    margin = max(0.0, env_float("CLOUD_PACE_MARGIN", 0))
 
     week = usage["seven_day"]
     used = float(week["utilization"])
@@ -98,8 +88,6 @@ def is_open(usage: dict, now: float) -> tuple[bool, str]:
         return True, f"{why}: pace ignored (operator override)"
     if used >= elapsed:
         return False, f"{why}: on or ahead of pace"
-    if used >= elapsed - margin:
-        return False, f"{why}: behind pace by less than the {margin:.0f}-point margin"
     return True, f"{why}: behind pace"
 
 
