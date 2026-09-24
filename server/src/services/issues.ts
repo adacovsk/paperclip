@@ -38,16 +38,40 @@ const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "bloc
 // must mirror the WHERE clause of issues_open_subtask_dedupe_uq in the schema.
 const OPEN_SUBTASK_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"] as const;
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
+const OPEN_SUBTASK_DEDUPE_INDEX = "issues_open_subtask_dedupe_uq";
+const UNIQUE_VIOLATION = "23505";
 
+/**
+ * Whether this error is the open-subtask dedupe index rejecting a duplicate.
+ *
+ * Two details decide it, and getting either wrong turns the create-or-get in
+ * `create` back into a 500 for exactly the caller it exists to serve:
+ *
+ * - **The driver error is not what is thrown.** Drizzle wraps every query
+ *   failure in a `DrizzleQueryError` carrying the query text, and hangs the
+ *   original off `cause`. Reading only the top level finds no `code` at all, so
+ *   walk the cause chain.
+ * - **postgres.js spells the index `constraint_name`** (ErrorResponse field
+ *   `n`); node-postgres spells the same thing `constraint`. Accept both, so
+ *   this does not silently stop working if the driver is swapped.
+ */
 function isOpenSubtaskDedupeConflict(error: unknown): boolean {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: string }).code === "23505" &&
-    "constraint" in error &&
-    (error as { constraint?: string }).constraint === "issues_open_subtask_dedupe_uq"
-  );
+  for (let current: unknown = error, depth = 0; current && typeof current === "object" && depth < 8; depth += 1) {
+    const candidate = current as {
+      code?: unknown;
+      constraint?: unknown;
+      constraint_name?: unknown;
+      cause?: unknown;
+    };
+    if (
+      candidate.code === UNIQUE_VIOLATION &&
+      (candidate.constraint === OPEN_SUBTASK_DEDUPE_INDEX || candidate.constraint_name === OPEN_SUBTASK_DEDUPE_INDEX)
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
 }
 
 function assertTransition(from: string, to: string) {
