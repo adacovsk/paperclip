@@ -179,7 +179,13 @@ usage 41 6;  check "2 behind pace, margin 5 -> closed" "$(CLOUD_PACE_MARGIN=5 pa
 usage 38 6;  check "4.9 behind pace, margin 5 -> closed" "$(CLOUD_PACE_MARGIN=5 pace)" 0
 usage 30 6;  check "13 behind pace, margin 5 -> open"  "$(CLOUD_PACE_MARGIN=5 pace)" 1
 usage 41 6;  check "2 behind pace, no margin -> open"  "$(pace)" 1
+# The operator override ignores pace and margin, never the ceilings.
+usage 60 6;  check "ahead of pace, override -> open"   "$(CLOUD_PACE_IGNORE_PACE=1 CLOUD_PACE_MARGIN=5 pace)" 1
+usage 60 85; check "override keeps session ceiling"    "$(CLOUD_PACE_IGNORE_PACE=1 pace)" 0
+usage 90 6;  check "override keeps week ceiling"       "$(CLOUD_PACE_IGNORE_PACE=1 pace)" 0
+usage 60 6;  check "override is exactly 1"             "$(CLOUD_PACE_IGNORE_PACE=true pace)" 0
 echo 'not json' > "$DIR/usage.json"
+check "unreadable usage fails closed under override" "$(CLOUD_PACE_IGNORE_PACE=1 pace)" 0
 check "unreadable usage fails closed" "$(pace)" 0
 
 rm -f "$DIR/setsid.log"; usage 38 6
