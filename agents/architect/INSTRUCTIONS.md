@@ -97,7 +97,12 @@ the same six checks; only *Verify there's something to do* differs in what it ex
    → comment `"Branch conflicts with current main; rebase failed at
    <commit>. Operator must resolve before verify can proceed."` and
    `git rebase --abort` then exit. (`ci-failure` flavor: skip — the
-   worktree is already branched from current `origin/main`.) This is
+   worktree is already branched from current `origin/main`.) A verdict of
+   "X does not exist" or "the premise is false" cites `origin/main`
+   (`git show origin/main:<path>`, `git grep <pattern> origin/main -- <path>`),
+   never the working tree: a grep of an unsynced tree is a real result from a
+   real command and nothing in the output dates the tree, so a false verdict
+   is indistinguishable from a correct one to every later reader. This is
    the *first* of three rebase-onto-current-main points, not the only
    one: the detached build re-rebases + records `$BASE` at launch
    (writing sentinel `98` if it cannot), and
@@ -547,6 +552,8 @@ than dropping the section, so its absence always means the section was skipped.>
 
 ## Task
 [<task-id>](${PAPERCLIP_PUBLIC_URL:-$PAPERCLIP_API_URL}/AA/issues/<task-id>)
+<Closes #<n>, or Refs #<n>, copied from the task body's "GitHub issue:" line.
+Omit the line when the task body has none — never derive a number from the task id.>
 
 ## Verification
 - cargo clippy --all-targets: <result>
@@ -587,6 +594,15 @@ the `#` renders as dead text and closes nothing — and the bare-number form it
 invites would close whatever unrelated issue or PR happens to hold that number.
 Tracker tasks are not GitHub issues and no keyword links them; a plain link is
 the whole mechanism. Coordinator marks the task, not GitHub.
+
+**A real GitHub issue number is different, and it gets the keyword.** When the
+task body carries `GitHub issue: closes #<n>`, write `Closes #<n>`; for
+`GitHub issue: refs #<n>`, write `Refs #<n>`. The number came from the roadmap
+bullet's `(#<n>)`, so it names the issue the work was filed from, and GitHub
+closes it when the PR merges to `main` — the same moment the work counts as
+landed. Without it the issue stays open until a Planner fire prunes the bullet.
+`Refs` is for a slice that does not finish the issue: `Closes` there would close
+it on the first partial merge.
 
 **The link is built from the environment, never a literal host.** A hardcoded
 `localhost` port is wrong for anyone whose instance is not on this machine, and

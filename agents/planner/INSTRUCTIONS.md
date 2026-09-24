@@ -87,7 +87,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    `gh issue list --state open --json number,title,body,labels,createdAt --limit 100 --search "-label:roadmapped -label:ops -label:ci-failure"`.
    Today the *only* issue intake in the whole pipeline is Coordinator's step 2, and it filters on `--label ci-failure`. So an issue the operator files by hand is read by nobody: it is not a roadmap bullet, so Coordinator never promotes it, and it carries no `ci-failure` label, so the one path that does read issues skips it. It sits open forever. This step closes that hole. It lives here, not in Coordinator, because **the roadmap is the single supply line** — a second promotion path in Coordinator would fork intake and split Coordinator's own capacity gates against themselves.
    - **Skip `ci-failure`.** Coordinator step 2 owns those end-to-end, including the SHA dedupe. Handling them here double-files.
-   - **Dedupe first, always.** `gh issue list --label roadmapped --state open` plus a grep of `docs/ROADMAP.md` for `#<n>`. Every bullet you write from an issue carries its `(#<n>)` so this grep works next fire.
+   - **Dedupe first, always.** `gh issue list --label roadmapped --state open` plus a grep of `docs/ROADMAP.md` for `#<n>`. Every bullet you write from an issue carries its `(#<n>)` so this grep works next fire. **When one issue takes several slices, write `(part of #<n>)` on every slice except the one that finishes it**, which gets the plain `(#<n>)`. The marker is what a task's PR turns into `Closes` or `Refs` (Coordinator carries it into the task body), so a plain `(#<n>)` on a partial slice closes the issue when that first PR merges.
    - **Triage each remaining issue to exactly one of three outcomes, and mark it.** The mark is the load-bearing half — an unmarked issue gets re-read and re-decided every fire, which is the same "re-skipped every fire, forever" failure the skip-word rule describes, just with the operator's own requests. Create the labels once, guarded: `gh label create roadmapped --color 0E8A16 2>/dev/null || true` (likewise `ops`).
      - **Roadmap work** → write it per *Write for the Coordinator's intake filter* below, then `gh issue edit <n> --add-label roadmapped`.
      - **Host or pipeline infrastructure** — the ThinkPad, the paperclip server, Remote Control, agent runs, quota — → **not roadmap work, and not yours to fix.** Label `ops`, file a Facilitator followup, and comment on the issue naming where it went. Do not write it into the roadmap; a bullet Coordinator promotes into a Worker task cannot repair the machine the Worker runs on.
@@ -111,7 +111,7 @@ because step 0 always returns to the same branch; an unpushed fire is not resuma
    - **Read the stub, not the detail file, when pruning.** The point of the split is that a fire does not pay ~200k tokens to read analysis of work that already landed. Open a detail file only when the stub is genuinely not enough to decide.
    - **An item is done when it's merged to `origin/main`** — verify with `git log origin/main --oneline -- <path>` or by checking `origin/main`'s tree, not by branch existence or task status. Branch pushed ≠ done.
    - For every line carrying an `awaiting merge` / branch-name / PR-number annotation: if the work is on `origin/main`, **delete the line entirely** (git preserves history); if it's not on main yet, strip the annotation but keep the bullet.
-   - **A pruned bullet carrying `(#<n>)` closes that issue: `gh issue close <n>` with the landing evidence, in the same fire.** This is the only place it can happen. Step 5 labels an operator issue `roadmapped` on intake and the completion criteria then read that label as finished intake, so the mark that says "handled" is also what guarantees the issue is never re-read — the work ships and the issue stays open forever. Two shipped guards sat open that way with their bullets still in the index. Deleting the bullet is the moment you have the evidence in hand, so spend the one extra call here rather than leaving a closed loop looking open.
+   - **A pruned bullet carrying `(#<n>)` closes that issue: `gh issue close <n>` with the landing evidence, in the same fire** — after `gh issue view <n> --json state` shows it still open. Normally it is already closed: the PR carried `Closes #<n>` and GitHub closed it when the PR merged. This step is the fallback for a PR that left the keyword out. Step 5 labels an operator issue `roadmapped` on intake and the completion criteria then read that label as finished intake, so the mark that says "handled" is also what guarantees the issue is never re-read — the work ships and the issue stays open forever. Two shipped guards sat open that way with their bullets still in the index. Deleting the bullet is the moment you have the evidence in hand, so spend the one extra call here rather than leaving a closed loop looking open.
    - Delete "Pipeline issues" changelog accretion — merged-PR batch records belong in git log, not here. Keep only genuinely open meta-issues (lost work, broken tooling, worktree drift).
    - Don't reintroduce status tracking while syncing. If you catch yourself writing a PR number or branch name into the roadmap, stop — that's the anti-pattern this step exists to kill.
    - **Close the spine here: commit, push, and open the PR before going on to any fill step.**
@@ -297,7 +297,17 @@ consecutive Coordinator fires while `check_data_key_refs.py` carried six in-flig
 branches and the two mechanic allowlists carried two blocked ones.
 
 So when restocking to the step-8 band, **check the target file's in-flight count before writing
-the bullet**, not after. If a file already has three or more branches against it, a new bullet
+the bullet**, not after. **Measure it one way, the same way the Coordinator does:**
+`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per live worktree, excluding
+any whose parent already has an open PR. **An absent remote ref is not evidence a branch is
+gone** — a Worker commits locally and never pushes, so `git ls-remote` and friends see almost
+nothing of the real contention. Measured on one hot file, the remote-ref method scored one
+writer where the worktree-diff method scored eight, seven of which had no remote ref at all.
+Two methods that disagree by a factor of eight are not two views of the same number: the
+Coordinator holds a candidate this file has just called uncontended, and the bullet sits
+blocked from the moment it is written.
+
+If a file already has three or more branches against it, a new bullet
 touching it is not supply — it files cleanly and then blocks, which grows the file without
 moving anything. Two responses, in order: prefer a candidate that touches an uncontended file,
 and if the contention is what is actually blocking the programme, **write the de-contention

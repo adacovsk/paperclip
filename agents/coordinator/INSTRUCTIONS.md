@@ -154,7 +154,7 @@ summary. `free == 0` or an empty backlog → skip it.
       - **Skip meta items** (CLAUDE.md, ROADMAP.md edits) — Planner's territory.
       - **Skip a bullet step 5 would hold.** Apply step 5's contended-edit-surface test to the bullet's `Where:` paths, and skip anything gated on the operator. It stays on the roadmap, not in the task list: filing it would only create a `blocked` task. Record it in the skip list as `§N → <holding task id>` so (j) hands it to the Planner; it becomes promotable on a later scan once the holder lands.
       - **Skip section headers and prose** — `**Goal**:`, `**Active phase**:`, paragraph text.
-      - **Promote** anything else as a `backlog` task. Title = first sentence, `**bold**` stripped, ≤80 chars. Body = full bullet text incl. its nested sub-bullets + `Source: docs/ROADMAP.md:<line>`, plus `Detail: docs/roadmap/<number>.md` when the section carries one — a Worker handed the bullet alone is missing the analysis it was written from.
+      - **Promote** anything else as a `backlog` task. Title = first sentence, `**bold**` stripped, ≤80 chars. Body = full bullet text incl. its nested sub-bullets + `Source: docs/ROADMAP.md:<line>`, plus `Detail: docs/roadmap/<number>.md` when the section carries one — a Worker handed the bullet alone is missing the analysis it was written from. A bullet carrying `(#<n>)` adds `GitHub issue: closes #<n>`; one carrying `(part of #<n>)` adds `GitHub issue: refs #<n>`. That line is what the PR's `Closes`/`Refs` keyword is built from (§Landing in `agents/architect/INSTRUCTIONS.md`), and it is the only route the issue number has from the roadmap to the PR.
       - **Label.** An explicit `**Label**:` on the bullet wins verbatim. Otherwise `needs-build` **iff** the work touches `src/**/*.rs`; everything else is `data-only` (`assets/data/**`, `scripts/**`, `.github/workflows/**`, `docs/**`). The label answers exactly one question — *does Architect need to run cargo?* — so a pure-Python guard under `scripts/` is `data-only` even though it is code. Mislabeling it parks a task that needs no compiler behind the cargo lock.
    d. **No per-fire cap while the cloud lane is open; 3 while it is closed.** With `LANE=1` take in every promotable bullet in `## Active fronts` this fire — backlog is supply, and step 5 already bounds what is dispatched, so a cap here only defers supply to a later fire. With the lane closed, cap at 3: everything taken in then competes for the local cargo slots. → [why intake is uncapped while the lane is open](rationale/drain-to-worker-slots.md#why-intake-follows-the-lane)
    e. **Update cursor.** Write `Roadmap intake cursor: ROADMAP.md:<last-line-promoted>` in your routine comment. A fire that took in everything leaves the cursor at the `## Active fronts` heading.
@@ -243,6 +243,16 @@ usually loses. Never set the assignee "to reserve it" and allocate afterwards.
 the case allocation-time verification cannot: a worktree GC'd or hand-removed
 between fires. A task failing this check goes to `blocked`, unassigned, with a
 `Held: worktree missing` comment — it is not re-dispatched in hope.
+
+**Record how stale the worktree is in the same breath.** After the directory
+check, `git -C <worktree> rev-list --count HEAD..origin/main`, and put the number
+in the dispatch comment. A worktree is allocated once and never refreshed, so the
+count only grows: live trees have been measured at a median of ~176 commits behind
+with the oldest at 322. This changes no decision here and is not a refresh — a
+reset would destroy unlanded work on nearly every tree, since almost all of them
+are also *ahead*. It exists so a later reader of a surprising stage verdict can
+see the age of the tree it came from, which is the one thing the verdict itself
+never says.
 
 Skip allocation if the worktree already exists (idempotent re-promote).
 
@@ -477,7 +487,8 @@ For each parent `{task-id}`:
      task/{task-id} --base main`. Skip the push if the branch is already on origin.
      **Use the same four-section body the Architect uses** (§Landing in
      `agents/architect/INSTRUCTIONS.md`): `## What changed`, `## Why`,
-     `## Review focus`, `## Task`, `## Verification` — plus, in Verification, the
+     `## Review focus`, `## Task` (including its `Closes #<n>` / `Refs #<n>` line when
+     the task body carries `GitHub issue:`), `## Verification` — plus, in Verification, the
      cargo result, the base SHA, and the line "PR opened by Coordinator
      decoupled-land step" so the producer is on the record. Two producers writing
      two shapes is why half the PR history has a `## Summary` and half does not,
@@ -800,7 +811,7 @@ A status change without its reason recorded is not a status change you are allow
 not bookkeeping — a `blocked` with no comment is unrecoverable by every downstream consumer
 including this sweep. → [the 73-second batch, the asymmetric rollback, and the rest](rationale/paired-comment-invariant.md)
 
-Three rules, all mandatory:
+Four rules, all mandatory:
 
 1. **No bare status PATCH.** If you are about to write `status` and have no reason to write with
    it, you do not yet know why you are writing it — stop and read the task.
@@ -814,6 +825,14 @@ Three rules, all mandatory:
    all contain status words and all point the opposite way. Match on what the comment says was
    **resolved**, never on the fact that it discusses status. Ambiguous → surface it in your record
    and leave it untouched. Leaving a status alone is always available and always safe.
+4. **A `Held:` comment and a NULL `assigneeAgentId` are written in the same PATCH.** Same shape as
+   the paired-comment invariant this section opens with — two writes that must not come apart — so
+   it is stated once here rather than on each path that writes a hold. The rule was implicit on the
+   promotion path and absent everywhere else, and that is exactly where it leaked: the landing
+   sweep and the hold-re-pointing path both commented on tasks they left assigned. `wakeOnDemand`
+   fires on the assignee change alone and never consults status, so each re-point woke an agent
+   that could not act — six tasks needed their assignees cleared after the fact in a single sweep.
+   A held task is by definition one nobody should be woken for.
 
 ### `description` is write-once for a task you did not create
 
