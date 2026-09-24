@@ -27,6 +27,11 @@ import detectPort from "detect-port";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
+import {
+  formatPruneRunHistoryResult,
+  pruneRunHistory,
+  vacuumRunHistory,
+} from "./services/run-history-retention.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
 import { killAllRunningProcesses, sweepOrphanedClaudeProcesses } from "./adapters/utils.js";
@@ -670,6 +675,49 @@ export async function startServer(): Promise<StartedServer> {
     setInterval(() => {
       void runScheduledBackup();
     }, backupIntervalMs);
+  }
+
+  if (config.runHistoryRetentionDays > 0) {
+    // Shares the backup's cadence rather than carrying a second knob: both are
+    // housekeeping over the same rows, and pruning on the same clock keeps the
+    // dump from carrying what is about to be discarded anyway.
+    const pruneIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
+    let pruneInFlight = false;
+
+    const runScheduledPrune = async () => {
+      if (pruneInFlight) {
+        logger.warn("Skipping scheduled run-history prune because a previous prune is still running");
+        return;
+      }
+      pruneInFlight = true;
+      try {
+        const result = await pruneRunHistory(db, { retentionDays: config.runHistoryRetentionDays });
+        if (result.compactedRuns > 0 || result.deletedEvents > 0) {
+          await vacuumRunHistory(db);
+        }
+        logger.info(
+          {
+            compactedRuns: result.compactedRuns,
+            deletedEvents: result.deletedEvents,
+            cutoff: result.cutoff.toISOString(),
+            retentionDays: config.runHistoryRetentionDays,
+          },
+          `Run-history prune complete: ${formatPruneRunHistoryResult(result)}`,
+        );
+      } catch (err) {
+        logger.error({ err, retentionDays: config.runHistoryRetentionDays }, "Run-history prune failed");
+      } finally {
+        pruneInFlight = false;
+      }
+    };
+
+    logger.info(
+      { retentionDays: config.runHistoryRetentionDays, intervalMinutes: config.databaseBackupIntervalMinutes },
+      "Run-history pruning enabled",
+    );
+    setInterval(() => {
+      void runScheduledPrune();
+    }, pruneIntervalMs);
   }
   
   await new Promise<void>((resolveListen, rejectListen) => {

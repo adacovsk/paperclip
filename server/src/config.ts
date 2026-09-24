@@ -58,6 +58,7 @@ export interface Config {
   databaseBackupIntervalMinutes: number;
   databaseBackupRetentionDays: number;
   databaseBackupDir: string;
+  runHistoryRetentionDays: number;
   serveUi: boolean;
   uiDevMiddleware: boolean;
   secretsProvider: SecretProvider;
@@ -207,6 +208,13 @@ export function loadConfig(): Config {
       fileDatabaseBackup?.retentionDays ||
       30,
   );
+  // 0 disables it, and that is the default deliberately. This deletes data and
+  // nothing restores it, so an instance that upgrades into a new release must
+  // not silently start discarding its own history; opting in is one variable.
+  const runHistoryRetentionDays = Math.max(
+    0,
+    Number(process.env.PAPERCLIP_RUN_HISTORY_RETENTION_DAYS) || 0,
+  );
   const databaseBackupDir = resolveHomeAwarePath(
     process.env.PAPERCLIP_DB_BACKUP_DIR ??
       fileDatabaseBackup?.dir ??
@@ -231,6 +239,7 @@ export function loadConfig(): Config {
     databaseBackupEnabled,
     databaseBackupIntervalMinutes,
     databaseBackupRetentionDays,
+    runHistoryRetentionDays,
     databaseBackupDir,
     serveUi:
       process.env.SERVE_UI !== undefined
