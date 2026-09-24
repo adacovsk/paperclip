@@ -9,6 +9,17 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    // Declared, not inherited. This package uses Node globals -- Buffer and
+    // node: builtins in the zip tests, process.env by way of adapter-utils --
+    // and until this was listed they reached the program only because some
+    // dependency's own type graph happened to pull @types/node in with it.
+    // That is invisible while it works and baffling when it stops: bumping an
+    // unrelated editor package perturbs the graph, @types/node leaves the
+    // program, and the errors surface in files the bump never touched. Worse,
+    // @types/react-dom declares a partial NodeJS namespace of its own, so the
+    // failure reads "Namespace 'global.NodeJS' has no exported member
+    // 'ProcessEnv'" rather than naming the dependency that went missing.
+    "types": ["node"],
     "isolatedModules": true,
     "noEmit": true,
     "paths": {
