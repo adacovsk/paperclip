@@ -298,8 +298,12 @@ branches and the two mechanic allowlists carried two blocked ones.
 
 So when restocking to the step-8 band, **check the target file's in-flight count before writing
 the bullet**, not after. **Measure it one way, the same way the Coordinator does:**
-`git -C .paperclip/worktrees/<task> diff --name-only origin/main` per live worktree, excluding
-any whose parent already has an open PR. **An absent remote ref is not evidence a branch is
+`git -C .paperclip/worktrees/<task> diff --name-only origin/main...HEAD` plus `diff --name-only HEAD`
+(uncommitted edits) per live worktree, excluding any whose parent already has an open PR.
+**Three dots, not two.** A two-dot diff against `origin/main` from a worktree forked days ago
+lists every file `main` changed since, so each stale worktree reads as a writer of the whole
+hot set. Measured on 79 worktrees, two-dot scored `attack_system.rs` at 70 writers (and
+`docs/ROADMAP.md`, which no task branch may touch, at 69); merge-base scored it at 11. **An absent remote ref is not evidence a branch is
 gone** — a Worker commits locally and never pushes, so `git ls-remote` and friends see almost
 nothing of the real contention. Measured on one hot file, the remote-ref method scored one
 writer where the worktree-diff method scored eight, seven of which had no remote ref at all.
