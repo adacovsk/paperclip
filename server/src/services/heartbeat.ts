@@ -807,6 +807,23 @@ function deriveTaskKey(
   );
 }
 
+/**
+ * Whether a queued run's target issue lost its assignee after the wake was queued.
+ *
+ * The wake was queued for the issue's assignee — a comment, a verify sentinel — and
+ * the issue was then unassigned; a hold clears the assignee in the same breath as it
+ * comments. Such a run can only fail, because checking an unassigned issue out as
+ * `in_progress` is rejected. An explicit mention is still honoured: it asks the agent
+ * to act whoever owns the issue.
+ */
+export function isOrphanedByUnassignment(
+  issue: { assigneeAgentId: string | null; assigneeUserId: string | null },
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  if (issue.assigneeAgentId || issue.assigneeUserId) return false;
+  return readNonEmptyString(contextSnapshot?.wakeReason) !== "issue_comment_mentioned";
+}
+
 export function shouldResetTaskSessionForWake(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
@@ -1962,7 +1979,11 @@ export function heartbeatService(db: Db) {
     const contextIssueId = readNonEmptyString(context.issueId);
     if (contextIssueId) {
       const [targetIssue] = await db
-        .select({ status: issues.status })
+        .select({
+          status: issues.status,
+          assigneeAgentId: issues.assigneeAgentId,
+          assigneeUserId: issues.assigneeUserId,
+        })
         .from(issues)
         .where(eq(issues.id, contextIssueId))
         .limit(1);
@@ -1978,6 +1999,10 @@ export function heartbeatService(db: Db) {
           run.id,
           `Cancelled because the target issue is already ${targetIssue.status}`,
         );
+        return null;
+      }
+      if (isOrphanedByUnassignment(targetIssue, context)) {
+        await cancelRunInternal(run.id, "Cancelled because the target issue is no longer assigned");
         return null;
       }
     }
