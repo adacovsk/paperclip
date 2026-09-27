@@ -321,40 +321,12 @@ those here precisely because the fix is a roadmap item, not a schedule.
 
 ### Bundle like items — one bullet, one verify
 
-**Every top-level bullet costs one full build.** Coordinator promotes a bullet as one task,
-and every `needs-build` task draws its own Architect verify — a full compile, serialised on
-the cargo slots. Verify, not Worker time, is the pipeline's binding constraint: the in-review
-pile has stood at roughly fifty verify tickets, each a full compile, while the Worker slots
-sat idle. Ten one-file fixes written as ten bullets buy ten builds, ten reviews and ten PRs
-for work one build could have checked.
-
-So when the items you are about to write — or ones already in the roadmap — are **small,
-alike, and in the same subsystem**, write them as **one top-level bullet with each item as
-a sub-bullet**. Coordinator already carries sub-bullets into the task body and never promotes
-one standalone, so the bundle travels as one task, one branch, one verify and one PR with no
-change downstream.
-
-A bundle is worth writing when all of these hold:
-- **Same subsystem and same label.** Members share a directory and a reviewer's context. A
-  `data-only` item never rides in a `needs-build` bundle — it would buy a compile it does not need.
-- **Each member is small** — a few files, no new mechanic, no schema-root redesign. A member
-  that needs its own design discussion is its own bullet.
-- **Members are independent.** No member waits on another, so the Worker can take them in any
-  order and a failing one can be dropped without unpicking the rest.
-- **Three to five members.** Fewer buys almost nothing; more risks a Worker run dying on its
-  turn cap mid-bundle, and a red build with many members is slow to attribute.
-
-Write the bundle's lead sentence as the shared imperative ("Move the three remaining
-hazard-text tables into data"), and give every member its own file list and done-when, so the
-Reviewer and Architect can hold each one to account. The bundle's `Done-when` is all members'
-done-whens. A bundle counts as **one front** in the step-8 band: it fills one Worker slot.
-
-**Do not bundle across contention.** A member touching a file with in-flight branches (see
-above) holds the whole bundle back. Leave it out, or write its de-contention first.
-
-**Re-bundle what is already there.** When a scan finds several unpromoted bullets that meet
-the bar above, fold them into one bullet in place — that is a restructuring, not new supply,
-and it is fill-class work under *Fire budget*. Leave alone anything already promoted to a task.
+Each top-level bullet becomes one task, and each `needs-build` task costs one full Architect
+build — the pipeline's bottleneck. So write 3–5 small, independent items from the same
+subsystem and same label as **one bullet with sub-bullets**; Coordinator carries sub-bullets
+into the task body, so it ships as one task, one verify, one PR. Give each member its own files
+and done-when. Leave out any member on a contended file. Fold existing unpromoted bullets that
+fit; a bundle counts as one front in the step-8 band.
 
 ### Write for the Coordinator's intake filter (or your items never promote)
 
