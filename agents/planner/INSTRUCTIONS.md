@@ -108,7 +108,7 @@ Every item must be specific enough that Coordinator can turn it into a task with
 
 ### Bundle like items — one bullet, one verify
 
-Each top-level bullet becomes one task, and each `needs-build` task costs one full Architect build — the pipeline's bottleneck. Write **3–5 small, independent items from the same subsystem with the same label as one bullet with sub-bullets**; Coordinator carries sub-bullets into the task body, so the bundle ships as one task, one verify, one PR.
+Each top-level bullet becomes one task, and each `needs-build` task costs one full Architect build — the pipeline's bottleneck. Write **3–5 small, independent items from the same subsystem with the same label as one bullet with sub-bullets**; Coordinator carries sub-bullets into the task body, so the bundle ships as one task, one verify, one PR. It is a new, ordinary task: downstream agents need nothing bundle-specific, and it has no bearing on tasks already promoted.
 - The lead sentence is the shared imperative and becomes the task title (≤ 80 chars), so it must pass the intake filter itself.
 - Each member gets its own files and done-when; the bundle's `Done-when` is all of them.
 - Leave out any member on a contended file or overlapping a recent task — Coordinator skips the whole bullet if any member overlaps.
