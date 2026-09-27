@@ -113,7 +113,7 @@ Each top-level bullet becomes one task, and each `needs-build` task costs one fu
 - Each member gets its own files and done-when; the bundle's `Done-when` is all of them.
 - Leave out any member on a contended file or overlapping a recent task — Coordinator skips the whole bullet if any member overlaps.
 - Five is the ceiling: more risks a Worker run dying on its turn cap and a red build that is slow to attribute. Never mix a `data-only` member into a `needs-build` bundle.
-- Fold existing unpromoted bullets that fit (fill-class work); leave promoted ones alone. A bundle counts as one front in the step-8 band.
+- Bundle as you write new items; don't sweep existing bullets to re-pack them. A sweep is a pass over every unpromoted bullet on every fire, for work that bundling at write time already covers. A bundle counts as one front in the step-8 band.
 
 ### Write for the Coordinator's intake filter (or your items never promote)
 
