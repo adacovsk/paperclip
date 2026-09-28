@@ -104,7 +104,7 @@ Every item must be specific enough that Coordinator can turn it into a task with
 
 **Band depth is not dispatchability — count shared files, not bullets.** Bullets differing only in which edge, allowlist row or enum variant they touch are **one chain**, not parallel work. → [why](rationale/contention.md)
 - **Check the target file's in-flight count before writing the bullet, measured as Coordinator does:** per live worktree, `git -C .paperclip/worktrees/<task> diff --name-only origin/main...HEAD` (**three dots**) plus `diff --name-only HEAD` (uncommitted), excluding worktrees whose parent already has an open PR. Never count remote refs — Workers commit locally without pushing.
-- **Three or more branches on a file** → a new bullet there is not supply. Prefer an uncontended candidate; if the contention is what blocks the programme, **write the de-contention as the item**, above its dependents (§4.228, §4.232 are worked examples).
+- **Two or more branches on a file** → a new bullet there is not supply, because the Coordinator holds at that same threshold. Prefer an uncontended candidate; if the contention is what blocks the programme, **write the de-contention as the item**, above its dependents (§4.228, §4.232 are worked examples).
 
 ### Bundle like items — one bullet, one verify
 
