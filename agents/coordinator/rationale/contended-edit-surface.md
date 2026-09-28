@@ -29,3 +29,17 @@ empty, and each fire recorded "PRs awaiting merge, 0 promoted." Merge order is t
 choice, and the pipeline should not idle waiting for it. A conflict that does occur is handled
 at the land step's clean-merge gate: a one-path conflict goes to a Worker rebase task, and only
 wider ones reach the operator.
+
+## Why the threshold is two writers
+
+The hold was once one writer: any overlap blocked promotion. The Planner, meanwhile, counted a
+file as contended only at three. With the two disagreeing, the index advertised supply that the
+Coordinator would not promote. About 35 fronts sat held while 6 of 8 Worker slots idled, and
+only one file in the tree had three live writers.
+
+Two is the compromise, and both agents use it. A single concurrent edit on a file produces at
+most one conflict, and the clean-merge gate already routes that to a Worker rebase. What finishes
+later than sequential work is the pile-up: three or more branches rewriting one region, where a
+single landing breaks all of them. Holding at two stops the pile-up without idling the pipeline
+behind every single overlap. Same-shaped work is still one chain whatever the count.
+
