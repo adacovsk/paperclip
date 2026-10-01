@@ -1,6 +1,6 @@
 # Why every git command in step 0 names the worktree
 
-**Justifies:** step 0's `-C "$WT"` on every line, `merge` over `rebase`, `reset --hard` over `checkout -B`
+**Justifies:** step 0 — *`-C "$WT"` on every line is load-bearing*, `merge` over `rebase`, `reset --hard` over `checkout -B`
 
 Without `-C` the two arms fail in opposite directions, and the dangerous one is the arm that
 *works*. The `if` arm dies on `fatal: 'planner/roadmap' is already used by worktree at ...` and
