@@ -104,7 +104,15 @@ describeEmbeddedPostgres("claimQueuedRun on an unassigned target issue", () => {
       identifier: `${issuePrefix}-1`,
     });
 
-    await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+    const heartbeat = heartbeatService(db);
+    await heartbeat.startNextQueuedRunForAgent(agentId);
+    // Cancelling the run re-enters dispatch for the same agent while the outer
+    // call holds its start lock, so that dispatch runs detached and can still be
+    // querying when the call above returns. Start locks chain per agent, so a
+    // second dispatch settles only after the detached one has — without this,
+    // afterAll can stop Postgres under it and the file fails on an unhandled
+    // "Cannot read properties of null (reading 'write')".
+    await heartbeat.startNextQueuedRunForAgent(agentId);
 
     const [run] = await db
       .select({ status: heartbeatRuns.status, error: heartbeatRuns.error })
