@@ -19,11 +19,12 @@ const PARENT_ID = "11111111-1111-4111-8111-111111111111";
 const CHILD_ID = "22222222-2222-4222-8222-222222222222";
 const WORKER_ID = "33333333-3333-4333-8333-333333333333";
 const COORDINATOR_ID = "44444444-4444-4444-8444-444444444444";
+const ARCHITECT_ID = "55555555-5555-4555-8555-555555555555";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   update: vi.fn(),
-  hasOpenChildExcept: vi.fn(),
+  openChildAssignees: vi.fn(),
   findMentionedAgents: vi.fn(),
 }));
 
@@ -109,12 +110,15 @@ async function flushWakes() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function markChildDone(parentStatus: "todo" | "in_review" | "done", hasOtherOpenChild: boolean) {
+async function markChildDone(
+  parentStatus: "todo" | "in_review" | "done",
+  otherOpenChildAssignees: Array<string | null>,
+) {
   mockIssueService.getById.mockImplementation(async (id: string) =>
     id === PARENT_ID ? parent(parentStatus) : child("todo"),
   );
   mockIssueService.update.mockImplementation(async () => child("done"));
-  mockIssueService.hasOpenChildExcept.mockResolvedValue(hasOtherOpenChild);
+  mockIssueService.openChildAssignees.mockResolvedValue(otherOpenChildAssignees);
 
   const res = await request(createApp()).patch(`/api/issues/${CHILD_ID}`).send({ status: "done" });
   expect(res.status).toBe(200);
@@ -130,24 +134,32 @@ describe("subtask-completion wake on the REST path", () => {
   });
 
   it("wakes the parent assignee while the parent's own stage is live", async () => {
-    const calls = await markChildDone("todo", false);
+    const calls = await markChildDone("todo", []);
     expect(calls.map(([agentId]) => agentId)).toEqual([WORKER_ID]);
     expect(calls[0][1]).toMatchObject({ reason: "subtask_completed", payload: { issueId: PARENT_ID } });
   });
 
   it("redirects to the Coordinator when the parent is in_review with no other open child", async () => {
-    const calls = await markChildDone("in_review", false);
+    const calls = await markChildDone("in_review", []);
     expect(calls.map(([agentId]) => agentId)).toEqual([COORDINATOR_ID]);
     expect(calls[0][1]).toMatchObject({ reason: "subtask_completed", payload: { issueId: PARENT_ID } });
   });
 
-  it("still wakes the parent assignee when another child of it is open", async () => {
-    const calls = await markChildDone("in_review", true);
+  it("still wakes the parent assignee when it owns another open child", async () => {
+    const calls = await markChildDone("in_review", [WORKER_ID]);
     expect(calls.map(([agentId]) => agentId)).toEqual([WORKER_ID]);
   });
 
+  it("wakes nobody when the parent is in_review waiting on another agent's stage", async () => {
+    // A Reviewer finishing while the Architect's Verify is still open: the Worker
+    // assigned to the parent has nothing to do, and the Verify's own completion is
+    // the wake that moves the parent.
+    const calls = await markChildDone("in_review", [ARCHITECT_ID]);
+    expect(calls).toHaveLength(0);
+  });
+
   it("wakes nobody when the parent is already done", async () => {
-    const calls = await markChildDone("done", false);
+    const calls = await markChildDone("done", []);
     expect(calls).toHaveLength(0);
   });
 });

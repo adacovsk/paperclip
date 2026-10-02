@@ -930,19 +930,23 @@ export function issueService(db: Db) {
      * REST mutation path has no table access of its own, and the wake decision
      * must not differ between that path and the run executor's.
      */
-    hasOpenChildExcept: async (parentId: string, excludeIssueId: string) => {
+    /**
+     * Assignees of the parent's children that are neither done nor cancelled,
+     * optionally excluding one child (the one that just completed). One entry per
+     * open child; an unassigned child contributes `null`.
+     */
+    openChildAssignees: async (parentId: string, excludeIssueId?: string) => {
       const rows = await db
-        .select({ id: issues.id })
+        .select({ assigneeAgentId: issues.assigneeAgentId })
         .from(issues)
         .where(
           and(
             eq(issues.parentId, parentId),
-            ne(issues.id, excludeIssueId),
+            excludeIssueId ? ne(issues.id, excludeIssueId) : undefined,
             notInArray(issues.status, ["done", "cancelled"]),
           ),
-        )
-        .limit(1);
-      return rows.length > 0;
+        );
+      return rows.map((row) => row.assigneeAgentId);
     },
 
     getByIdentifier: async (identifier: string) => {

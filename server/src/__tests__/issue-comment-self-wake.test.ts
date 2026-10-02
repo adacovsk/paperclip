@@ -13,6 +13,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  openChildAssignees: vi.fn(async () => [] as Array<string | null>),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -73,11 +74,11 @@ function createApp(runId?: string) {
   return app;
 }
 
-function makeIssue() {
+function makeIssue(status: "todo" | "in_review" = "todo") {
   return {
     id: ISSUE_ID,
     companyId: "company-1",
-    status: "todo" as const,
+    status,
     assigneeAgentId: ASSIGNEE_ID,
     assigneeUserId: null,
     createdByUserId: "local-operator",
@@ -146,5 +147,40 @@ describe("issue comment self-wake guard", () => {
     await flush();
 
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(ASSIGNEE_ID, expect.anything());
+  });
+
+  it("does not wake an in_review assignee parked on another agent's stage", async () => {
+    // A Worker's parent waiting on the Architect's Verify: the Coordinator and the
+    // stage agents comment on it, and the Worker can neither act nor read them.
+    mockIssueService.getById.mockResolvedValue(makeIssue("in_review"));
+    mockIssueService.openChildAssignees.mockResolvedValue(["55555555-5555-4555-8555-555555555555"]);
+
+    await postComment(createApp());
+    await flush();
+
+    expect(mockIssueService.openChildAssignees).toHaveBeenCalledWith(ISSUE_ID);
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("still wakes an in_review assignee that owns an open child", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("in_review"));
+    mockIssueService.openChildAssignees.mockResolvedValue([ASSIGNEE_ID]);
+
+    await postComment(createApp());
+    await flush();
+
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(ASSIGNEE_ID, expect.anything());
+  });
+
+  it("still wakes an agent @-mentioned on a parked in_review issue", async () => {
+    const mentioned = "66666666-6666-4666-8666-666666666666";
+    mockIssueService.getById.mockResolvedValue(makeIssue("in_review"));
+    mockIssueService.openChildAssignees.mockResolvedValue([]);
+    mockIssueService.findMentionedAgents.mockResolvedValue([mentioned]);
+
+    await postComment(createApp());
+    await flush();
+
+    expect(mockHeartbeatService.wakeup.mock.calls.map(([agentId]) => agentId)).toEqual([mentioned]);
   });
 });

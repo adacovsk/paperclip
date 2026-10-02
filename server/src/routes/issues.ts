@@ -34,7 +34,7 @@ import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
-import { resolveSubtaskWakeTarget } from "../services/subtask-wake-target.js";
+import { commentWakesAssignee, resolveSubtaskWakeTarget } from "../services/subtask-wake-target.js";
 import { coordinatorIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
@@ -1198,9 +1198,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
       if (statusChangedToDone) {
         try {
           const parent = await svc.getById(issue.parentId!);
+          const otherOpenAssignees = parent ? await svc.openChildAssignees(parent.id, issue.id) : [];
           const target = resolveSubtaskWakeTarget({
             parentStatus: parent?.status ?? null,
-            hasOtherOpenChild: parent ? await svc.hasOpenChildExcept(parent.id, issue.id) : false,
+            hasOtherOpenChild: otherOpenAssignees.length > 0,
+            assigneeOwnsOtherOpenChild:
+              Boolean(parent?.assigneeAgentId) && otherOpenAssignees.includes(parent!.assigneeAgentId),
           });
           const wakeTargetAgentId =
             target.kind === "none"
@@ -1612,7 +1615,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
       const selfComment =
         (actorIsAgent && actor.actorId === assigneeId) ||
         (Boolean(assigneeId) && runAgentId === assigneeId);
-      const skipWake = selfComment || isClosed;
+      // Only an in_review issue can be parked, so only it pays for the child read.
+      const parkedOnAnotherStage =
+        Boolean(assigneeId) &&
+        currentIssue.status === "in_review" &&
+        !commentWakesAssignee({
+          status: currentIssue.status,
+          assigneeOwnsOpenChild: (await svc.openChildAssignees(currentIssue.id)).includes(assigneeId),
+        });
+      const skipWake = selfComment || isClosed || parkedOnAnotherStage;
       if (assigneeId && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
