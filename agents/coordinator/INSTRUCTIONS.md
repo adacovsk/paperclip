@@ -110,7 +110,8 @@ summary. `free == 0` or an empty backlog → skip it.
    | Worker `in_review`, **dirty tree + 0 commits** | **Probe liveness first** — live run on the issue/subtasks, a process cwd'd into the worktree, or recent mtime on the dirty files. Any says live → do nothing, re-check next fire. Dead → re-dispatch the Worker once (its Step 0 recovery exception commits the debris). → [why state alone cannot tell live from dead](rationale/dirty-tree-is-not-a-dead-run.md) Do NOT create a Reviewer subtask; its Step 0 rebase fails on unstaged changes. Track `Worker recovery: N`; same state after 2 → `escalate to operator`. |
    | Worker `in_review`, **clean tree + 0 commits** | Look for a `Worker verdict: no-op — ...` comment; **if absent, read the run's `resultJson.result` before re-dispatching** — a Worker that never calls `/api/` writes its conclusion to the run, and comment-absence alone bought four identical re-dispatches. Verdict present (either place) → close on it: `already satisfied` → `done`, `false premise` → `cancelled`, quoting it and the run id. Genuinely silent (failed / signalled / null `resultJson`) → re-dispatch **once**, track `Worker no-op: N`, then escalate. → [why a no-op is indistinguishable from a failed dispatch](rationale/clean-tree-no-op-verdict.md) |
    | Reviewer done, `needs-build` | Assign Architect on the same task branch. |
-   | Reviewer done, `data-only` | Architect opens PR (no cargo); parent goes `done` after merge. |
+   | Reviewer done, `data-only`, diff touches data Rust loads | `git -C .paperclip/worktrees/{task-id} diff --name-only origin/main...HEAD \| grep -qE '^assets/(data\|locales)/'` → dispatch a `Verify:` exactly as for `needs-build`. Decide by the diff, not the label: the label was guessed at intake, and `load_shipped()` / `load_from_file()` unit tests read these files, so a data-only change can fail `cargo test --lib` with no Rust touched. → [why a data change needs cargo](rationale/data-only-needs-cargo.md) |
+   | Reviewer done, `data-only`, no such path | Architect opens PR (no cargo); parent goes `done` after merge. |
    | Architect `done` (branch on origin → PR exists) | Mark parent `done` after the PR merges. |
    | Architect `in_review`, **branch NOT on origin** | **FIRST run §Landing sweep.** Green sentinel + clean merge → Coordinator pushes and opens the PR itself. Re-dispatch the Architect **only** when the sweep is blocked on cargo — a merge conflict is never an Architect re-dispatch (classify it per §Landing sweep step 3). Cap cargo re-dispatches at 2 (`Verify re-dispatch: N` trailer), then comment the stranded SHAs and `escalate to operator`. **A stale red sentinel is not a re-dispatch and does not count toward the cap.** The sentinel is stale when all three hold: its `{task-id}.cloud.verdict` places every failure outside the task's files; `origin/main` has moved past `{task-id}.base`; and some commit in `$(cat {task-id}.base)..origin/main` touches a path the verdict names (`git log --format=%h <base>..origin/main -- <paths>` is non-empty). When it is stale, move every `{task-id}.*` and `{verify-id}.*` file except `.log`/`.freshness` into `~/.cache/paperclip-verify/stale-operator-archive/`. Then re-dispatch with `Verify re-dispatch: 0` and a comment naming the base and the fixing commit. The Architect reads a present `1` as a verdict and never rebuilds, so re-dispatching without the move only spends the cap. The path-touch clause bounds the reset: a main that is still red on those files leaves the sentinel counting as usual. → [why a red-main sentinel outlives its fix](rationale/stale-red-sentinel.md) |
 
@@ -155,7 +156,7 @@ summary. `free == 0` or an empty backlog → skip it.
       - **Skip a bullet step 5 would hold.** Apply step 5's contended-edit-surface test to the bullet's `Where:` paths, and skip anything gated on the operator. It stays on the roadmap, not in the task list: filing it would only create a `blocked` task. Record it in the skip list as `§N → <holding task id>` so (j) hands it to the Planner; it becomes promotable on a later scan once the holder lands.
       - **Skip section headers and prose** — `**Goal**:`, `**Active phase**:`, paragraph text.
       - **Promote** anything else as a `backlog` task. Title = first sentence, `**bold**` stripped, ≤80 chars. Body = full bullet text incl. its nested sub-bullets + `Source: docs/ROADMAP.md:<line>`, plus `Detail: docs/roadmap/<number>.md` when the section carries one — a Worker handed the bullet alone is missing the analysis it was written from. A bullet carrying `(#<n>)` adds `GitHub issue: closes #<n>`; one carrying `(part of #<n>)` adds `GitHub issue: refs #<n>`. That line is what the PR's `Closes`/`Refs` keyword is built from (§Landing in `agents/architect/INSTRUCTIONS.md`), and it is the only route the issue number has from the roadmap to the PR.
-      - **Label.** An explicit `**Label**:` on the bullet wins verbatim. Otherwise `needs-build` **iff** the work touches `src/**/*.rs`; everything else is `data-only` (`assets/data/**`, `scripts/**`, `.github/workflows/**`, `docs/**`). The label answers exactly one question — *does Architect need to run cargo?* — so a pure-Python guard under `scripts/` is `data-only` even though it is code. Mislabeling it parks a task that needs no compiler behind the cargo lock.
+      - **Label.** An explicit `**Label**:` on the bullet wins verbatim. Otherwise `needs-build` **iff** the work touches `src/**/*.rs`; everything else is `data-only` (`assets/data/**`, `scripts/**`, `.github/workflows/**`, `docs/**`). The label answers exactly one question — *does the change touch Rust?* — so a pure-Python guard under `scripts/` is `data-only` even though it is code. Mislabeling it parks a task that needs no compiler behind the cargo lock. Whether a `data-only` task still gets a cargo verify is decided later from its actual diff (step 3, `assets/data/**` or `assets/locales/**`), not here.
    d. **No per-fire cap while the cloud lane is open; 3 while it is closed.** With `LANE=1` take in every promotable bullet in `## Active fronts` this fire — backlog is supply, and step 5 already bounds what is dispatched, so a cap here only defers supply to a later fire. With the lane closed, cap at 3: everything taken in then competes for the local cargo slots. → [why intake is uncapped while the lane is open](rationale/drain-to-worker-slots.md#why-intake-follows-the-lane)
    e. **Update cursor.** Write `Roadmap intake cursor: ROADMAP.md:<last-line-promoted>` in your routine comment. A fire that took in everything leaves the cursor at the `## Active fronts` heading.
    f. **Wrap-around.** Reaching the end of `## Active fronts` → reset the cursor to the heading.
@@ -463,6 +464,26 @@ For each parent `{task-id}`:
    the task and clear it only if you wrote it and its stated cause is gone; if it came from another
    agent or fire, leave it and say so. Do not work around this by blocking the parent to steer a
    predicate. → [why a sweep must read the block it clears](rationale/never-revert-another-agents-block.md)
+3b. **Freshness gate — did `main` change this task's own files after the build's base?**
+
+   ```sh
+   BASE=$(cat "$VERIFY_DIR/{task-id}.base")
+   git log --format=%h "$BASE"..origin/main -- \
+     $(git -C .paperclip/worktrees/{task-id} diff --name-only origin/main...HEAD)
+   ```
+
+   **Empty → land** (step 4). **Non-empty → do not land.** Move the `{task-id}.*` and
+   `{verify-id}.*` sentinels (except `.log`/`.freshness`) into
+   `~/.cache/paperclip-verify/stale-operator-archive/`, exactly as for a stale red sentinel, and
+   re-dispatch the Verify with a comment naming the base and the listed commits. It counts toward
+   `Verify re-dispatch: N`, so the existing cap bounds it. No `.base` (a no-cargo `data-only`
+   land) → skip this gate.
+
+   A green build on an old base plus a clean textual merge does not prove the two compose. A
+   commit to the same file is where they fail to: the change merges cleanly and then breaks a test
+   `main` added beside it. This is **not** "re-verify against the latest `main` every fire". A
+   `main` that moved only elsewhere lands as before, and the cap stops a hot file from looping.
+   → [why the same-file test, and why it is bounded](rationale/same-file-freshness.md)
 4. **OPEN THE PR — but first check whether one was already closed.**
 
    ```sh
@@ -478,9 +499,23 @@ For each parent `{task-id}`:
      **and** Verify subtask to `cancelled`, comment the PR number and URL, and state the closure is
      terminal. If the work is still wanted it returns as a new task with a new premise — the
      operator's call. → [why a closed PR is a decision, not an absence](rationale/closed-pr-is-a-decision.md)
-   - **Open PR** → nothing to do; skip to step 5.
-   - **Nothing at all** → `git push origin task/{task-id}` (skip if the branch is already on
-     origin), then **generate the body — never write it by hand**:
+   - **Open PR** → publish the verified tip if the PR does not already carry it, then step 5.
+     Compare `H=$(git -C .paperclip/worktrees/{task-id} rev-parse HEAD)` with
+     `O=$(git rev-parse origin/task/{task-id})`:
+     - `H == O` → nothing to do.
+     - `O` is an ancestor of `H` → `git push origin "$H:refs/heads/task/{task-id}"`.
+     - Diverged (a Worker or Reviewer rebase rewrote the branch) → **never force-push.** In the
+       worktree run `git merge --no-ff --no-commit -s ours "$O"`, `git read-tree -u --reset "$H"`,
+       then `git commit -m "Merge rebased tip onto the PR branch"`. That produces a commit whose
+       tree is exactly the verified `H` and whose history descends from `O`. Push that commit as a
+       fast-forward.
+
+     Skipping this is how rebased tips stayed local while their PRs kept the stale pre-rebase head.
+     GitHub then showed the PR as conflicting while the clean-merge gate passed, because the gate
+     tests the local branch. → [why an open PR still needs the push](rationale/publish-rebased-tip.md)
+   - **Nothing at all** → `git push origin task/{task-id}` — or, if the branch is already
+     on origin, publish the worktree's tip exactly as in the **Open PR** case above (skipping the
+     push opens the PR on whatever stale head origin holds) — then **generate the body — never write it by hand**:
 
      ```sh
      BODY=$(mktemp)
@@ -501,8 +536,8 @@ For each parent `{task-id}`:
 **Vocabulary, and it is load-bearing: "landed" means merged into `origin/main` — never merely "a
 PR exists".** The test before writing `done` on a parent is `git merge-base --is-ancestor <sha>
 origin/main`. Trust `mergedAt`, never `state`. And do **not** re-verify against the latest `main`
-every fire — that re-rebase + re-cargo loop is the livelock itself; cargo-green against a *recent*
-base plus a clean textual merge is the bar. → [why an open PR is not a landing](rationale/landed-means-merged.md)
+every fire — that re-rebase + re-cargo loop is the livelock itself; cargo-green, a clean textual
+merge, and no `main` commit to the task's own files since the base (step 3b) is the bar. → [why an open PR is not a landing](rationale/landed-means-merged.md)
 
 This is the backstop the §PR-evidence audit was compensating for; with
 landing decoupled, that audit becomes a true backstop rather than the
