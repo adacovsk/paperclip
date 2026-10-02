@@ -50,9 +50,17 @@ commit, do NOT push.
    `Stage: worker (recovered)` trailer, say so in your task comment, then
    proceed with the task.
 
-   **Any other dirty state keeps the hard abort.** Once even one commit
-   exists on the branch, a later stage may have produced the debris and it
-   is no longer unambiguously yours.
+   **Chain tasks widen the exception** (§Chain tasks): the second and
+   third conditions become "every commit in `git log origin/main..HEAD`
+   carries a `Stage: worker` trailer". No other stage runs until every step
+   is committed, so on a branch holding only Worker commits the debris is
+   still a dead Worker run's. Commit it with `Stage: worker (recovered)`
+   and the `Chain-step:` trailer of the step it belongs to (the lowest
+   uncommitted one).
+
+   **Any other dirty state keeps the hard abort.** Once a commit from
+   another stage exists on the branch, that stage may have produced the
+   debris and it is no longer unambiguously yours.
 
 5. **Fetch, then report your distance from main.** `git fetch origin -q`
    then `git rev-list --count HEAD..origin/main`. Do not rebase — that is
@@ -196,6 +204,17 @@ consumers and trait-object/ECS-query call sites. Past dead-code passes
 have repeatedly broken `cargo test` and CI by deleting methods that
 unit tests still call. Grep is the only authoritative check available
 to Workers (who can't run cargo).
+
+## Chain tasks
+
+A task whose body carries `Chain: <N> steps` is several dependent slices on one branch. **Do exactly one step per run.**
+
+1. Find the committed steps: `git log origin/main..HEAD --format='%(trailers:key=Chain-step,valueonly)' | sort -u`.
+2. Your step is the lowest `k` in 1…N not in that list. Do only what step `k` says, against its own files and done-when, building on the earlier steps' commits.
+3. Commit with both trailers, `Stage: worker` and `Chain-step: <k>`.
+4. Stop, even with budget left. Coordinator dispatches the next step as a fresh run, so every run is sized to one step. Doing two is how a run dies on its turn cap mid-step.
+
+**A step that is already satisfied still gets a commit:** `git commit --allow-empty` with the same two trailers and a message naming what you verified on `origin/main`. Do **not** write a `Worker verdict: no-op` line on a chain step. Coordinator reads that as the verdict for the whole task and closes it.
 
 ## Committing your work
 

@@ -106,7 +106,8 @@ summary. `free == 0` or an empty backlog → skip it.
 
    | Signal | Action |
    |---|---|
-   | Worker `in_review`, work committed | Create the Reviewer subtask (`in_review`, include Worker's changed-file list, `dedupeKey: "review"`). Idempotent — skip if one exists; the dedupe key is the atomic backstop when that check races. |
+   | Worker `in_review`, work committed, **chain task with steps left** | The task body carries `Chain: <N> steps`. Count the distinct `Chain-step:` trailer values on the branch: `git -C <worktree> log origin/main..HEAD --format='%(trailers:key=Chain-step,valueonly)' \| sort -u \| grep -c .`. Fewer than N → post the comment `Chain step: <count+1> of <N>`, then PATCH `status: todo` and toggle `assigneeAgentId` through `null` back to the Worker, and re-GET for a fresh `executionRunId`. **No Reviewer subtask until every step is committed**: the Reviewer and Architect run once over the whole chain, which is the point of it. If the count did not advance since your last `Chain step:` comment, the run stalled: handle it like the zero-commit rows below (probe liveness, re-dispatch once, track `Chain stall: N`, escalate after 2). → [why one branch](../planner/rationale/chain-not-sections.md) |
+   | Worker `in_review`, work committed (not a chain, or every chain step committed) | Create the Reviewer subtask (`in_review`, include Worker's changed-file list, `dedupeKey: "review"`). Idempotent — skip if one exists; the dedupe key is the atomic backstop when that check races. |
    | Worker `in_review`, **dirty tree + 0 commits** | **Probe liveness first** — live run on the issue/subtasks, a process cwd'd into the worktree, or recent mtime on the dirty files. Any says live → do nothing, re-check next fire. Dead → re-dispatch the Worker once (its Step 0 recovery exception commits the debris). → [why state alone cannot tell live from dead](rationale/dirty-tree-is-not-a-dead-run.md) Do NOT create a Reviewer subtask; its Step 0 rebase fails on unstaged changes. Track `Worker recovery: N`; same state after 2 → `escalate to operator`. |
    | Worker `in_review`, **clean tree + 0 commits** | Look for a `Worker verdict: no-op — ...` comment; **if absent, read the run's `resultJson.result` before re-dispatching** — a Worker that never calls `/api/` writes its conclusion to the run, and comment-absence alone bought four identical re-dispatches. Verdict present (either place) → close on it: `already satisfied` → `done`, `false premise` → `cancelled`, quoting it and the run id. Genuinely silent (failed / signalled / null `resultJson`) → re-dispatch **once**, track `Worker no-op: N`, then escalate. → [why a no-op is indistinguishable from a failed dispatch](rationale/clean-tree-no-op-verdict.md) |
    | Reviewer done, `needs-build` | Assign Architect on the same task branch. |
@@ -182,6 +183,8 @@ frees, so a legitimate re-review/re-verify after a fix is still allowed.
 ## Task template
 
 What / Why / Where (file paths) / Done-when / Label (`needs-build` | `data-only`).
+
+**A chain bullet** (a `Chain: <N> steps` line with `Step 1` … `Step N` sub-bullets) promotes as one task like a bundle: copy the `Chain:` line and every step verbatim and in order into the body, allocate one worktree, and dispatch the Worker. The Worker picks its step from the branch, so dispatch never names one. Apply the intake overlap and contention checks to **every** step's files, not just step 1's: a chain holds its branch until its last step, so a step on a contended file collides however late it runs.
 
 ### Domain snippets (Worker tasks)
 
