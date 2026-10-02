@@ -513,19 +513,22 @@ For each parent `{task-id}`:
      Skipping this is how rebased tips stayed local while their PRs kept the stale pre-rebase head.
      GitHub then showed the PR as conflicting while the clean-merge gate passed, because the gate
      tests the local branch. → [why an open PR still needs the push](rationale/publish-rebased-tip.md)
-   - **Nothing at all** → `git push origin task/{task-id}` then `gh pr create --head
-     task/{task-id} --base main`. If the branch is already on origin, publish the worktree's tip
-     exactly as in the **Open PR** case above, rather than skipping the push. Otherwise the PR opens
-     on whatever stale head origin holds.
-     **Use the same four-section body the Architect uses** (§Landing in
-     `agents/architect/INSTRUCTIONS.md`): `## What changed`, `## Why`,
-     `## Review focus`, `## Task` (including its `Closes #<n>` / `Refs #<n>` line when
-     the task body carries `GitHub issue:`), `## Verification` — plus, in Verification, the
-     cargo result, the base SHA, and the line "PR opened by Coordinator
-     decoupled-land step" so the producer is on the record. Two producers writing
-     two shapes is why half the PR history has a `## Summary` and half does not,
-     and a reviewer cannot tell a `data-only` PR that never needed cargo from one
-     whose Verification was simply omitted.
+   - **Nothing at all** → `git push origin task/{task-id}` — or, if the branch is already
+     on origin, publish the worktree's tip exactly as in the **Open PR** case above (skipping the
+     push opens the PR on whatever stale head origin holds) — then **generate the body — never write it by hand**:
+
+     ```sh
+     BODY=$(mktemp)
+     (cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/generate_pr_body.py {task-id}) > "$BODY" \
+       && gh pr create --head task/{task-id} --base main --title "<task title>" --body-file "$BODY"
+     ```
+
+     The generator copies the reasons from the task description and the branch's commit
+     messages, states Review focus as *not assessed*, and checks the result before printing.
+     **Non-zero exit → do not open the PR.** Its stderr names the section the record could not
+     fill; block the parent with that message rather than hand-writing a body around it.
+     CI's `pr-body` check rejects a hand-written body of placeholders anyway.
+     → [why the body is generated](rationale/generated-pr-body.md)
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
    *opened*, now met). Comment the PR link on the parent; leave the parent
    `in_review` until the human merges (§Merge sweep tears down on merge).

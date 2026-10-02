@@ -1,6 +1,6 @@
 # Why step 8 restocks to a band, and why `needs-build` absorbs it
 
-**Justifies:** Run step 8
+**Justifies:** Run step 8 — *Restock `docs/ROADMAP.md` to a band*
 
 ## Why a band and not a per-run cap
 

@@ -1,6 +1,6 @@
 # Why the Planner owns GitHub issue intake
 
-**Justifies:** Run step 5
+**Justifies:** Run step 5 — *GitHub issue intake (fill) — the operator's other insertion point*
 
 Coordinator's only issue intake filters on `--label ci-failure`. An issue the operator files by
 hand is therefore read by nobody: it is not a roadmap bullet, so Coordinator never promotes it,

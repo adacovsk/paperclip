@@ -23,6 +23,7 @@ Paperclip = open-source control plane for autonomous AI companies. Node.js serve
 pnpm dev                  # Server + UI at http://localhost:3100 (embedded Postgres auto-starts)
 pnpm build                # Build all
 pnpm -r typecheck         # TS check all packages
+pnpm --filter '<pkg>...' typecheck  # one package plus its deps (alone, it needs plugin-sdk's dist/)
 pnpm test:run             # Vitest
 pnpm test:e2e             # Playwright E2E
 pnpm db:generate          # Generate migration after schema edits
@@ -30,6 +31,15 @@ pnpm paperclipai doctor   # Health check (--repair to fix)
 ```
 
 Data: `~/.paperclip/instances/default/db/`. Reset: `rm -rf` that dir + `pnpm dev`.
+
+**Only `@paperclipai/plugin-sdk`'s `typecheck` emits; its dependents' is
+`tsc --noEmit` alone.** They resolve the SDK through its `dist/` exports, and
+`pnpm -r` runs a dependency's script to completion before starting its
+dependents, so the SDK's typecheck is what provides that `dist/`. Do not put a
+`pnpm --filter @paperclipai/plugin-sdk build` back into a dependent's
+`typecheck`: under `pnpm -r` those builds run in parallel, each rewriting
+`dist/` while another package reads it, which fails CI intermittently with
+`dist/ui/index.d.ts is not a module`.
 
 **`pnpm dev` runs the server under `tsx watch`, and every reload kills all
 in-flight agent runs.** Children are tracked, not detached, so the shutdown

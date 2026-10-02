@@ -1,6 +1,6 @@
 # Why the exit gate covers decisions, not just edits
 
-**Justifies:** Run step 10
+**Justifies:** Run step 10 — *Exit gate — status matches conclusion*
 
 Three tasks were found parked `in_review` for 16–24h whose newest comment opened *"`done` —
 decision recorded"* and *"Closing `done`"*, with no `activeRun` and no `executionRunId`, so

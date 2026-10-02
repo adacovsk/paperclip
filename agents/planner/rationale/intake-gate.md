@@ -1,6 +1,6 @@
 # Why the self-audit measures the intake gate, not conversion
 
-**Justifies:** Run step 6
+**Justifies:** Run step 6 — *Self-audit before writing*
 
 Measuring only task conversion gave ~90% and read as healthy, while Coordinator's `ready >= 5`
 gate meant a stretch of fires appended to a file Coordinator never opened. High conversion on
