@@ -3506,7 +3506,7 @@ export function heartbeatService(db: Db) {
                 // finished (its status may not be committed yet, and it is the
                 // one thing we know is complete).
                 const otherOpenChildren = await db
-                  .select({ id: issues.id })
+                  .select({ assigneeAgentId: issues.assigneeAgentId })
                   .from(issues)
                   .where(
                     and(
@@ -3514,11 +3514,14 @@ export function heartbeatService(db: Db) {
                       ne(issues.id, issueId),
                       notInArray(issues.status, ["done", "cancelled"]),
                     ),
-                  )
-                  .limit(1);
+                  );
+                const parentAssigneeId = parentIssue?.assigneeAgentId ?? null;
                 const target = resolveSubtaskWakeTarget({
                   parentStatus: parentIssue?.status ?? null,
                   hasOtherOpenChild: otherOpenChildren.length > 0,
+                  assigneeOwnsOtherOpenChild:
+                    parentAssigneeId !== null &&
+                    otherOpenChildren.some((child) => child.assigneeAgentId === parentAssigneeId),
                 });
                 if (target.kind === "none") {
                   logger.info(

@@ -36,6 +36,11 @@ export function resolveSubtaskWakeTarget(input: {
    * *excluding* the subtask that just completed. "Is anyone still working?"
    */
   hasOtherOpenChild: boolean;
+  /**
+   * Whether one of those other open children is assigned to the parent's own
+   * assignee. Only meaningful when `hasOtherOpenChild` is true.
+   */
+  assigneeOwnsOtherOpenChild: boolean;
 }): SubtaskWakeTarget {
   // A missing parent has no assignee to wake and no stage to advance. Falling
   // through would resolve `undefined?.assigneeAgentId` to null and enqueue
@@ -60,9 +65,39 @@ export function resolveSubtaskWakeTarget(input: {
     return { kind: "coordinator", reason: "parent is in_review with no other open child" };
   }
 
+  // Parked, and still waiting — but on a stage someone else owns (a Reviewer
+  // finished while the Architect's Verify is still open). The parent's assignee
+  // has nothing to do until that stage lands, and that stage's own completion is
+  // the wake that moves the parent. This is the first arm of
+  // `inReviewOnlyWhenOwnStageIsLive`, which the chain-wake query already applies;
+  // without it here, every Reviewer completion under a verifying parent woke the
+  // Worker for a run that found its commits present and exited.
+  if (input.parentStatus === "in_review" && !input.assigneeOwnsOtherOpenChild) {
+    return { kind: "none", reason: "parent is in_review waiting on a stage another agent owns" };
+  }
+
   // Otherwise the parent assignee still owns a live stage. Unchanged behaviour,
   // and the case that keeps re-dispatch working for a no-skill Architect that
   // commits without landing: that task carries its own non-terminal verify
   // subtask, so it is not childless here.
   return { kind: "parent-assignee" };
+}
+
+/**
+ * Whether a comment on an issue should wake its assignee.
+ *
+ * Same predicate as the subtask arm above, for the comment path: an `in_review`
+ * issue whose assignee owns none of its open children is parked on a stage that
+ * agent cannot move. Comments on such a parent come from the agents working its
+ * stages and from the Coordinator recording progress, so waking the assignee on
+ * each one bought a checkout, a git read and an exit. A Worker cannot even read
+ * the comment — it sees only the task prompt. `@`-mentions are resolved
+ * separately and still wake whoever they name, and a comment that reopens the
+ * issue is decided before this is consulted.
+ */
+export function commentWakesAssignee(input: {
+  status: string;
+  assigneeOwnsOpenChild: boolean;
+}): boolean {
+  return !(input.status === "in_review" && !input.assigneeOwnsOpenChild);
 }
