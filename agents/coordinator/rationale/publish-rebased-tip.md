@@ -1,6 +1,6 @@
 # Why an open PR still needs the verified tip pushed
 
-**Justifies:** §Landing sweep step 4, the **Open PR** and **Nothing at all** cases.
+**Justifies:** *publish the verified tip if the PR does not already carry it* (§Landing sweep step 4, the Open PR and Nothing at all cases)
 
 ## The failure
 

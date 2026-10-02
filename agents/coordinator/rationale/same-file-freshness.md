@@ -1,6 +1,6 @@
 # Why the Landing sweep re-verifies when `main` touched the task's files
 
-**Justifies:** §Landing sweep step 3b, the freshness gate.
+**Justifies:** *Freshness gate — did `main` change this task's own files after the build's base?* (§Landing sweep step 3b)
 
 ## The failure
 
