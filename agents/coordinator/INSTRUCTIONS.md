@@ -521,10 +521,20 @@ For each parent `{task-id}`:
      push opens the PR on whatever stale head origin holds) — then **generate the body — never write it by hand**:
 
      ```sh
+     # Landing gate first: no workflow runs the per-change checks, so this is them.
+     (cd "$PAPERCLIP_PROJECT" && pixi run -e dev verify --head "$(git -C "$PAPERCLIP_PROJECT/.paperclip/worktrees/{task-id}" rev-parse HEAD)") \
+       || { echo "landing gate red on task/{task-id} — block the parent with the failing stages; no PR"; exit 1; }
      BODY=$(mktemp)
      (cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/generate_pr_body.py {task-id}) > "$BODY" \
        && gh pr create --head task/{task-id} --base main --title "<task title>" --body-file "$BODY"
      ```
+
+     **A red landing gate means no PR.** It runs `scripts/verify.sh` (guards,
+     `validate_game_data`, `schema_regen`, scoped pytest, asset bytes) on the
+     branch head, and no GitHub workflow runs those per change any more. So a PR
+     opened past it is checked by nothing until the weekly run. Block the parent
+     and quote the failing stages; for a `needs-build` task, re-dispatch the
+     Architect only if the failure is in the task's own files.
 
      The generator copies the reasons from the task description and the branch's commit
      messages, states Review focus as *not assessed*, and checks the result before printing.
