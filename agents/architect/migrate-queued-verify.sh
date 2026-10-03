@@ -25,6 +25,13 @@
 # If the offload refuses (the lane closed in between, or the tree is dirty), the
 # sentinel is removed, so the Architect's next wake finds "absent, no build"
 # and relaunches locally. A move can delay a verify; it cannot strand one.
+#
+# STOP AT THE FIRST REFUSAL, AND SPACE THE MOVES. Each offload re-reads account
+# usage. Thirty-nine back-to-back moves drew HTTP 429 from the usage endpoint after
+# the fourth, every later offload refused, and each of those builds had already
+# been stopped: thirty-five queued verifies lost their place and had to be
+# re-dispatched by hand. A refusal now ends the run with every remaining build
+# still queued, and MIGRATE_INTERVAL seconds separate the moves.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +41,7 @@ CLOUD_VERIFY="${MIGRATE_CLOUD_VERIFY:-$HERE/cloud-verify.sh}"
 PACE="${MIGRATE_PACE:-python3 $HERE/cloud-pace.py}"
 CGROUP_ROOT="${MIGRATE_CGROUP_ROOT:-/sys/fs/cgroup}"
 PARKED_CODE=100
+INTERVAL="${MIGRATE_INTERVAL:-20}"
 
 DRY=""
 [ "${1:-}" = "--dry-run" ] && { DRY=1; shift; }
@@ -83,6 +91,7 @@ for id in "$@"; do
   vt="$(verify_task_for "$id")"
   if [ -n "$DRY" ]; then echo "$id: would move to the cloud lane (wakes $vt)"; continue; fi
 
+  [ "$moved" -gt 0 ] && sleep "$INTERVAL"
   printf '%s\n' "$PARKED_CODE" > "$VERIFY_DIR/$id.exit"
   for unit in $units; do systemctl --user stop "$unit" 2>/dev/null; done
   echo "migrated: queued local build stopped for the cloud lane" >> "$VERIFY_DIR/$id.log" 2>/dev/null || true
@@ -91,7 +100,9 @@ for id in "$@"; do
   else
     rm -f "$VERIFY_DIR/$id.exit"
     echo "$id: offload refused — sentinel cleared, the Architect relaunches it locally"
+    echo "migrate-queued-verify: stopping at the first refusal; every remaining build stays queued"
     kept=$((kept + 1))
+    break
   fi
 done
 echo "migrate-queued-verify: moved $moved, left $kept"
