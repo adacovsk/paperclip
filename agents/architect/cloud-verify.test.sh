@@ -183,6 +183,25 @@ echo 'not json' > "$DIR/usage.json"
 check "unreadable usage fails closed under override" "$(CLOUD_PACE_IGNORE_PACE=1 pace)" 0
 check "unreadable usage fails closed" "$(pace)" 0
 
+# The cache: only the network path uses it, so drive that path with a file:// URL.
+(
+  unset CLOUD_PACE_USAGE_FILE
+  export CLOUD_PACE_URL="file://$DIR/remote.json" CLOUD_PACE_CACHE="$DIR/usage-cache.json"
+  export CLOUD_PACE_CREDENTIALS="$DIR/creds.json"
+  echo '{"claudeAiOauth":{"accessToken":"t"}}' > "$CLOUD_PACE_CREDENTIALS"
+  usage 38 6; cp "$DIR/usage.json" "$DIR/remote.json"
+  check "a fresh read opens and is cached" "$(pace)" 1
+  check "the reading was cached"           "$([ -f "$CLOUD_PACE_CACHE" ] && echo yes)" yes
+  usage 60 6; cp "$DIR/usage.json" "$DIR/remote.json"
+  check "inside the TTL the cache answers, not the meter" "$(pace)" 1
+  rm -f "$DIR/remote.json"; touch -d '-10 minutes' "$CLOUD_PACE_CACHE"
+  check "a failed read falls back to a recent cache" "$(pace)" 1
+  touch -d '-20 minutes' "$CLOUD_PACE_CACHE"
+  check "a failed read with a stale cache fails closed" "$(pace)" 0
+  echo "$PASS $FAIL" > "$DIR/cache.counts"
+)
+read -r PASS FAIL < "$DIR/cache.counts"
+
 rm -f "$DIR/setsid.log"; usage 38 6
 ARCHITECT_CLOUD_LANE= "$CV" offload AA-5 task/AA-5 >/dev/null 2>&1; check "flag unset -> 1" "$?" 1
 export ARCHITECT_CLOUD_LANE=1

@@ -28,6 +28,17 @@ fails closed.
 The session (five-hour) limit is a separate ceiling for the same reason: a
 week with plenty of headroom can still hit the session limit, and that blocks
 the local agents too.
+
+CACHED, BECAUSE THE METER RATE-LIMITS. Every launch, offload and re-verify asks
+this gate, and the endpoint answers HTTP 429 once asked often enough. Uncached,
+the pipeline rate-limited itself into a permanently closed lane: 210 consecutive
+429s in the log, and every verify queued on one local slot. A successful reading
+is cached for CLOUD_PACE_CACHE_TTL seconds (default 300) and reused without a
+request. When a request fails, a cached reading no older than
+CLOUD_PACE_STALE_MAX seconds (default 900) is used in its place; older than that,
+the gate fails closed as before. Usage only rises, so a stale reading can only
+under-read it, by at most fifteen minutes of spend, and the session and week
+ceilings sit well below 100% to absorb that.
 """
 
 import json
@@ -37,7 +48,13 @@ import time
 import urllib.request
 from datetime import datetime
 
-USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+USAGE_URL = os.environ.get("CLOUD_PACE_URL", "https://api.anthropic.com/api/oauth/usage")
+CACHE = os.path.expanduser(
+    os.environ.get(
+        "CLOUD_PACE_CACHE",
+        os.path.join(os.environ.get("XDG_CACHE_HOME", "~/.cache"), "paperclip-verify", "usage-cache.json"),
+    )
+)
 WEEK = 7 * 24 * 3600
 
 
@@ -53,6 +70,36 @@ def read_usage() -> dict:
     if injected:
         with open(injected) as f:
             return json.load(f)
+    ttl = env_float("CLOUD_PACE_CACHE_TTL", 300)
+    stale_max = env_float("CLOUD_PACE_STALE_MAX", 900)
+    age = cache_age()
+    if age is not None and age <= ttl:
+        with open(CACHE) as f:
+            return json.load(f)
+    try:
+        usage = fetch_usage()
+    except Exception:
+        if age is not None and age <= stale_max:
+            with open(CACHE) as f:
+                return json.load(f)
+        raise
+    tmp = f"{CACHE}.{os.getpid()}"
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    with open(tmp, "w") as f:
+        json.dump(usage, f)
+    os.replace(tmp, CACHE)
+    return usage
+
+
+def cache_age() -> float | None:
+    """Seconds since the cached reading was written, or None if there is none."""
+    try:
+        return time.time() - os.path.getmtime(CACHE)
+    except OSError:
+        return None
+
+
+def fetch_usage() -> dict:
     creds = os.path.expanduser(
         os.environ.get("CLOUD_PACE_CREDENTIALS", "~/.claude/.credentials.json")
     )
