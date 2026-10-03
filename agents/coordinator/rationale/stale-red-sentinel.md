@@ -22,7 +22,11 @@ let it act.
 ## Why the three conditions
 
 - **Every failure outside the task's files.** A failure in the task's own files is the task's.
-  Rebuilding against a newer main does not change it, and it keeps counting.
+  Rebuilding against a newer main does not change it, and it keeps counting. The VM may also fix
+  errors outside those files when the task's own diff caused them, so a failure left outside them
+  is usually main's. When it is a diff-caused one the VM ran out of rounds on, the next clause
+  still holds the reset back: main has to touch that very file, and if it has, a rebuild is
+  warranted anyway.
 - **`origin/main` moved past the base.** If main has not moved, a rebuild reproduces the same
   result.
 - **A commit since the base touches a path the verdict names.** Without this clause, a main that
