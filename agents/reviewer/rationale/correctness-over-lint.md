@@ -1,6 +1,6 @@
 # Hunt defects, not lint
 
-**Justifies:** *Cosmetic fixes come after the defect pass, never instead of it.* and *Fast exit for small, mechanical diffs.*
+**Justifies:** *Cosmetic fixes come after the defect pass, never instead of it.* and *Fast exit, only for diffs with no behaviour in them.* and *Read outside the diff before judging it.*
 
 ## What the stage was actually buying
 
@@ -15,8 +15,14 @@ The old checklist (helpers over inline math, `find_nearby`, unused imports, `pri
 
 Cosmetic fixes are cheap and the operator is fine receiving them. The failure is ordering: a review that stops once it has found something to polish reads as productive while the correctness pass never happened. So cosmetics are allowed, but only after the defect checklist has been done.
 
-## Why a fast exit
+## Why a fast exit, and why it is narrow
 
-Many diffs are small and mechanical: one allowlist reason, a handful of data rows, a one-line fix. The defect classes above either appear in those diffs at a glance or not at all. A full procedure plus a long completion essay spends the same tokens as a large task to say "looks right".
+Some diffs carry no behaviour: an allowlist reason, a comment, a rename. A full procedure plus a long completion essay spends the same tokens as a large task to say "looks right", so those exit after one read.
 
-The fast exit is **not** for data diffs as a class. Data-only PRs produce real catches too: re-authored feat text that no longer matched the rules, a key moved onto the wrong class, a ratchet line cleared by substitution. The deciding factor is size and mechanicalness, not the label.
+The exit used to cover "small and mechanical" diffs, including one-line fixes and a few data rows, on the reasoning that defects in a small diff show at a glance. That holds only for defects visible *in* the diff. A one-line fix can be correct on its line and wrong for its caller, and a data row can be well-formed and land on no field. Reviews were finishing in under a minute, which is one read of the diff and nothing else. Size is not the test; whether the diff changes behaviour is.
+
+The exit is **not** for data diffs as a class. Data-only PRs produce real catches too: re-authored feat text that no longer matched the rules, a key moved onto the wrong class, a ratchet line cleared by substitution.
+
+## Why read outside the diff
+
+The catches listed above that justify this stage are mostly invisible from the diff: "a trigger that never carried the field its guard read" is found by opening the trigger, and "nothing in production sets this" by grepping for a writer. An earlier version told the Reviewer not to open surrounding files, to stop it hunting for something to say. That also stopped it doing the reads the checklist depends on. The fix is to name the reads, so the Reviewer does them every time and only them, rather than ban reading.
