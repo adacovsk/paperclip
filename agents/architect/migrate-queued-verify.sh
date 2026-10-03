@@ -5,7 +5,11 @@
 # Usage:  migrate-queued-verify.sh [--dry-run] [<task-id> ...]
 #         With no ids, every live `verifyrun-*` scope is considered.
 # Run with the Architect's environment: ARCHITECT_CLOUD_LANE=1 and the same
-# CLOUD_PACE_* settings, because the offload re-checks both.
+# CLOUD_PACE_* settings, because the offload re-checks both, and
+# PAPERCLIP_API_URL plus PAPERCLIP_AGENT_ID (the Architect's id), because the cloud
+# watcher it starts sends the "verify finished" wake with them. Without them the
+# watcher skips the wake silently: the verdict lands and nothing reads it. That
+# happened to the first six builds this script moved, so it now refuses to start.
 #
 # WHY. A verify is routed once, at launch. A build launched while the cloud lane
 # was closed queues for a local slot and stays queued after the lane opens. The
@@ -68,6 +72,11 @@ verify_task_for() {  # the Verify subtask the wrapper wakes, from its `A="..."`
   tr '\0' ' ' < /proc/"$pid"/cmdline 2>/dev/null | grep -oE 'A="AA-[0-9]+"' | head -1 \
     | grep -oE 'AA-[0-9]+' || printf '%s\n' "$1"
 }
+
+if [ -z "${PAPERCLIP_API_URL:-}" ] || [ -z "${PAPERCLIP_AGENT_ID:-}" ]; then
+  echo "migrate-queued-verify: PAPERCLIP_API_URL and PAPERCLIP_AGENT_ID must name the Architect — a moved build would finish without waking it; nothing moved" >&2
+  exit 2
+fi
 
 if [ "$(${PACE} 2>/dev/null | head -1)" != "1" ]; then
   echo "migrate-queued-verify: cloud lane closed — nothing moved"
