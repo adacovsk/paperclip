@@ -527,6 +527,16 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
   fi
 fi
 
+# 1.9 LANDING GATE — the per-change checks no workflow runs any more: the guards,
+#     validate_game_data, schema_regen, the scoped pytest suites and the asset
+#     bytes check. Run on the exact commit about to be pushed, from the main
+#     checkout's pixi environment (`--head` verifies that commit in a throwaway
+#     worktree). Red means no push and no PR: fix within the task's files,
+#     commit, and land again. This is the gate, not the pre-push hook, because
+#     the hook is skipped by `--no-verify`, which the cloud offload uses.
+( cd "$PAPERCLIP_PROJECT" && pixi run -e dev verify --head "$(git -C "$WORKTREE" rev-parse HEAD)" ) \
+  || { echo "LANDING GATE FAILED: scripts/verify.sh is red on task/{task-id} — fix, commit, land again; no PR opened"; exit 1; }
+
 # 2. Make sure we're on the right GitHub account.
 gh auth switch --user "${PAPERCLIP_GH_USER:?set PAPERCLIP_GH_USER to your repo's write account}"
 
@@ -536,12 +546,11 @@ git push -u origin "task/{task-id}"
 # 4. Open the PR — base = main, head = task branch. Idempotent: skip if a
 #    PR for this head already exists (e.g. a re-dispatched run after a
 #    push-only partial landing).
-if ! gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q .; then
-  gh pr create \
-    --base main \
-    --head "task/{task-id}" \
-    --title "<task title>" \
-    --body "$(cat <<EOF
+#    The body is written to a file and checked BEFORE `gh pr create`: no
+#    workflow checks it after. A failing check names the empty or placeholder
+#    section; rewrite it, do not open the PR.
+BODY="$VERIFY_DIR/{task-id}.pr-body.md"
+cat > "$BODY" <<EOF
 ## What changed
 <1-3 bullets. The behaviour or capability, not a file list — the diffstat is
 already on the PR.>
@@ -571,7 +580,11 @@ Omit the line when the task body has none — never derive a number from the tas
 - schema: <regenerated, or "no schema-relevant change">
 - base: origin/main at <sha>; \`git merge-tree\` <n> conflicts
 EOF
-)"
+( cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/check_pr_body.py \
+    --head-ref "task/{task-id}" --title "<task title>" --body-file "$BODY" ) \
+  || { echo "PR BODY CHECK FAILED — rewrite the named sections; no PR opened"; exit 1; }
+if ! gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q .; then
+  gh pr create --base main --head "task/{task-id}" --title "<task title>" --body-file "$BODY"
 fi
 
 # 5. STRUCTURAL POSTCONDITION — a missing remote branch or PR fails the run
