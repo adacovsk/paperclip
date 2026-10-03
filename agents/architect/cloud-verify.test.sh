@@ -252,12 +252,30 @@ commit() {  # path, content, message
   mkdir -p "$R/$(dirname "$1")"; printf '%s\n' "$2" >> "$R/$1"
   g add "$1"; g -c user.name=t -c user.email=t@t commit -qm "$3"
 }
-# setup <task>: base on main, one task commit touching src/a.rs, launch state.
+# setup <task> [task-line]: base on main, one task commit appending task-line
+# (default `fn a2() {}`) to src/a.rs, launch state. src/b.rs is outside every
+# task: a match over the enum in a.rs, long enough that two edits far apart in
+# it are separate hunks.
+B_RS='fn b() {}
+fn kind(k: Kind) -> u8 {
+    match k {
+        Kind::Old => 1,
+    }
+}
+// one
+// two
+// three
+// four
+// five
+// six
+// seven
+// eight
+fn tail() {}'
 setup() {
   rm -rf "$R"; PATH="$REALPATH" git init -q -b main "$R"
-  commit src/a.rs "fn a() {}" base; commit src/b.rs "fn b() {}" base2
+  commit src/a.rs "fn a() {}" base; commit src/b.rs "$B_RS" base2
   BASE_SHA="$(g rev-parse HEAD)"
-  g checkout -qb "task/$1"; commit src/a.rs "fn a2() {}" task
+  g checkout -qb "task/$1"; commit src/a.rs "${2:-fn a2() {\}}" task
   LEASE="$(g rev-parse HEAD)"
   printf '%s\n' "$BASE_SHA" > "$CLOUD_VERIFY_DIR/$1.base"
   printf '%s\n' "$LEASE" > "$CLOUD_VERIFY_DIR/$1.cloud.launched-head"
@@ -331,6 +349,62 @@ printf 'reseeded\n' >> "$R/src/b.rs"
 check "guard failure with unrelated dirt -> rejected" "$?" 1
 check "rollback keeps unrelated edit" "$(tail -1 "$R/src/b.rs")" reseeded
 check "rollback returns to launched head" "$(g rev-parse HEAD)" "$LEASE"
+
+echo "out-of-scope fixes the task's own diff caused:"
+# The task adds a variant; the exhaustive match in src/b.rs, outside the task,
+# stops compiling. Each case edits b.rs and declares (or fails to) in the verdict.
+declare_oos() { printf 'out-of-scope: %s\n' "$2" >> "$CLOUD_VERIFY_DIR/$1.cloud.verdict"; }
+sed_commit() {  # path, sed expression, message
+  sed -i "$2" "$R/$1"; g add "$1"; g -c user.name=t -c user.email=t@t commit -qm "$3"
+}
+ADD_ARM='/Kind::Old => 1,/a\        Kind::Added => 2,'
+
+setup AA-40 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm
+WORK="$(g rev-parse HEAD)"; publish AA-40
+declare_oos AA-40 "src/b.rs E0004 Added -- non-exhaustive patterns: \`Kind::Added\` not covered"
+accept AA-40;                                   check "declared diff-caused match arm -> accepted" "$?" 0
+check "worktree fast-forwarded to the out-of-scope fix" "$(g rev-parse HEAD)" "$WORK"
+
+setup AA-41 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm; publish AA-41
+accept AA-41;                                   check "undeclared out-of-scope edit -> rejected" "$?" 1
+check "worktree left at launched head" "$(g rev-parse HEAD)" "$LEASE"
+
+# A call site rewritten to a signature the task changed removes a line.
+setup AA-42 "fn kind(k: Kind, n: u8) -> u8 { 0 }"
+sed_commit src/b.rs 's/^fn kind(k: Kind) -> u8 {$/fn kind(k: Kind, n: u8) -> u8 {/' callsite; publish AA-42
+declare_oos AA-42 "src/b.rs E0061 kind -- this function takes 2 arguments but 1 argument was supplied"
+accept AA-42;                                   check "declared rewrite at a changed signature -> accepted" "$?" 0
+
+setup AA-43 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm; publish AA-43
+declare_oos AA-43 "src/b.rs E0004 Unrelated -- non-exhaustive patterns"
+accept AA-43;                                   check "identifier not in the task's diff -> rejected" "$?" 1
+
+setup AA-44 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm; publish AA-44
+declare_oos AA-44 "src/b.rs E0277 Added -- the trait bound is not satisfied"
+accept AA-44;                                   check "non-qualifying error code -> rejected" "$?" 1
+
+setup AA-45 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm
+sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' sneak; publish AA-45
+declare_oos AA-45 "src/b.rs E0004 Added -- non-exhaustive patterns"
+accept AA-45;                                   check "a hunk not at a use of the identifier -> rejected" "$?" 1
+
+setup AA-46 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm
+sed_commit src/b.rs '/^\/\/ one$/,/^\/\/ four$/d' prune; publish AA-46
+declare_oos AA-46 "src/b.rs E0004 Added -- non-exhaustive patterns"
+accept AA-46;                                   check "out-of-scope hunk removing 4 lines -> rejected" "$?" 1
+
+setup AA-47 "    Added,"; commit src/c.rs "fn c(k: Kind) { if let Kind::Added = k {} }" new; publish AA-47
+declare_oos AA-47 "src/c.rs E0004 Added -- non-exhaustive patterns"
+accept AA-47;                                   check "new out-of-scope file -> rejected" "$?" 1
+
+setup AA-48 "fn a2() {}"; sed_commit src/b.rs '/Kind::Old => 1,/a\        fn x() {}' kw; publish AA-48
+declare_oos AA-48 "src/b.rs E0004 fn -- non-exhaustive patterns"
+accept AA-48;                                   check "keyword as the identifier -> rejected" "$?" 1
+
+setup AA-49 "    Added,"; sed_commit src/b.rs "$ADD_ARM" arm; commit README "x" docs; publish AA-49
+declare_oos AA-49 "src/b.rs E0004 Added -- non-exhaustive patterns"
+declare_oos AA-49 "README E0004 Added -- non-exhaustive patterns"
+accept AA-49;                                   check "non-Rust out-of-scope file -> rejected" "$?" 1
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

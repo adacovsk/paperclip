@@ -1,6 +1,6 @@
 # Architect
 
-Build gate. Run cargo against your task's worktree, fix the errors in files your own task touched, commit, open the PR.
+Build gate. Run cargo against your task's worktree, fix the errors your own task caused — in the files it touched, and in the files its diff broke (§Procedure step 4) — commit, open the PR.
 
 **Working directory**: the task's worktree under
 `$PAPERCLIP_PROJECT/.paperclip/worktrees/{task-id}/` on branch
@@ -165,7 +165,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    of the workspace crate (clippy's `clippy-driver` fingerprint differs from
    check's rustc, so they never shared artifacts anyway). Do not re-add it.
    **Clippy runs `--all-targets`; the *test* gate is still `--lib`. These are not in tension — read both.** `--all-targets` makes clippy **compile** the integration crates under `tests/` as well as the lib. It does not run them, so it does not reintroduce the failure that `--lib` exists to avoid (below). This closes the hole that let one task land with `tests/` broken: 12 types and one function tightened to `pub(crate)` were still named in the signatures of `pub` systems the tests register, which is a *hard compile error* from the test crate and merely a warning inside the lib. `cargo test --lib` cannot see it, reported green, and `main` could not build its test crate for five days — during which a fix for that same breakage was pushed to the branch and silently dropped at merge, because nothing re-checked.
-   **If `--all-targets` fails in a file your task did not touch, that is not yours to fix.** The changed-files filter (step 4) still governs: a compile error in `tests/` from another task blocks *your* build, but editing it is how one task's verify starts rewriting another's work. Comment the error and `escalate to operator`. This is the same rule as the `98` stale-base sentinel — a red that is not yours is the most expensive kind, because you cannot fix it and every cycle spent on it is wasted.
+   **If `--all-targets` fails in a file your task did not touch, it is yours only if your diff caused it** — the scope rule in §Procedure step 4 governs, including its diff-caused exception. A compile error in `tests/` that names something your diff changed (a variant you added, a signature you changed) is yours: fix it there. One that does not — another task's break, or breakage already on `main` — blocks *your* build, but editing it is how one task's verify starts rewriting another's work. Comment the error and `escalate to operator`. This is the same rule as the `98` stale-base sentinel — a red that is not yours is the most expensive kind, because you cannot fix it and every cycle spent on it is wasted.
    **The test gate is `cargo test --lib`, NOT full `cargo test`.** The
    integration-test crates under `tests/` are separately maintained and
    have historically been broken on `main` for reasons unrelated to any
@@ -273,7 +273,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    - **present, `0`** → cargo passed → **read `{task-id}.integration` (see below), then** go to *Identify your task's changed files* then §Landing.
    - **`{task-id}.integration` — report-only, never a gate.** Written by the fourth stage (§Cargo discipline rule 5). Absent = the stage was skipped (no Rust under `src/` or `tests/` changed) or the gating stages failed, so there is nothing to report. `0` = integration suites passed; say nothing. **Non-zero = they failed, and you Land anyway** — this does not block the PR and you must not enter the fix loop for it. Post one comment on the task naming the failing tests from `{task-id}.integration.log` (`grep -E "^(test .* FAILED|failures:|---- .* stdout ----)"` and the `test result:` line), state whether any failing suite is in your changed-files list, and continue to §Landing in the same run. `137` means OOM, not a real failure — report it as inconclusive rather than as a broken suite.
      - If a failing suite **is** in your changed-files list, it is yours: fix it before landing, as a normal in-scope failure.
-     - If it is **not**, it is a pre-existing break or another task's — comment it and land. Do not edit it; that is the same rule as `--all-targets` failures in files you did not touch.
+     - If it is **not**, it is a pre-existing break or another task's — comment it and land. Do not edit it. The diff-caused exception in step 4 covers *compile* errors only; a runtime test failure carries no error code tying it to your diff, so it never qualifies.
    - **present, `96`, `97` or `98`** → **environment/base failure, NOT a build failure** (96 = cargo/sccache off PATH; 97 = worktree missing; 98 = could not put the branch on current `origin/main` by **either** rebase or merge, so this really is a content conflict). The code is very likely fine — cargo never ran. Do **not** enter the fix loop, do **not** edit Rust. Comment the sentinel value + the tail of `$LOG` and escalate to operator. See Cargo discipline §Environment and base bootstrap.
      - **`98` specifically**: the launch tried to put the branch on current `origin/main` and either the fetch failed or the rebase conflicted. A conflict is genuine work for the operator — do not try to force it. This sentinel exists because a build on a stale base produces **false reds against already-fixed code**, and a red that isn't yours is the most expensive kind: you cannot fix it, so every cycle spent on it is wasted.
    - **present, `99`** → **the wrapper was signalled before cargo reported — INCONCLUSIVE, not a build failure.** Written by the wrapper's own signal trap, so the result is "we never found out", not "it failed". The usual cause is the server being restarted under it. Do **not** enter the fix loop and do **not** edit Rust: `rm -f "$EXIT"` and relaunch, exactly as for `137`. Twice running → escalate rather than relaunching a third time. → [why the trap exists](rationale/sentinel-99-trap.md)
@@ -284,8 +284,20 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    - **present, `64`** → **`cargo-sem.sh` refused the invocation, NOT a build failure.** 64 is the wrapper's multi-cargo-chain guard (see Cargo discipline §One cargo per `cargo-sem.sh` call): the launch wrapped two cargo commands inside a single slot acquisition, so the wrapper rejected it and **cargo never ran**. The code is fine; the *command* is wrong. Do **not** enter the fix loop and do **not** edit Rust. Re-read the launch block and confirm the `&&` sits *between* two `"$SEM"` invocations, never inside one, then `rm -f "$EXIT"` and relaunch. Still 64 in the split form → escalate to operator with the `Got:` line from `$LOG`. → [why chaining is refused rather than tolerated](rationale/sentinel-64-chain-guard.md)
    - **present, any other non-zero** → cargo ran and failed → steps 3–6 (fix), then `rm -f "$EXIT"` and relaunch.
 3. Identify your task's changed files: `git diff --name-only main..HEAD`.
-4. Filter the verify `$LOG` to errors/warnings whose file path appears in your changed-files list. These are yours to fix. Errors in files you did not touch belong to another concurrent task — leave them alone (your task branch is isolated, but worktree state may carry stale build artifacts from a sibling — your changed-files filter handles this).
-5. Fix all of your filtered errors and warnings. **Zero warnings tolerance applies to your changed files only.** Don't fix unrelated warnings — that's another task's responsibility.
+4. **Scope: fix what your task caused, nothing else.** Filter the verify `$LOG` in two passes.
+   - **In your changed-files list** → yours, every error and warning.
+   - **Outside it** → yours **only if your diff caused it**: the file compiles at the base (`git merge-base HEAD origin/main`) and fails at your head. Establish that without a second build — all three must hold:
+     1. **The code is a definition-change error**, the downstream half of a change to a variant, field, signature, name or trait item: `E0004` (non-exhaustive match on an enum the diff extended), `E0023`/`E0026`/`E0027` (patterns over a variant or struct whose fields the diff changed), `E0063`/`E0560` (struct literal missing a field the diff added / naming one it removed or renamed), `E0061`/`E0308` (call site of a function whose arity or types the diff changed), `E0046`/`E0050`/`E0053` (impl of a trait whose items the diff added or changed), `E0412`/`E0425`/`E0432`/`E0433`/`E0599`/`E0609` (use of a type, function, path, method or field the diff renamed, moved or removed).
+     2. **The error names an identifier your diff changed** — it appears on a `+` or `-` line of `git diff origin/main...HEAD -- '*.rs'`. For `E0061`, whose message omits the function, read the name off the call at the reported line.
+     3. **The fix is local to uses of that identifier**: add the arms, update the call, supply the field — in an existing `.rs` file, each edited hunk mentioning the identifier and removing at most 3 lines. Not a refactor of the surrounding code.
+
+     That is the cheap test, and it decides the common case: an error naming something the task did not change cannot have been caused by it. **Fall back to the base comparison only when genuinely ambiguous** — a qualifying code whose identifier reaches the file only through a macro, a glob import or a trait bound, so it is not textually in the diff. Then build the base once, in a throwaway worktree under the semaphore (`git worktree add --detach /tmp/base-{task-id} "$(git merge-base HEAD origin/main)"`, clippy `--all-targets` there, `git worktree remove` after): the error present there is not yours.
+   - **Everything else outside your list stays an escalation**, exactly as before: any other error code, every lint and warning, any error also present at the base, and anything you cannot tie to your diff. Do not edit it; comment it and `escalate to operator`.
+
+   **Why the exception exists, and why it is this narrow.** Scope stops one task's verify from rewriting another task's work or "fixing" breakage already on `main`. An error your own diff caused is neither — a task that adds variants to an enum breaks every exhaustive `match` over it, wherever that lives, and bouncing that to the operator costs a full pipeline cycle for three match arms. The bounds are what keep it from becoming a back door, and they are the same ones the cloud lane's acceptance check enforces mechanically (§Cloud overflow lane), so the two lanes agree on what is admissible. **List every out-of-scope file you edit in the PR body's Verification section** (path, error code, identifier) so the operator reviews it as such.
+
+   (Your task branch is isolated, but worktree state may carry stale build artifacts from a sibling — an error that names nothing in your diff is filtered out by exactly this test.)
+5. Fix all of your filtered errors and warnings. **Zero warnings tolerance applies to your changed files only.** Don't fix unrelated warnings — that's another task's responsibility; warnings never qualify for the step 4 exception.
 6. After fixing: commit in-worktree, `rm -f "$EXIT"`, and **relaunch** the detached chain (the launch in *Check the sentinel FIRST*). The next wake re-evaluates the sentinel. Hard stop after 3 fix/relaunch cycles — comment with the remaining errors and `escalate to operator`.
 6.5. **Schema-drift check — ask the CI guard what is schema-relevant; do not judge it from the path.** The weekly-only `schema-drift` CI job (root `CLAUDE.md`) leaves a window where a routine enum/struct edit lands without its dependent `assets/schemas/*.json` regenerated (a recurring Reviewer pattern), so `scripts/check_schema_regen.py` runs per-change in the cheap `validate` job as the non-compiling approximation. **Run that same script against your own diff before Landing** — it is stdlib-only and does not compile anything:
     ```sh
@@ -317,7 +329,8 @@ skip this section entirely and launch the local chain as always. The flag is the
 rollback: clearing it restores the previous behaviour with no other edit.
 
 When it is set, the cargo half of the verify runs on a cloud VM: clippy and
-tests, fixes inside the task's files (at most 3 rounds), the non-Rust guard
+tests, fixes inside the task's files plus the diff-caused out-of-scope errors of
+§Procedure step 4 (at most 3 rounds), the non-Rust guard
 suite, and schema regeneration last. **You still own landing** — the push to
 `task/{task-id}` and the PR come from your §Landing, never from the VM.
 
@@ -344,14 +357,21 @@ directly — they bypass the gate.
 **The VM's commits are untrusted until this box accepts them.** The VM builds the
 exact head you pushed and publishes only to its own `cloud-verify/` branch.
 Before any sentinel is written, the watch checks that its commits descend from
-that head, touch only the task's files or `assets/schemas/`, add no
-`#[allow]`/`#[expect]`/`#[ignore]`, delete nothing, and pass
-`pixi run -e dev verify`; only then does it fast-forward your worktree.
+that head, touch only the task's files, `assets/schemas/` or declared
+out-of-scope fixes, add no `#[allow]`/`#[expect]`/`#[ignore]`, delete nothing,
+and pass `pixi run -e dev verify`; only then does it fast-forward your worktree.
+An out-of-scope fix must be declared in the verdict as
+`out-of-scope: <path> <code> <identifier> -- <message>` and meet step 4's bounds,
+checked without compiling: a qualifying code, an identifier on a `+`/`-` line of
+the task's own Rust diff, an existing `.rs` file, and every hunk mentioning the
+identifier and removing at most 3 lines. An undeclared or out-of-bounds edit
+rejects all of the VM's work.
 Otherwise it writes **`95`**. The sentinel then reads through the state machine
 above, with these cloud-specific meanings (you can tell a cloud result by
 `{task-id}.cloud.verdict` existing):
 
-- **`0`** → accepted and green. Go to §Landing. **Do not run
+- **`0`** → accepted and green. Go to §Landing, and copy each `out-of-scope:`
+  line of the verdict into the PR body's Verification section. **Do not run
   `generate_schemas` in §6.5** — read `schemas:` from `{task-id}.cloud.verdict`
   instead: `proved-empty` means put `[skip-schema-regen]` in the PR body;
   `regenerated` and `not-relevant` need nothing.
@@ -531,7 +551,7 @@ fi
 #     validate_game_data, schema_regen, the scoped pytest suites and the asset
 #     bytes check. Run on the exact commit about to be pushed, from the main
 #     checkout's pixi environment (`--head` verifies that commit in a throwaway
-#     worktree). Red means no push and no PR: fix within the task's files,
+#     worktree). Red means no push and no PR: fix within the task's scope,
 #     commit, and land again. This is the gate, not the pre-push hook, because
 #     the hook is skipped by `--no-verify`, which the cloud offload uses.
 ( cd "$PAPERCLIP_PROJECT" && pixi run -e dev verify --head "$(git -C "$WORKTREE" rev-parse HEAD)" ) \
@@ -578,6 +598,7 @@ Omit the line when the task body has none — never derive a number from the tas
 - cargo clippy --no-default-features: <result>
 - cargo test --tests: <result; report-only>
 - schema: <regenerated, or "no schema-relevant change">
+- out-of-scope fixes: <none, or per file: path, error code, the identifier the diff changed>
 - base: origin/main at <sha>; \`git merge-tree\` <n> conflicts
 EOF
 ( cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/check_pr_body.py \

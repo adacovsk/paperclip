@@ -2,15 +2,17 @@
 # Cloud verification lane for the Architect.
 #
 # Moves the cargo half of a verify onto an Anthropic-managed cloud VM: clippy and
-# tests, fixes inside the task's own files, the non-Rust guard suite, and schema
-# regeneration last. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md.
+# tests, fixes inside the task's own files (plus the out-of-scope errors the
+# task's own diff caused, declared and bounded — see `check_out_of_scope`), the
+# non-Rust guard suite, and schema regeneration last. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md.
 #
 # TRUST BOUNDARY. The VM does work; it never lands it. It builds the exact
 # commit this box pushed, and publishes its commits only under its own
 # `cloud-verify/` branch — never the task branch, never a PR. This box then
 # accepts or rejects those commits (`accept_cloud_work`): they must descend from
-# the launched head, touch only the task's files or regenerated schemas, add no
-# lint or test suppression, and pass the guard suite locally. Accepted work is
+# the launched head, touch only the task's files, regenerated schemas or declared
+# diff-caused fixes, add no lint or test suppression, delete no file, and pass
+# the guard suite locally. Accepted work is
 # fast-forwarded into the worktree and the Architect lands it through its
 # ordinary Landing; rejected work is never used and the task verifies locally.
 # The operator's merge remains the final gate.
@@ -108,8 +110,23 @@ breaks these rules is discarded.
    On 'No space left on device': cargo clean -p rust-bevy-rpg, then re-run.
 
 3. Fix failures, at most ${cap} rounds of fix -> commit -> re-run step 2.
-   ONLY in the task's files. An error in any other file is not yours: do not edit
-   it; finish with result: FAIL and name it. Fix causes, not symptoms: adding
+   In the task's files, fix anything. In ANY OTHER file, fix an error only when
+   the task's own diff caused it, which here means all of:
+     - its code is one of:${OOS_CODES% }
+     - it names an identifier (enum or variant, type, function, method, field,
+       trait item) that appears on a + or - line of
+       git diff \$BASE ${head} -- '*.rs'
+     - the file is an existing .rs file
+   Typical: match arms for variants the task added (E0004); a call site updated
+   to a signature the task changed (E0061/E0308); a field the task added,
+   supplied in a struct literal (E0063). Edit only at uses of that identifier:
+   every hunk (3 lines of context) must mention it and may remove at most
+   ${OOS_MAX_REMOVED_PER_HUNK} lines. If unsure whether the error also exists at \$BASE, check out
+   \$BASE in a separate worktree and run the clippy gate there; failing there too
+   means it is not this task's. Anything else outside the task's files is not
+   yours: do not edit it; finish with result: FAIL and name it. Declare every
+   out-of-scope file you edit in the verdict (step 7) — an undeclared one gets
+   all of your work rejected. Fix causes, not symptoms: adding
    #[allow(...)], #[expect(...)] or #[ignore], deleting a test, or weakening an
    assertion gets all of your work rejected. Commit each round as
    'fix: <what>' with a 'Stage: architect' line. Still red after ${cap} rounds
@@ -142,6 +159,9 @@ fixes: <rounds used in step 3>
 schemas: not-relevant | regenerated | proved-empty
 guards: <exit status of step 4>
 integration: <exit status of step 5>
+out-of-scope: <path> <code> <identifier> -- <compiler message>
+                                      (one line per file and identifier you fixed
+                                       outside the task's files; none -> omit)
 cmd: <command> = <exit status>        (one line per command you ran)
 --- errors ---
 <empty on PASS; otherwise the full compiler/guard output with file:line>
@@ -279,6 +299,73 @@ cmd_watch() {
   wake
 }
 
+# OUT-OF-SCOPE FIXES. Scope exists so one task's verify cannot rewrite another
+# task's work or "fix" breakage that is already on main. An error the task's own
+# diff caused is neither: a task that adds enum variants breaks every exhaustive
+# match over that enum, wherever it lives, and bouncing that to the operator costs
+# a full pipeline cycle for a mechanical fix. So such an edit is admitted — but
+# only in a shape this box can check without compiling, because acceptance must
+# stay cheap and the VM is untrusted:
+#
+#   - Declared. The verdict carries `out-of-scope: <path> <code> <identifier>`
+#     for it; an undeclared path is rejected, so nothing reaches the tree unnamed.
+#   - A qualifying error class. Each of these codes is the downstream half of a
+#     change to a definition — a variant, field, signature, name or trait item.
+#     Lints and every other code stay out: they are not tied to a definition the
+#     diff changed, which is exactly the pre-existing breakage scope excludes.
+#   - Tied to the diff. The identifier must sit on a +/- line of the task's own
+#     Rust diff (base..launched head). That is the mechanical stand-in for
+#     "compiles at base, fails at head": an error naming something the task did
+#     not change cannot have been caused by it.
+#   - Local to uses of it. Every hunk of the edit, with 3 lines of context, must
+#     mention a declared identifier, and may remove at most
+#     OOS_MAX_REMOVED_PER_HUNK lines. Adding match arms removes nothing; a call
+#     site rewritten to a new signature removes a line or two (rustfmt reflow
+#     included). Rewriting unrelated logic under the cover of a declaration
+#     does neither.
+#   - An existing .rs file. Compile errors live in Rust sources; a new file
+#     cannot have one, and deleting files is refused for everything.
+#
+# What this does NOT bound: lines added inside a hunk that mentions the
+# identifier. That residue is why accepted out-of-scope edits are listed in the
+# PR body for the operator, whose merge stays the final gate.
+OOS_CODES=" E0004 E0023 E0026 E0027 E0046 E0050 E0053 E0061 E0063 E0308 E0412 E0425 E0432 E0433 E0560 E0599 E0609 "
+OOS_MAX_REMOVED_PER_HUNK=3
+# An identifier that matches everything ties nothing to the diff.
+RUST_KEYWORDS=" as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while "
+
+# Prints why the edit to $1 is not admissible and returns 1, or returns 0.
+check_out_of_scope() {
+  local f="$1" base="$2" lease="$3" work="$4" body="$5" ids="" path code id rest
+  case "$f" in *.rs) ;; *) echo "not a Rust file"; return 1 ;; esac
+  git cat-file -e "$lease:$f" 2>/dev/null || { echo "not present at the launched head"; return 1; }
+  while read -r path code id rest; do
+    [ "$path" = "$f" ] || continue
+    case "$OOS_CODES" in *" $code "*) ;; *) echo "code '$code' does not qualify"; return 1 ;; esac
+    printf '%s\n' "$id" | grep -qxE '[A-Za-z_][A-Za-z0-9_]+' || { echo "'$id' is not an identifier"; return 1; }
+    case "$RUST_KEYWORDS" in *" $id "*) echo "'$id' is a keyword"; return 1 ;; esac
+    git diff -U0 "$base" "$lease" -- '*.rs' | grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' \
+      | grep -qw -- "$id" || { echo "'$id' is not on a line the task's diff changed"; return 1; }
+    ids="$ids $id"
+  done < <(printf '%s\n' "$body" | sed -n 's/^out-of-scope: *//p')
+  [ -n "$ids" ] || { echo "undeclared"; return 1; }
+  git diff -U3 "$lease" "$work" -- "$f" | awk -v ids="$ids" -v max="$OOS_MAX_REMOVED_PER_HUNK" '
+    function hit(s,   i) {
+      for (i = 1; i <= n; i++) if (s ~ ("(^|[^A-Za-z0-9_])" w[i] "([^A-Za-z0-9_]|$)")) return 1
+      return 0
+    }
+    function done_hunk() {
+      if (bad) return
+      if (!seen) { print "a hunk mentions no declared identifier"; bad = 1 }
+      else if (rm > max) { print "a hunk removes " rm " lines (max " max ")"; bad = 1 }
+    }
+    BEGIN { n = split(ids, w, " ") }
+    /^@@/ { if (in_hunk) done_hunk(); in_hunk = 1; seen = 0; rm = 0; next }
+    !in_hunk { next }
+    { if (hit(substr($0, 2))) seen = 1; if (substr($0, 1, 1) == "-") rm++ }
+    END { if (in_hunk) done_hunk(); exit bad }'
+}
+
 reject() { printf '%s\n' "$1" > "$STATE_DIR/$TASK.cloud.rejected"; echo "REJECTED: $1"; exit 1; }
 
 # Accept the VM's commits into the worktree, or refuse them. Refusal writes
@@ -297,13 +384,18 @@ accept_cloud_work() {
   [ "$(git rev-parse HEAD)" = "$lease" ] || reject "worktree moved since launch"
   git merge-base --is-ancestor "$lease" "$work" || reject "cloud commits do not descend from the launched head"
 
-  # Scope: every file the VM changed must already be one of the task's files,
-  # or a regenerated schema.
+  # Scope: every file the VM changed must be one of the task's files, a
+  # regenerated schema, or a declared out-of-scope fix the task's own diff
+  # forced (`check_out_of_scope`).
+  local task_files body why
+  task_files="$(git diff --name-only "$base" "$lease")"
+  body="$(cat "$STATE_DIR/$TASK.cloud.verdict" 2>/dev/null)"
   bad=""
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in assets/schemas/*) continue ;; esac
-    git diff --name-only "$base" "$lease" | grep -qxF -- "$f" || bad="$bad $f"
+    printf '%s\n' "$task_files" | grep -qxF -- "$f" && continue
+    why="$(check_out_of_scope "$f" "$base" "$lease" "$work" "$body")" || bad="$bad $f ($why)"
   done < <(git diff --name-only "$lease" "$work")
   [ -z "$bad" ] || reject "cloud commits touch files outside the task:$bad"
 
