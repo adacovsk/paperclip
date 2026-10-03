@@ -48,10 +48,16 @@ exit. Do NOT edit, commit or push.
 
 Review tasks live in `in_review` status (not `todo`). Coordinator creates them with that status; wake fires on assignment so `PAPERCLIP_TASK_ID` is injected, and no inbox polling is needed.
 
-1. **Scope.** In-scope files are `git diff origin/main..HEAD --name-only`. If the task description's file list disagrees, trust git. Never touch or "restore" a file outside it.
+1. **Scope.** In-scope files are `git diff origin/main..HEAD --name-only`. If the task description's file list disagrees, trust git. Never touch or "restore" a file outside it. **Scope limits what you edit, not what you read.** Half the checklist below cannot be answered from the diff alone.
 2. **Read the task, then the diff.** Know what the task asked (What / Done-when) before judging what the Worker did.
-3. **Fast exit for small, mechanical diffs.** If the diff is small and mechanical (an allowlist reason, a few data rows, a one-line fix, a rename) and a single careful read against the checklist below finds nothing, set `done` with the one-line comment `No defects.` and stop. Do not open surrounding files to find something to say. The data-only label alone doesn't qualify a task: data diffs carry real defects too.
-4. **Otherwise review for defects, in this order:**
+3. **Fast exit, only for diffs with no behaviour in them.** Allowlist reason text, comment or doc wording, a rename that moves no logic. If one careful read finds nothing, set `done` with `No defects.` and stop. Everything else gets the full pass, however small: a one-line logic fix and a few data rows are exactly where a wrong value or a dropped field hides, and the data-only label never qualifies on its own.
+4. **Read outside the diff before judging it.** For each new or changed item, do these before the checklist, and cite `origin/main` for any "does not exist" verdict:
+   - **Writers and callers.** Grep every new field, component, event, resource and `pub fn` for its production writer or caller (`src/`, not only `tests/`). None → unwired, whatever the reader looks like.
+   - **Landing sites.** For each key or value authored in data, open the struct it deserializes into and confirm a field takes it. For each new key, find the code that reads it.
+   - **Existing equivalents.** Grep for a system, helper or component that already does this. The Worker grepped too, but it was looking for a place to add code, not a reason not to.
+   - **Rules data.** For rules content (feat, spell, item, condition values), check the numbers against the reference rules data the project's `CLAUDE.md` names, not against the Worker's own description of them.
+   - **Tests.** For each test the Done-when relies on, ask whether it would fail on `origin/main`. A test that passes either way proves nothing.
+5. **Then review for defects, in this order:**
 
    **Does it do what the task asked?**
    - Done-when actually satisfied, not approximated. A test that asserts the new behaviour exists, or the behaviour is observable some other way.
@@ -68,8 +74,8 @@ Review tasks live in `in_review` status (not `todo`). Coordinator creates them w
    - A second system/helper duplicating one that already exists. Grep before accepting a new one.
    - Tests weakened to pass: loosened assertions, deleted cases, a fixture changed to match wrong output.
 
-5. **Fix what you find.** Multi-file or architectural fixes → file a Paperclip issue for Coordinator instead.
-6. **Complete.** `PATCH /api/issues/{issueId}` with `{"status":"done","comment":"<comment>"}`. Every task exits `done`, whether you fixed things or found nothing. A comment without a status change is not completion.
+6. **Fix what you find.** Multi-file or architectural fixes → file a Paperclip issue for Coordinator instead.
+7. **Complete.** `PATCH /api/issues/{issueId}` with `{"status":"done","comment":"<comment>"}`. Every task exits `done`, whether you fixed things or found nothing. A comment without a status change is not completion.
 
 ## What not to commit
 
