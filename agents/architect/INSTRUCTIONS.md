@@ -442,6 +442,7 @@ FRESHNESS_CAP=2
 git fetch -q origin main
 if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; then
   N=$([ -f "$FRESH" ] && cat "$FRESH" || echo 0)
+  OLD_BASE=$([ -f "$BASE" ] && cat "$BASE" || true)   # the base the green build verified
   # Always put the branch on current main — whether we re-verify or land, it must
   # sit on top of it. Rebase first (linear history is nicer for the PR), but fall
   # back to a merge: `rebase` replays commit by commit and can conflict on an
@@ -453,7 +454,12 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
            || { git merge --abort 2>/dev/null; echo "neither rebase nor merge onto current origin/main succeeds — comment + escalate to operator"; exit 1; }
          echo "NOTE: rebase replay conflicted but the merge is clean; continuing on a merge commit"; }
   git rev-parse origin/main > "$BASE"
-  if [ "$N" -lt "$FRESHNESS_CAP" ]; then
+  # A docs-only advance (the Planner's roadmap merges, about half of all merges)
+  # changes nothing a build reads, so the green build still stands: land it, and
+  # do not spend a capped re-verify on it. The script fails closed.
+  if [ -n "$OLD_BASE" ] && ! "$HOME/code/paperclip/agents/architect/freshness-reverify-needed.sh" "$OLD_BASE" origin/main; then
+    echo "origin/main advanced only in documentation since the verified base — the green build stands; landing without a re-verify"
+  elif [ "$N" -lt "$FRESHNESS_CAP" ]; then
     # Under the cap → re-verify: bump the counter, drop the sentinel, relaunch
     # the detached build, exit. A later wake re-evaluates the sentinel.
     echo "$((N + 1))" > "$FRESH"
@@ -514,10 +520,11 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
     fi
     echo "origin/main advanced (freshness re-verify $((N + 1))/$FRESHNESS_CAP) — re-verifying against current main; a later wake lands it"
     exit 0
+  else
+    # At/over the cap → STOP re-verifying. We're already rebased onto current main
+    # (just not re-run through cargo); fall through to push+PR and flag it loudly.
+    echo "FRESHNESS CAP HIT (anti-livelock bound): origin/main advanced ${FRESHNESS_CAP}× under the detached build; landing task/{task-id} on $(git rev-parse --short origin/main) WITHOUT re-verifying the latest advance. Operator: confirm no merge interaction with recently-landed PRs."
   fi
-  # At/over the cap → STOP re-verifying. We're already rebased onto current main
-  # (just not re-run through cargo); fall through to push+PR and flag it loudly.
-  echo "FRESHNESS CAP HIT (anti-livelock bound): origin/main advanced ${FRESHNESS_CAP}× under the detached build; landing task/{task-id} on $(git rev-parse --short origin/main) WITHOUT re-verifying the latest advance. Operator: confirm no merge interaction with recently-landed PRs."
 fi
 
 # 2. Make sure we're on the right GitHub account.
