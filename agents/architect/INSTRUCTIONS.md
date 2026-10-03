@@ -40,6 +40,27 @@ is "compiles cleanly, tests pass, here's the PR." If a task title or body
 asks you to review, audit, or evaluate, refuse it (see §Step 0 → Scope check).
 "Verify+Review" combo tasks route around Reviewer — do not accept them.
 
+## Final message: your comment on the task, and how you escalate
+
+**The server posts your final message to the task as a comment**, authored by
+you, on every run that does not merge the branch. It is how you comment — you
+have no API — so every "comment …" in this file means *put it in your final
+message*. Write it for the operator: lead with the outcome (landed, waiting on a
+build, or stuck), then the evidence they need to act.
+
+**To escalate, end the final message with this line, on its own:**
+
+```
+PAPERCLIP-ESCALATE: <one-line reason>
+```
+
+The server then moves the task to `blocked`, which is the only thing that
+surfaces it — without the line the task stays `in_review` and reads exactly like
+a verify still in flight, and escalations sat unseen for up to two days that
+way. Every "escalate" / "escalate to operator" in this file means this line.
+Never write it on a run that landed a PR or launched a build you are waiting
+on: a blocked task drops out of the pipeline until someone unblocks it.
+
 ## Step 0: Precondition gate (before anything else)
 
 Hard gate. No fallback. If any check fails, comment on the task and
@@ -274,7 +295,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    - **`{task-id}.integration` — report-only, never a gate.** Written by the fourth stage (§Cargo discipline rule 5). Absent = the stage was skipped (no Rust under `src/` or `tests/` changed) or the gating stages failed, so there is nothing to report. `0` = integration suites passed; say nothing. **Non-zero = they failed, and you Land anyway** — this does not block the PR and you must not enter the fix loop for it. Post one comment on the task naming the failing tests from `{task-id}.integration.log` (`grep -E "^(test .* FAILED|failures:|---- .* stdout ----)"` and the `test result:` line), state whether any failing suite is in your changed-files list, and continue to §Landing in the same run. `137` means OOM, not a real failure — report it as inconclusive rather than as a broken suite.
      - If a failing suite **is** in your changed-files list, it is yours: fix it before landing, as a normal in-scope failure.
      - If it is **not**, it is a pre-existing break or another task's — comment it and land. Do not edit it. The diff-caused exception in step 4 covers *compile* errors only; a runtime test failure carries no error code tying it to your diff, so it never qualifies.
-   - **present, `96`, `97` or `98`** → **environment/base failure, NOT a build failure** (96 = cargo/sccache off PATH; 97 = worktree missing; 98 = could not put the branch on current `origin/main` by **either** rebase or merge, so this really is a content conflict). The code is very likely fine — cargo never ran. Do **not** enter the fix loop, do **not** edit Rust. Comment the sentinel value + the tail of `$LOG` and escalate to operator. See Cargo discipline §Environment and base bootstrap.
+   - **present, `96`, `97` or `98`** → **environment/base failure, NOT a build failure** (96 = cargo/sccache off PATH; 97 = worktree missing; 98 = could not put the branch on current `origin/main` by **either** rebase or merge, so this really is a content conflict). The code is very likely fine — cargo never ran. Do **not** enter the fix loop, do **not** edit Rust. Comment the sentinel value + the tail of `$LOG` and escalate to operator (§Final message). See Cargo discipline §Environment and base bootstrap.
      - **`98` specifically**: the launch tried to put the branch on current `origin/main` and either the fetch failed or the rebase conflicted. A conflict is genuine work for the operator — do not try to force it. This sentinel exists because a build on a stale base produces **false reds against already-fixed code**, and a red that isn't yours is the most expensive kind: you cannot fix it, so every cycle spent on it is wasted.
    - **present, `99`** → **the wrapper was signalled before cargo reported — INCONCLUSIVE, not a build failure.** Written by the wrapper's own signal trap, so the result is "we never found out", not "it failed". The usual cause is the server being restarted under it. Do **not** enter the fix loop and do **not** edit Rust: `rm -f "$EXIT"` and relaunch, exactly as for `137`. Twice running → escalate rather than relaunching a third time. → [why the trap exists](rationale/sentinel-99-trap.md)
 
@@ -298,7 +319,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 
    (Your task branch is isolated, but worktree state may carry stale build artifacts from a sibling — an error that names nothing in your diff is filtered out by exactly this test.)
 5. Fix all of your filtered errors and warnings. **Zero warnings tolerance applies to your changed files only.** Don't fix unrelated warnings — that's another task's responsibility; warnings never qualify for the step 4 exception.
-6. After fixing: commit in-worktree, `rm -f "$EXIT"`, and **relaunch** the detached chain (the launch in *Check the sentinel FIRST*). The next wake re-evaluates the sentinel. Hard stop after 3 fix/relaunch cycles — comment with the remaining errors and `escalate to operator`.
+6. After fixing: commit in-worktree, `rm -f "$EXIT"`, and **relaunch** the detached chain (the launch in *Check the sentinel FIRST*). The next wake re-evaluates the sentinel. Hard stop after 3 fix/relaunch cycles — comment with the remaining errors and `escalate to operator` (§Final message).
 6.5. **Schema-drift check — ask the CI guard what is schema-relevant; do not judge it from the path.** The weekly-only `schema-drift` CI job (root `CLAUDE.md`) leaves a window where a routine enum/struct edit lands without its dependent `assets/schemas/*.json` regenerated (a recurring Reviewer pattern), so `scripts/check_schema_regen.py` runs per-change in the cheap `validate` job as the non-compiling approximation. **Run that same script against your own diff before Landing** — it is stdlib-only and does not compile anything:
     ```sh
     git diff --name-only main..HEAD | python3 scripts/check_schema_regen.py
@@ -378,7 +399,7 @@ above, with these cloud-specific meanings (you can tell a cloud result by
 - **`1`** → accepted but still red: the VM already spent its fix rounds, and its
   in-scope fixes are now in your worktree. That *is* your 3-cycle hard stop —
   do not fix locally. Comment the `--- errors ---` block from the verdict and
-  escalate to operator.
+  escalate to operator (§Final message).
 - **`95`** → rejected; the reason is in `{task-id}.cloud.rejected` and the tail
   of `{task-id}.cloud.log`. Your worktree was left at the head you pushed, and
   `offload` now refuses this task. Comment the reason, `rm -f "$EXIT"`, and
@@ -471,7 +492,7 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
   git rebase origin/main \
     || { git rebase --abort 2>/dev/null
          git merge --no-edit origin/main \
-           || { git merge --abort 2>/dev/null; echo "neither rebase nor merge onto current origin/main succeeds — comment + escalate to operator"; exit 1; }
+           || { git merge --abort 2>/dev/null; echo "neither rebase nor merge onto current origin/main succeeds — comment + escalate to operator (§Final message)"; exit 1; }
          echo "NOTE: rebase replay conflicted but the merge is clean; continuing on a merge commit"; }
   git rev-parse origin/main > "$BASE"
   # A docs-only advance (the Planner's roadmap merges, about half of all merges)

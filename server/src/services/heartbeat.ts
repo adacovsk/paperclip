@@ -33,6 +33,8 @@ import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } fr
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { shouldWakeNextMover } from "./stage-completion-wake.js";
+import { extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
+import { logActivity } from "./activity-log.js";
 import { resolveSubtaskWakeTarget } from "./subtask-wake-target.js";
 import { coordinatorIdFor } from "./coordinator-lookup.js";
 import { usageLimitFromResult } from "./usage-limit.js";
@@ -3474,6 +3476,76 @@ export function heartbeatService(db: Db) {
                   },
                   "left task at its current status for agent without paperclip skill (status is outside the promotion allowlist — a no-skill exit 0 is not evidence it should advance)",
                 );
+              }
+
+              // Put the Architect's final message on the task, and block the
+              // task when that message carries the escalation marker. See
+              // no-skill-run-report.ts for why the marker, and not run state,
+              // decides the block. Best-effort: a failure here must not stop the
+              // wake below, which is how the pipeline keeps moving.
+              //
+              // The wake below is left exactly as it is. A blocked task wakes the
+              // same next mover the unblocked one would have, once per run, so the
+              // Coordinator reads the block and the comment on its next pass
+              // instead of the next scheduled sweep. No second wake is added: the
+              // comment goes through the service, not the comment route, so it
+              // fires no mention or assignee wakes of its own either.
+              const runReport = planNoSkillRunReport({
+                role: agent.role,
+                currentStatus: existingIssue.status,
+                nextStatus,
+                resultText: extractRunResultText(adapterResult),
+              });
+              if (runReport.comment) {
+                try {
+                  const comment = await issuesSvc.addComment(issueId, runReport.comment, { agentId: agent.id });
+                  await logActivity(db, {
+                    companyId: agent.companyId,
+                    actorType: "agent",
+                    actorId: agent.id,
+                    agentId: agent.id,
+                    runId: run.id,
+                    action: "issue.comment_added",
+                    entityType: "issue",
+                    entityId: issueId,
+                    details: {
+                      commentId: comment.id,
+                      bodySnippet: comment.body.slice(0, 120),
+                      identifier: existingIssue.identifier,
+                      issueTitle: existingIssue.title,
+                      source: "run_result",
+                    },
+                  });
+                  if (runReport.block) {
+                    await issuesSvc.update(issueId, { status: "blocked" });
+                    await logActivity(db, {
+                      companyId: agent.companyId,
+                      actorType: "agent",
+                      actorId: agent.id,
+                      agentId: agent.id,
+                      runId: run.id,
+                      action: "issue.updated",
+                      entityType: "issue",
+                      entityId: issueId,
+                      details: {
+                        status: "blocked",
+                        _previous: { status: nextStatus ?? existingIssue.status },
+                        source: "run_escalation",
+                        escalationReason: runReport.escalationReason,
+                        identifier: existingIssue.identifier,
+                      },
+                    });
+                    logger.info(
+                      { issueId, agentId: agent.id, runId: run.id, reason: runReport.escalationReason },
+                      "blocked task on the Architect's escalation marker",
+                    );
+                  }
+                } catch (err: unknown) {
+                  logger.warn(
+                    { err, issueId, agentId: agent.id, runId: run.id },
+                    "failed to post the Architect's run result on its task",
+                  );
+                }
               }
 
               // Wake the next mover so the pipeline advances: the parent's
