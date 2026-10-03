@@ -27,8 +27,13 @@ changed=$(git diff --name-only "$OLD" "$NEW" 2>/dev/null) || exit 0
 
 while IFS= read -r path; do
   [ -z "$path" ] && continue
+  # The roadmap baseline is exempt by exact path, not as `scripts/*`: the
+  # Planner rewrites it on almost every roadmap merge, so without it this check
+  # misses most of what it exists for. Only the Python roadmap guards read it.
+  # Every other file under scripts/ stays a build input, because cargo tests
+  # read files there.
   case "$path" in
-    docs/*|*.md) ;;
+    docs/*|*.md|scripts/roadmap_section_baseline.txt) ;;
     *) exit 0 ;;
   esac
 done <<< "$changed"

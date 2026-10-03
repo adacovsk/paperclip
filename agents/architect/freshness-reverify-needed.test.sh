@@ -32,6 +32,12 @@ check "a Markdown file anywhere is documentation" "$(run "$BASE" "$ROOTMD")" 1
 
 check "no change at all does not re-verify" "$(run "$ROOTMD" "$ROOTMD")" 1
 
+BASELINE=$(mkdir -p scripts && commit scripts/roadmap_section_baseline.txt)
+check "the roadmap size baseline is not a build input" "$(run "$BASE" "$BASELINE")" 1
+
+OTHERSCRIPT=$(commit scripts/check_merchant_price_drift.py)
+check "any other scripts/ file re-verifies" "$(run "$BASELINE" "$OTHERSCRIPT")" 0
+
 CODE=$(commit src/lib.rs)
 check "a source change re-verifies" "$(run "$BASE" "$CODE")" 0
 check "docs plus source re-verifies" "$(run "$ROADMAP" "$CODE")" 0
