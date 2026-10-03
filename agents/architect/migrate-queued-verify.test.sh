@@ -22,7 +22,7 @@ check() { [ "$2" = "$3" ] && { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; } \
 export XDG_CACHE_HOME="$D/cache" PAPERCLIP_PROJECT="$D/proj" MIGRATE_CGROUP_ROOT="$D/cg"
 V="$XDG_CACHE_HOME/paperclip-verify"; mkdir -p "$V" "$D/bin"
 export PATH="$D/bin:$PATH"
-export MIGRATE_CLOUD_VERIFY="$D/bin/cloud-verify"
+export MIGRATE_CLOUD_VERIFY="$D/bin/cloud-verify" MIGRATE_INTERVAL=0
 
 # --- stubs -----------------------------------------------------------------
 cat > "$D/bin/systemctl" <<STUB
@@ -47,7 +47,7 @@ export MIGRATE_PACE="$D/bin/pace"
 # A live scope for task $1 whose cgroup holds one process running $2.
 scope() {
   local id="$1" prog="$2" pid
-  if [ "$prog" = rustc ]; then "$D/bin/rustc" 300 & else bash -c 'A="AA-9'"${id#AA-}"'"; sleep 300; true' & fi
+  if [ "$prog" = rustc ]; then "$D/bin/rustc" 300 >/dev/null 2>&1 & else bash -c 'A="AA-9'"${id#AA-}"'"; sleep 300; true' >/dev/null 2>&1 & fi
   pid=$!; PIDS+=("$pid"); sleep 0.1
   echo "verifyrun-$id.scope loaded active running" >> "$D/units"
   mkdir -p "$D/cg/u/verifyrun-$id.scope" "$PAPERCLIP_PROJECT/.paperclip/worktrees/$id"
@@ -73,6 +73,11 @@ check "the compiling build is not offloaded" "$(grep -c 'AA-3' "$D/offloaded")" 
 reset; pace 1; scope AA-4 sleep; echo 1 > "$D/offload_rc"
 bash "$SUT" AA-4 >/dev/null
 check "a refused offload leaves no sentinel" "$([ -f "$V/AA-4.exit" ] && echo present || echo absent)" absent
+
+reset; pace 1; scope AA-6 sleep; scope AA-7 sleep; echo 1 > "$D/offload_rc"
+bash "$SUT" AA-6 AA-7 >/dev/null
+check "a refusal stops the run before the next build" "$(grep -c verifyrun-AA-7 "$D/stopped")" 0
+check "only the refused build was offered"           "$(wc -l < "$D/offloaded")" 1
 
 reset; pace 1; scope AA-5 sleep
 bash "$SUT" --dry-run >/dev/null
