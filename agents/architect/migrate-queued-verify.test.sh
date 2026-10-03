@@ -22,7 +22,7 @@ check() { [ "$2" = "$3" ] && { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; } \
 export XDG_CACHE_HOME="$D/cache" PAPERCLIP_PROJECT="$D/proj" MIGRATE_CGROUP_ROOT="$D/cg"
 V="$XDG_CACHE_HOME/paperclip-verify"; mkdir -p "$V" "$D/bin"
 export PATH="$D/bin:$PATH"
-export MIGRATE_CLOUD_VERIFY="$D/bin/cloud-verify" MIGRATE_INTERVAL=0
+export MIGRATE_CLOUD_VERIFY="$D/bin/cloud-verify" MIGRATE_INTERVAL=0 PAPERCLIP_API_URL=http://x PAPERCLIP_AGENT_ID=arch
 
 # --- stubs -----------------------------------------------------------------
 cat > "$D/bin/systemctl" <<STUB
@@ -57,6 +57,11 @@ scope() {
 reset() { rm -f "$D/units" "$D/stopped" "$D/offloaded" "$D/offload_rc" "$V"/*.exit; }
 
 # --- cases -----------------------------------------------------------------
+reset; pace 1; scope AA-8 sleep
+env -u PAPERCLIP_AGENT_ID bash "$SUT" >/dev/null 2>&1
+check "no wake identity: refuses to start" "$?" 2
+check "no wake identity: stops nothing"    "$(cat "$D/stopped" 2>/dev/null | wc -l)" 0
+
 reset; pace 0; scope AA-1 sleep
 bash "$SUT" >/dev/null
 check "closed lane stops nothing"   "$(cat "$D/stopped" 2>/dev/null | wc -l)" 0
