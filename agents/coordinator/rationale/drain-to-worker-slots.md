@@ -74,3 +74,27 @@ is the only brake: it stops a second fire landing on one already in flight. Ther
 no idle cooldown on top of it. A drained backlog is the pipeline stopped, so throttling the restock
 to protect per-run cost buys idle Worker slots at a far worse price, and a Planner with nothing
 writable left says so in a run measured in seconds.
+
+## Why a downstream drain does not wake the Planner
+
+Dispatchable `ready` reaches 0 for two different reasons. Either the roadmap has run out of
+promotable fronts, or every remaining front is held behind work that has not landed: its files are
+contended, or it builds on a branch that is not on `main` yet. Only the first is a supply problem.
+The second clears itself as the verify queue lands, and no roadmap edit speeds that up.
+
+Treating the second as the first made a loop. The restock request woke the Planner. The Planner
+added fronts and merged its own PR, which moved `main`. Every move of `main` invalidated in-flight
+verifies, so less landed and more fronts were held. At its worst there were 233 tasks `in_review`
+and a roadmap merge about every 30 minutes, while the Worker sat mostly idle and the Coordinator
+kept asking for more supply.
+
+`inflight` is the number of parents queued for or running a build, so it measures the downstream
+queue directly. Once it reaches twice what the Workers can hold, the Workers have already produced
+more than two full batches the Architect has not landed. More supply would only lengthen that
+queue. Idle Worker slots in that state are cheap, because the Architect is the bottleneck either
+way.
+
+This overrides the re-dispatch rule above only while the bound holds. The open request is left as
+it is, and the first fire that measures `inflight` below the bound re-dispatches it. So the
+deadlock that rule exists to prevent cannot come back: the gate is re-read on every fire, and
+nothing waits for an event that might not come.
