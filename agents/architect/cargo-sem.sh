@@ -1004,7 +1004,24 @@ if ! flock -n 3; then
     printf 'cargo-sem.sh: worktree lock was held by escaped orphans; reaped and acquired.\n' >&2
   else
     printf 'cargo-sem.sh: another build holds this worktree; waiting outside the queue.\n' >&2
-    flock 3
+    # The wait is BOUNDED. A legitimate same-worktree build finishes well inside
+    # it; a leaked holder never does, and an unbounded wait is invisible: the
+    # chain stays alive, so the Architect's liveness probe reads "build running"
+    # and never relaunches. Exit 75 (EX_TEMPFAIL) is "inconclusive, relaunch",
+    # distinct from a build failure and from the 99 signal sentinel, so it costs
+    # no escalation strike. The holders are named so the leak can be traced.
+    if ! flock -w "${CARGO_SEM_WT_WAIT:-14400}" 3; then
+      printf 'cargo-sem.sh: worktree lock still held after %ss; giving up (exit 75, relaunch). Open on the lock file:\n' \
+        "${CARGO_SEM_WT_WAIT:-14400}" >&2
+      for _p in /proc/[0-9]*; do
+        [ "${_p#/proc/}" = "$$" ] && continue
+        ls -l "$_p/fd" 2>/dev/null | grep -qF -- "$D/cargo-wt-$WTKEY.lock" || continue
+        printf '  pid=%s ppid=%s %s\n' "${_p#/proc/}" \
+          "$(awk '$1=="PPid:"{print $2; exit}' "$_p/status" 2>/dev/null)" \
+          "$(tr '\0' ' ' < "$_p/cmdline" 2>/dev/null | cut -c1-160)" >&2
+      done
+      exit 75
+    fi
   fi
 fi
 
@@ -1199,7 +1216,10 @@ trap 'close_detached_run "${rc:-143}"' EXIT
 # the slot is released only when BOTH have exited — the FD LIFETIME contract in
 # the header is unchanged.
 run "$@" & BUILD_PID=$!
-watch_for_cancel "$BUILD_PID" &
+# The watcher needs no lock, so it gets none. It and each `sleep` it forks would
+# otherwise inherit fds 3 and 9, and any of them outliving this shell keeps the
+# worktree and the slot locked for a build that is gone.
+watch_for_cancel "$BUILD_PID" 3>&- 9>&- &
 WATCH_PID=$!
 
 wait "$BUILD_PID"; rc=$?
