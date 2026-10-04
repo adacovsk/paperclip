@@ -63,14 +63,24 @@
 #   75  still running (no verdict yet, inside the deadline) — poll again
 #   96  environment broken (claude/script missing, no launch state) — NOT a build failure
 #   98  stale base (branch not pushed, or base moved) — operator resolves
-#   99  inconclusive (deadline passed, session never published) — relaunch
+#   99  inconclusive (deadline passed with no verdict ref; the session may still publish late) — relaunch
 set -uo pipefail
 
 STATE_DIR="${CLOUD_VERIFY_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify}"
 # A cold Bevy compile on a fresh VM with an empty sccache is the expected case,
 # not the exception — this is an overflow path precisely because it is slower per
 # build than a warm local one. Deadline is generous for that reason.
-DEADLINE="${CLOUD_VERIFY_DEADLINE:-5400}"
+#
+# Do not lower this back toward 90 minutes. Most sessions publish in under an
+# hour, but a slow tail runs far longer: fix rounds, a disk-full `cargo clean`
+# and a second schema regeneration each add a rebuild, and sessions in that tail
+# have published at 128 and 150 minutes. At a 90-minute deadline those verdicts
+# arrived after this side had already written 99 and relaunched, so the lane read
+# as "never publishes" while it was publishing late, and two late 99s in a row
+# escalated a verified task to the operator. A session that is truly dead costs
+# only detection latency here; a deadline shorter than the tail throws away
+# finished verdicts and pays for the build twice.
+DEADLINE="${CLOUD_VERIFY_DEADLINE:-10800}"
 
 die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 

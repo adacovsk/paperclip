@@ -405,8 +405,11 @@ above, with these cloud-specific meanings (you can tell a cloud result by
   of `{task-id}.cloud.log`. Your worktree was left at the head you pushed, and
   `offload` now refuses this task. Comment the reason, `rm -f "$EXIT"`, and
   launch the **local** chain.
-- **`99`** → the VM never published; `rm -f "$EXIT"` and offload again. Twice
-  running → escalate.
+- **`99`** → no verdict ref by the deadline. That is usually a slow session, not
+  a dead one, and its verdict can still land after the sentinel is written. So
+  `rm -f "$EXIT"` and offload again **on the same head**. The ref is keyed on the
+  head sha, so a late verdict from the first session satisfies the relaunch's
+  poll instead of being thrown away. Twice running → escalate.
 
 **It spends quota, not relief from it.** Cloud draws the same account limits; the
 lane exists to use weekly quota that would otherwise go unused. A cold VM with no
