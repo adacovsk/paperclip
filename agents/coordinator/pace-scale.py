@@ -18,9 +18,13 @@ one task a fire, and Worker slots sat empty at a 50-point deficit.
               The Coordinator's step 5 reads WORKER_SLOTS from the Worker
               agent, so applying here is all it takes for promotion to follow.
 
-FAILS TO BASELINE, never wider. Unreadable usage, the 5-hour session at or
-above PACE_SCALE_SESSION_CEILING (default 70), or usage on or ahead of the
-week all give tier 0, today's fixed values. The meter is read through
+Ahead of pace it narrows, progressively down to 2 slots, so the week's quota is
+not spent before the reset (an exhausted weekly limit stalls every agent, not
+just the Workers). Within 5 points of pace it holds today's fixed values.
+
+FAILS TO BASELINE, never wider. Unreadable usage gives baseline; the 5-hour
+session at or above PACE_SCALE_SESSION_CEILING (default 70) caps a widened
+tier at baseline and leaves a narrowed one alone. The meter is read through
 `cloud-pace.py`'s cache, so this adds no requests to an endpoint that answers
 429 when polled hard.
 
@@ -45,13 +49,21 @@ _spec = importlib.util.spec_from_file_location(
 cloud_pace = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cloud_pace)
 
-#: (minimum deficit in points, worker slots, reviewer slots, writer threshold, planner floor)
+#: (deficit must exceed, worker slots, reviewer slots, writer threshold, planner floor)
+#: A negative deficit is usage *ahead* of the calendar: the week's quota is being
+#: spent faster than the week passes, so supply steps down to a floor of 2 slots
+#: rather than running the account dry before the reset and stalling every agent.
 TIERS = [
-    (float("-inf"), 8, 8, 2, 20),
+    (float("-inf"), 2, 2, 2, 5),
+    (-20.0, 4, 4, 2, 10),
+    (-10.0, 6, 6, 2, 15),
+    (-5.0, 8, 8, 2, 20),
     (0.0, 10, 10, 2, 25),
     (10.0, 12, 12, 3, 30),
     (25.0, 12, 12, 3, 40),
 ]
+#: Today's fixed values, and what an unreadable meter falls back to.
+BASELINE = 3
 
 API = os.environ.get("PAPERCLIP_API_URL", "http://127.0.0.1:3100").rstrip("/")
 COMPANY = os.environ.get("PAPERCLIP_COMPANY_ID", "cf4422f9-b895-4918-bbe6-985e841e1ffd")
@@ -60,7 +72,7 @@ COMPANY = os.environ.get("PAPERCLIP_COMPANY_ID", "cf4422f9-b895-4918-bbe6-985e84
 def scale(usage: dict | None, now: float) -> dict:
     ceiling = cloud_pace.env_float("PACE_SCALE_SESSION_CEILING", 70)
     if usage is None:
-        return _tier(0, None, "usage unreadable: baseline")
+        return _tier(BASELINE, None, "usage unreadable: baseline")
     week = usage["seven_day"]
     used = float(week["utilization"])
     reset = datetime.fromisoformat(week["resets_at"]).timestamp()
@@ -68,9 +80,11 @@ def scale(usage: dict | None, now: float) -> dict:
     session = float((usage.get("five_hour") or {}).get("utilization") or 0)
     deficit = elapsed - used
     why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed, session {session:.0f}%"
-    if session >= ceiling:
-        return _tier(0, deficit, f"{why}: session at or over {ceiling:.0f}%: baseline")
     tier = max(i for i, t in enumerate(TIERS) if deficit > t[0])
+    if session >= ceiling and tier > BASELINE:
+        # A hot 5-hour window caps supply at baseline; it never widens a tier
+        # that pace has already narrowed.
+        return _tier(BASELINE, deficit, f"{why}: session at or over {ceiling:.0f}%: capped at baseline")
     return _tier(tier, deficit, f"{why}: deficit {deficit:.0f} points")
 
 
@@ -124,7 +138,7 @@ def main() -> int:
     try:
         result = scale(usage, now)
     except Exception as exc:  # a changed meter shape degrades to baseline
-        result = _tier(0, None, f"usage unparseable ({type(exc).__name__}): baseline")
+        result = _tier(BASELINE, None, f"usage unparseable ({type(exc).__name__}): baseline")
     if "--apply" in sys.argv[1:]:
         try:
             result["applied"] = apply(result)
