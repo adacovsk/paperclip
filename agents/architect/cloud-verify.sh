@@ -113,8 +113,6 @@ breaks these rules is discarded.
 2. Gate commands. Record each exit status.
      cargo clippy --all-targets -- -D warnings -A dead-code -A unused-imports
      cargo test --lib
-     cargo clippy --no-default-features -- -D warnings -A dead-code -A unused-imports
-                                             (only if the task's files include src/**.rs)
      cargo test --test <name>                (for each tests/<name>.rs among the task's files)
    No semaphore, no CARGO_INCREMENTAL, no job or codegen-unit limits.
    On 'No space left on device': cargo clean -p rust-bevy-rpg, then re-run.

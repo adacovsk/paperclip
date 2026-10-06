@@ -1,21 +1,18 @@
-# Why the verify pipeline has three stages, shaped this way
+# Why the verify pipeline has two stages, shaped this way
 
-**Justifies:** *One detached process, up to three slot acquisitions — the `&&` goes BETWEEN `cargo-sem.sh` calls, never inside one*, and the absence of a `cargo test --tests` stage. (Cargo discipline rule 5)
+**Justifies:** *One detached process, two slot acquisitions — the `&&` goes BETWEEN `cargo-sem.sh` calls, never inside one*, and the absence of a `--no-default-features` stage and a `cargo test --tests` stage. (Cargo discipline rule 5)
 
-## The third stage: the configuration nothing else checks
+## Why the `--no-default-features` configuration is not checked per task
 
-Feature-gated code is compiled by exactly one configuration, and if no per-change gate builds
-that configuration, an error in it reaches the main branch. There it blocks every task, not
-just the one that introduced it, and clears only by operator intervention.
+Feature-gated code is compiled by exactly one configuration. While a per-task stage clippied
+`--no-default-features`, a break there that reached the main branch failed that stage for every
+later task, so it blocked the whole pipeline and had to be caught per task.
 
-Clippy rather than tests, because the failure class is a compile error. Clippy is check-level —
-no codegen, no link — and the compiler cache is warm from the stage before it, so the marginal
-cost is roughly one slot round-trip. A test build in the same configuration would be a full
-relink of the heaviest, most memory-hungry stage, to catch nothing this stage does not.
-
-The explicit `else` branch exists because a skipped stage must not look like a failed one.
-Without it the group inherits the non-zero status of the test that decided to skip, and a
-change with no relevant source reports a build failure.
+That reasoning only holds while verifies build the configuration. The two configurations differ
+at six `hot_reload`/`dev` sites, and the Tester's nightly run clippies both against the main
+branch. With no verify building `--no-default-features`, a break there blocks no task: it becomes
+one issue the next morning. Checking it per task cost a third slot acquisition on every verify
+that touched `src/` to prevent a failure that no longer stops anyone.
 
 ## Why `tests/` is not run per task
 
