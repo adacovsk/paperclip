@@ -277,6 +277,16 @@ cmd_watch() {
     printf '%s\n' "$rc" > "$exit_file"
     wake; return 0
   fi
+  await_verdict "$task"
+}
+
+# The half of `watch` after the launch: poll until the VM publishes a verdict,
+# accept or reject its commits, write the sentinel, wake. Separate so `rewatch`
+# can finish a launch whose watcher died without starting a second VM.
+await_verdict() {
+  local task="${1:?task id}" rc
+  local exit_file="$STATE_DIR/$task.exit"
+  echo $$ > "$STATE_DIR/$task.pid"
 
   # Iteration cap as well as the wall-clock DEADLINE poll enforces. The two guard
   # different failures: the deadline bounds "the VM never answered", the cap
@@ -481,8 +491,48 @@ cmd_offload() {
   # the VM's input; the VM runs the suite and acceptance re-runs it on this box.
   git push -q --no-verify --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed — run locally"; exit 1; }
   rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict"
-  setsid "$0" watch "$task" "$branch" "$verify_task" >/dev/null 2>&1 < /dev/null &
+  detach "$task" watch "$task" "$branch" "$verify_task"
   echo "offloaded $task: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null)"
+}
+
+# Start a watcher that outlives whoever started it. `setsid` alone is not enough:
+# it leaves a new session in the caller's cgroup, and the caller is an Architect
+# run inside `paperclip.service`, whose KillMode=control-group kills every process
+# in the cgroup on restart. One restart killed ten watchers mid-verify; their VMs
+# published green verdicts that nothing read for three hours. A transient scope
+# is its own cgroup, the same reason local builds run under `verifyrun-<task>`.
+detach() {
+  local task="$1"; shift
+  if systemd-run --user --scope --collect --quiet true >/dev/null 2>&1; then
+    systemd-run --user --scope --collect --quiet --unit="cloudwatch-$task-$(date +%s)" \
+      --setenv=PAPERCLIP_API_URL --setenv=PAPERCLIP_API_KEY --setenv=PAPERCLIP_AGENT_ID \
+      setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
+  else
+    setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
+  fi
+}
+
+# Finish a launched cloud verify whose watcher died: no sentinel, a recorded
+# launch, and no live watcher. Never starts a VM — the launched session is still
+# building or has already published, and `rewatch` reads the same ref it would.
+# Run from the task's worktree, like `offload`.
+cmd_resume() {
+  local task="${1:?task id}" verify_task="${2:-$1}" pid
+  [ -f "$STATE_DIR/$task.cloud.launched" ] || { echo "no cloud launch recorded for $task"; exit 1; }
+  [ ! -f "$STATE_DIR/$task.exit" ] || { echo "$task already has a sentinel ($(cat "$STATE_DIR/$task.exit"))"; exit 1; }
+  pid="$(cat "$STATE_DIR/$task.pid" 2>/dev/null)"
+  if [ -n "$pid" ] && grep -q cloud-verify "/proc/$pid/cmdline" 2>/dev/null; then
+    echo "watcher for $task is alive (pid $pid)"; exit 1
+  fi
+  [ "$(git branch --show-current)" = "task/$task" ] || { echo "not in task/$task's worktree"; exit 1; }
+  detach "$task" rewatch "$task" "$verify_task"
+  echo "resumed $task: watching $(cat "$STATE_DIR/$task.cloud.ref")"
+}
+
+cmd_rewatch() {
+  local task="${1:?task id}"
+  WAKE_ISSUE="${2:-$task}"
+  await_verdict "$task"
 }
 
 # Mirrors the local wrapper's callback so a verdict does not wait for the next
@@ -505,5 +555,7 @@ case "${1:-}" in
   watch)  shift; cmd_watch  "$@" ;;
   offload) shift; cmd_offload "$@" ;;
   accept)  shift; accept_cloud_work "$@" ;;
-  *) printf 'usage: %s offload <task-id> <branch> [verify-task-id] | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch>\n' "${0##*/}" >&2; exit 2 ;;
+  resume)  shift; cmd_resume "$@" ;;
+  rewatch) shift; cmd_rewatch "$@" ;;
+  *) printf 'usage: %s offload <task-id> <branch> [verify-task-id] | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch> | resume <task-id> [verify-task-id]\n' "${0##*/}" >&2; exit 2 ;;
 esac
