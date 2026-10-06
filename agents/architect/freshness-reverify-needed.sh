@@ -30,10 +30,16 @@ while IFS= read -r path; do
   # The roadmap baseline is exempt by exact path, not as `scripts/*`: the
   # Planner rewrites it on almost every roadmap merge, so without it this check
   # misses most of what it exists for. Only the Python roadmap guards read it.
-  # Every other file under scripts/ stays a build input, because cargo tests
-  # read files there.
+  # Other files under scripts/ are judged by whether Rust names them, below.
   case "$path" in
     docs/*|*.md|scripts/roadmap_section_baseline.txt) ;;
+    # A file under scripts/ is a build input only if Rust names it: cargo tests
+    # read a handful of guard scripts by literal path (`read_to_string(
+    # "scripts/check_....py")`). Anything else there — the guards, their tests,
+    # their allowlists — no build or test reads, and guard-only merges land
+    # often enough that treating them as code discarded green builds wholesale.
+    scripts/*)
+      git grep -q -F -e "$path" "$NEW" -- 'src/*' 'tests/*' 'benches/*' 'build.rs' 2>/dev/null && exit 0 ;;
     *) exit 0 ;;
   esac
 done <<< "$changed"
