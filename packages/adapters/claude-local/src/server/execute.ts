@@ -503,6 +503,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       parsed,
       stdout: proc.stdout,
       stderr: proc.stderr,
+      exitCode: proc.timedOut ? null : proc.exitCode,
     });
     const errorCodeFor = (fallback: string | null = null) =>
       limitMeta.limited ? "claude_usage_limit" : loginMeta.requiresLogin ? "claude_auth_required" : fallback;

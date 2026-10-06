@@ -263,7 +263,18 @@ export function detectClaudeUsageLimit(input: {
   stdout: string;
   stderr: string;
   now?: Date;
+  /**
+   * The process exit code, when known. A run that exited 0 without `is_error`
+   * completed its work and cannot have been stopped by a limit, whatever its
+   * output says: the scan covers all of stdout, tool results included, and an
+   * agent that merely *read* a file or log mentioning a limit would otherwise
+   * suspend every wake of that agent for the fallback window.
+   */
+  exitCode?: number | null;
 }): ClaudeUsageLimit {
+  if (input.exitCode === 0 && input.parsed?.is_error !== true) {
+    return { limited: false, scope: null, resetAt: null, resetText: null };
+  }
   const resultText = asString(input.parsed?.result, "").trim();
   const messages = [resultText, ...extractClaudeErrorMessages(input.parsed ?? {}), input.stdout, input.stderr]
     .join("\n")

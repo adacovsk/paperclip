@@ -55,6 +55,34 @@ describe("claude usage-limit detection", () => {
     expect(limit.limited).toBe(true);
   });
 
+  it("fires on a limit that ends the run with a non-zero exit", () => {
+    const limit = detectClaudeUsageLimit({ parsed: resultEvent(WEEKLY), stdout: "", stderr: "", exitCode: 1 });
+    expect(limit.limited).toBe(true);
+  });
+
+  it("does not fire on a run that exited cleanly, whatever its output quotes", () => {
+    // A successful Architect run read a log and a doc that mention limits; the
+    // scan matched tool output and suspended every Architect wake for 30 minutes.
+    const stdout = `{"type":"user","content":"cloud-pace: closed — You've hit your weekly limit"}\n${WEEKLY}`;
+    const limit = detectClaudeUsageLimit({
+      parsed: { type: "result", subtype: "success", is_error: false, result: "AA-12244 is landed" },
+      stdout,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(limit.limited).toBe(false);
+  });
+
+  it("still fires on a clean exit the CLI marked as an error", () => {
+    const limit = detectClaudeUsageLimit({
+      parsed: { type: "result", subtype: "success", is_error: true, result: WEEKLY },
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(limit.limited).toBe(true);
+  });
+
   it("does not fire on an ordinary failure", () => {
     const limit = detectClaudeUsageLimit({
       parsed: resultEvent("Error: ENOENT: no such file or directory"),
