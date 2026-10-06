@@ -336,4 +336,22 @@ describe("budgetService", () => {
 
     expect(lifted).toBeNull();
   });
+
+  it("never blocks an agent that opts out of usage-limit suppression", async () => {
+    const agentRow = [{
+      status: "idle",
+      pauseReason: null,
+      companyId: "company-1",
+      name: "Architect",
+      runtimeConfig: { heartbeat: { suppressWakesOnUsageLimit: false } },
+    }];
+    const companyRow = [{ status: "active", name: "Paperclip" }];
+    const limitState = [{ stateJson: { usageLimit: { resetAt: "2999-01-01T00:00:00.000Z", scope: "weekly" } } }];
+
+    const block = await budgetService(
+      createDbStub([agentRow, companyRow, [], [], limitState]).db as any,
+    ).getInvocationBlock("company-1", "agent-1");
+
+    expect(block).toBeNull();
+  });
 });

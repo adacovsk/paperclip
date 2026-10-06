@@ -726,6 +726,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
           pauseReason: agents.pauseReason,
           companyId: agents.companyId,
           name: agents.name,
+          runtimeConfig: agents.runtimeConfig,
         })
         .from(agents)
         .where(eq(agents.id, agentId))
@@ -821,12 +822,24 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       // timer path, the routine path and the claim of an already-queued run all
       // see it without a new call site. It lifts on its own when the stored reset
       // instant passes — nothing has to unset it.
-      const runtime = await db
-        .select({ stateJson: agentRuntimeState.stateJson })
-        .from(agentRuntimeState)
-        .where(eq(agentRuntimeState.agentId, agentId))
-        .then((rows) => rows[0] ?? null);
-      const usageLimit = activeUsageLimit(runtime?.stateJson);
+      //
+      // An agent opts out with `runtimeConfig.heartbeat.suppressWakesOnUsageLimit:
+      // false`. The Architect does: it is the only stage that lands verified work,
+      // so a suppression window strands every green build behind it, and a
+      // misclassified limit — a clean run whose output merely quoted limit text —
+      // once held 18 green verifies unlanded for 30 minutes. For such an agent a
+      // genuinely limited run fails fast and is re-woken; that costs seconds,
+      // whereas the window costs the whole landing pipeline.
+      const heartbeatConfig = (agent.runtimeConfig as { heartbeat?: Record<string, unknown> } | null)?.heartbeat;
+      const exemptFromUsageLimit = heartbeatConfig?.suppressWakesOnUsageLimit === false;
+      const runtime = exemptFromUsageLimit
+        ? null
+        : await db
+            .select({ stateJson: agentRuntimeState.stateJson })
+            .from(agentRuntimeState)
+            .where(eq(agentRuntimeState.agentId, agentId))
+            .then((rows) => rows[0] ?? null);
+      const usageLimit = exemptFromUsageLimit ? null : activeUsageLimit(runtime?.stateJson);
       if (usageLimit) {
         return {
           kind: "usage_limit" as const,
