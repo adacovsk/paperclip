@@ -50,9 +50,9 @@ INTERVAL="${MIGRATE_INTERVAL:-20}"
 DRY=""
 [ "${1:-}" = "--dry-run" ] && { DRY=1; shift; }
 
-units_for() {  # every live scope of one task (relaunches carry a numeric suffix)
+units_for() {  # every live scope of one task (relaunches carry a -N or -rN suffix)
   systemctl --user list-units --no-legend --plain --state=running 'verifyrun-*' 2>/dev/null \
-    | awk '{print $1}' | grep -E "^verifyrun-$1(-[0-9]+)?\.(scope|service)$"
+    | awk '{print $1}' | grep -E "^verifyrun-$1(-r?[0-9]+)?\.(scope|service)$"
 }
 
 compiling() {  # does any process in the unit's cgroup run a compiler?
