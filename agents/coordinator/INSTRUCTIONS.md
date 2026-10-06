@@ -318,10 +318,7 @@ undispatched.** Read the ceiling, never assume it:
 
 ```sh
 SLOTS=$(cat /tmp/cargo-sem.slots 2>/dev/null || echo 2)
-LIVE=$( { systemctl --user list-units 'verifyrun-*' --no-legend --plain --state=running \
-            2>/dev/null | awk '{print $1}' | grep -oE 'verifyrun-AA-[0-9]+'
-          ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+'
-        } | sort -u | wc -l )
+LIVE=$("$HOME/code/paperclip/agents/architect/verify-census.sh" | wc -l)
 # dispatch only while  $LIVE  <  2 * $SLOTS
 ```
 
@@ -407,17 +404,17 @@ For each parent `{task-id}`:
    show nothing but its startup line for 20–40 minutes and is RUNNING. Re-dispatch per the step 3
    cap only when all three say dead.
 
-   > **Take the census once, for every id — never `pgrep`/`grep` per task.** A per-id probe matches
-   > the *probing shell*, so a build that does not exist reports live.
+   > **Take the census through `agents/architect/verify-census.sh`, never inline.** A per-id probe,
+   > or the union narrowed in the same command, matches the *probing shell*, so a build that does
+   > not exist reports live. The script excludes its own ancestry; never write `verifyrun-AA-<n>` in
+   > the command that calls it.
    >
    > ```sh
-   > { systemctl --user list-units 'verifyrun-*' --no-legend --plain --state=running \
-   >     2>/dev/null | awk '{print $1}' | grep -oE 'verifyrun-AA-[0-9]+'
-   >   ps -eo args --no-headers | grep -oE 'verifyrun-AA-[0-9]+'
-   > } | sort -u
+   > "$HOME/code/paperclip/agents/architect/verify-census.sh"            # every live id
+   > "$HOME/code/paperclip/agents/architect/verify-census.sh" AA-<n>     # exit 0 = alive
    > ```
    >
-   > The scope-list half is primary and `ps` alone under-reads; `[0-9]+` must not be `[0-9]*`.
+   > Inside, the scope-list half is primary and `ps` alone under-reads.
    > → [why a per-id probe cannot work, and why both halves of the union are needed](rationale/census-not-per-id-grep.md)
 2. **Committed + ahead gate.** Worktree clean (`git -C
    .paperclip/worktrees/{task-id} status --porcelain` empty) AND ahead of
