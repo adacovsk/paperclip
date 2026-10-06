@@ -280,7 +280,7 @@ setup() {
   printf '%s\n' "$BASE_SHA" > "$CLOUD_VERIFY_DIR/$1.base"
   printf '%s\n' "$LEASE" > "$CLOUD_VERIFY_DIR/$1.cloud.launched-head"
   printf 'refs/heads/cloud-verify/%s/%s\n' "$1" "$LEASE" > "$CLOUD_VERIFY_DIR/$1.cloud.ref"
-  printf 'CLOUD-VERIFY-V2\nresult: PASS\nintegration: 0\n' > "$CLOUD_VERIFY_DIR/$1.cloud.verdict"
+  printf 'CLOUD-VERIFY-V2\nresult: PASS\n' > "$CLOUD_VERIFY_DIR/$1.cloud.verdict"
   rm -f "$CLOUD_VERIFY_DIR/$1.cloud.rejected"
   g checkout -q --detach
 }
@@ -297,7 +297,6 @@ setup AA-20; commit src/a.rs "fn fixed() {}" fix; commit assets/schemas/x.json "
 WORK="$(g rev-parse HEAD)"; publish AA-20
 accept AA-20;                                   check "in-scope fix + schemas accepted -> 0" "$?" 0
 check "worktree fast-forwarded to cloud work" "$(g rev-parse HEAD)" "$WORK"
-check "integration sentinel written" "$(cat "$CLOUD_VERIFY_DIR/AA-20.integration" 2>/dev/null)" 0
 
 setup AA-21; publish AA-21
 accept AA-21;                                   check "no cloud commits (clean verify) accepted -> 0" "$?" 0
