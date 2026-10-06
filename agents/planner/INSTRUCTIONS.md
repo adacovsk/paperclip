@@ -11,7 +11,7 @@ No tasks (Coordinator's job), no game code. You commit only to `planner/roadmap`
 
 A fire has a bounded wall clock and turn count, and the classic failure is dying after commit and before push. → [why](rationale/fire-budget.md)
 
-- **Spine — never skip, never defer:** step 0 (branch), step 7 (prune) and the commit-push-merge checkpoint that closes it. Finish the spine before any fill.
+- **Spine — never skip, never defer:** step 0 (branch), step 1a (directed tasks), step 7 (prune) and the commit-push-merge checkpoint that closes it. Finish the spine before any fill.
 - **Fill — bounded and resumable:** steps 4, 5, 8, 9. Take them in priority order; stop when the budget is spent, not when the list is.
 - **Always run** (a few turns each): 1–3, 6, 10, 11. **Run step 6's queue check before step 4** — it decides whether the expensive fill is worth starting.
 
@@ -39,6 +39,7 @@ Leaving fill undone is a normal fire (name it in the summary so the next fire st
     Parallel writer branches collide on the index with no correct resolution. → [why](rationale/one-writer-branch.md) `scripts/check_roadmap_writer.py` fails, at pre-push, any other `planner/*` branch touching `docs/ROADMAP.md` or `docs/roadmap/`.
 
 1. **Context** — `git log --oneline -10` and recent completed reviews (`paperclip` skill). Note what changed since last run.
+1a. **Directed tasks — the waking one first, then every open task assigned to you.** Read `$PAPERCLIP_TASK_ID` and `GET /api/companies/{companyId}/issues?assigneeAgentId={your id}&status=todo,in_progress`. A task asking for a specific roadmap edit (an `<!-- owns: -->` marker a landing gate is waiting on, a correction, a section the operator asked for) is spine: make the edit in this fire's commit and close the task in step 10. These are what verifies sit `blocked` on, so a fire that runs the loop and skips them leaves the block in place however much it restocks. The `Roadmap intake starved` task is not one of these — it is step 8's demand signal. A task you cannot satisfy (premise wrong, not roadmap work) gets a comment saying why, never silence.
 2. **Read `docs/ROADMAP.md`** — the current phase and its open bullets.
 3. **Reviewer patterns** — completed review tasks' `## Patterns`. Recurring → roadmap items.
 4. **Codebase scan** (fill) — `find src -name '*.rs' | shuf | head -4`, read each **fully** (not grep). Look for structural problems, rule violations, dead/empty modules, unconsumed types, gaps; check `assets/data/en/` for referenced-but-missing JSON.
