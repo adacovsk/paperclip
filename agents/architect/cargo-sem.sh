@@ -129,7 +129,7 @@
 #
 # RESUME LANE (AA-3129) — a verify that has finished a stage outranks one that
 # has not started. One verify is several cargo commands (`clippy --all-targets`,
-# `test --lib`, `clippy --no-default-features`, `test --tests`), and each is a
+# `test --lib`, `clippy --no-default-features`), and each is a
 # separate call to this script, because chaining them into one call is refused
 # (see the ONE CARGO PER ACQUISITION guard below; do not "fix" this by lifting
 # that ban — it is what bounds hold duration). Under strict FIFO that means a

@@ -12,6 +12,7 @@ Operator (human; commits to main, sets direction, merges PRs)
       Reviewer      — wake on assignment — optimizes Worker's changed files; commits polish; never pushes
       Architect     — wake on assignment — runs cargo; fixes errors; pushes; opens PR
   Facilitator       — daily 20:45 — pipeline health; blocked-task clearing; stale-branch sweep; comment-without-PATCH
+  Tester            — nightly 02:00 — runs every test target on origin/main; files each failure as a `test-failure` GitHub issue for Planner intake
 ```
 
 Nightly fires run just *after* the 8 PM America/Denver Claude weekly-limit
@@ -20,35 +21,36 @@ freshest quota of the cycle. Do NOT move them back before 20:00 — firing into
 the pre-reset window is the most-depleted slot of the week and silently
 hard-failed three nights running.
 
-Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitator); assignment-fire `wakeOnDemand` for Worker/Reviewer/Architect (no scheduled routine — they only run when given a task).
+Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitator) and the Tester, which is woken a second time by its own build's callback; assignment-fire `wakeOnDemand` for Worker/Reviewer/Architect (no scheduled routine — they only run when given a task).
 
 ## Matrix — who does what
 
-| Action | Worker | Reviewer | Architect | Coordinator | Planner | Facilitator |
-|---|---|---|---|---|---|---|
-| Read codebase | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Edit game code (`src/`, `assets/`) | ✓ | ✓ | ✓ | — | — | — |
-| Edit `docs/ROADMAP.md` | — | — | — | — | ✓ | — |
-| Edit subsystem `CLAUDE.md` | — | — | — | — | ✓ | — |
-| Edit other agents' `INSTRUCTIONS.md` / `adapterConfig` | — | — | — | — | ✓ | file-only¹ |
-| Run `cargo` | — | — | **✓** | — | — | — |
-| `git commit` to `task/{id}` | ✓ | ✓ | ✓ | — | — | — |
-| `git commit` to `main` | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER |
-| `git push origin task/{id}` | — | — | **✓** | — | — | — |
-| `git push origin --delete task/{id}` | — | — | — | ✓ | — | ✓ ² |
-| `gh pr create` | — | — | **✓** | — | — | — |
-| Merge PR to `main` | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER (operator only) |
-| `git worktree add` | — | — | — | ✓ | — | — |
-| `git worktree remove` | — | — | — | ✓ | — | — |
-| Create paperclip task | — | — | — | ✓ | — | — |
-| `PATCH /issues/{id}` (status / assignee) | — | own task | own task | any | own | any (when unsticking) |
-| Comment on a paperclip task | own | own | own | any | any | any |
-| Use `paperclip` skill (API) | NO | ✓ | NO | ✓ | ✓ | ✓ |
-| `gh` for GitHub CLI | — | — | ✓ | ✓ | — | ✓ |
-| Network egress | NO | NO | ✓ (gh only) | ✓ | ✓ | ✓ |
+| Action | Worker | Reviewer | Architect | Tester | Coordinator | Planner | Facilitator |
+|---|---|---|---|---|---|---|---|
+| Read codebase | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Edit game code (`src/`, `assets/`) | ✓ | ✓ | ✓ | — | — | — | — |
+| Edit `docs/ROADMAP.md` | — | — | — | — | — | ✓ | — |
+| Edit subsystem `CLAUDE.md` | — | — | — | — | — | ✓ | — |
+| Edit other agents' `INSTRUCTIONS.md` / `adapterConfig` | — | — | — | — | — | ✓ | file-only¹ |
+| Run `cargo` | — | — | **✓** | ✓ ³ | — | — | — |
+| `git commit` to `task/{id}` | ✓ | ✓ | ✓ | — | — | — | — |
+| `git commit` to `main` | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER |
+| `git push origin task/{id}` | — | — | **✓** | — | — | — | — |
+| `git push origin --delete task/{id}` | — | — | — | — | ✓ | — | ✓ ² |
+| `gh pr create` | — | — | **✓** | — | — | — | — |
+| Merge PR to `main` | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER (operator only) |
+| `git worktree add` | — | — | — | ✓ ³ | ✓ | — | — |
+| `git worktree remove` | — | — | — | — | ✓ | — | — |
+| Create paperclip task | — | — | — | — | ✓ | — | — |
+| `PATCH /issues/{id}` (status / assignee) | — | own task | own task | own | any | own | any (when unsticking) |
+| Comment on a paperclip task | own | own | own | own | any | any | any |
+| Use `paperclip` skill (API) | NO | ✓ | NO | ✓ | ✓ | ✓ | ✓ |
+| `gh` for GitHub CLI | — | — | ✓ | ✓ (issues only) | ✓ | — | ✓ |
+| Network egress | NO | NO | ✓ (gh only) | ✓ | ✓ | ✓ | ✓ |
 
 ¹ Facilitator can file followup issues against any agent's config; only Planner edits the actual files.
 ² Facilitator deletes branches that are already-merged or empty-diff vs main (cases 1 & 2 of its stale-branch sweep); Coordinator deletes branches as part of the post-merge teardown.
+³ Tester only, and only through `agents/tester/run-integration-tests.sh`: one `cargo test --tests` a night against a detached worktree of `origin/main` at `~/code/bevy-rpg-tester`, under `cargo-sem.sh`. It never builds a task branch.
 
 ## Task lifecycle
 
@@ -81,6 +83,7 @@ States: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `cancelled`, `blo
 | Coordinator | `paperclip`, `paperclip-create-agent` | true | 1 |
 | Planner | `paperclip` | true | 1 |
 | Facilitator | `paperclip` | true | 1 |
+| Tester | `paperclip` | true | 1 |
 
 One agent instance per role; concurrency comes from `maxConcurrentRuns`. Architect's cap above 1 is intentional — the cargo *build* step is bounded independently by the `cargo-sem.sh` FIFO slot semaphore (`CARGO_SEM_SLOTS`, default physical cores − 1), **not** by run count (per-worktree `target/`s share no build lock), so extra runs just queue on the semaphore for cargo while parallelizing everything cheap (analyzing output, applying fixes, committing, pushing, opening PR) — the bottleneck-around-cargo flow you want. To add *build* parallelism you raise `CARGO_SEM_SLOTS`, not `maxConcurrentRuns`.
 
@@ -106,6 +109,7 @@ All times America/Denver.
 | Worker | — | — | assignment-wake |
 | Reviewer | — | — | assignment-wake |
 | Architect | — | — | assignment-wake |
+| Tester | 02:00 | — | its own build's callback |
 
 Heartbeat timers are disabled across the board; `wakeOnDemand` fires assignment wakes instantly. The one-shot-per-day cadence keeps the pipeline out of working hours — operator edits during the day land overnight.
 
@@ -115,7 +119,7 @@ Heartbeat timers are disabled across the board; `wakeOnDemand` fires assignment 
 - Force-push to any branch
 - Skip git hooks (`--no-verify`, `--no-gpg-sign`)
 - Merge PRs (operator-only)
-- `cargo` (Architect-only)
+- `cargo` (Architect, plus the Tester's nightly `main` run)
 - Edit another agent's `INSTRUCTIONS.md` (Planner-only via files; everyone else files followups)
 - `curl` against the paperclip API (use the `paperclip` skill — it handles auth, retry, run-id headers)
 

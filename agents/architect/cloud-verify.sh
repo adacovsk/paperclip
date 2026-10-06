@@ -95,7 +95,7 @@ verify_prompt() {
 Verify commit ${head} of task ${task}, fixing what you can within the task's scope.
 
 WHATEVER HAPPENS BELOW — stopping early, running out of context, hitting a wall
-— END with step 8. A result that exists only in your transcript was never
+— END with step 7. A result that exists only in your transcript was never
 delivered: the machine waiting on you cannot tell it from a crashed session.
 
 HARD LIMITS. The only ref you may push is ${ref}. Never push any other branch,
@@ -135,7 +135,7 @@ breaks these rules is discarded.
    \$BASE in a separate worktree and run the clippy gate there; failing there too
    means it is not this task's. Anything else outside the task's files is not
    yours: do not edit it; finish with result: FAIL and name it. Declare every
-   out-of-scope file you edit in the verdict (step 7) — an undeclared one gets
+   out-of-scope file you edit in the verdict (step 6) — an undeclared one gets
    all of your work rejected. Fix causes, not symptoms: adding
    #[allow(...)], #[expect(...)] or #[ignore], deleting a test, or weakening an
    assertion gets all of your work rejected. Commit each round as
@@ -145,11 +145,7 @@ breaks these rules is discarded.
 4. Non-Rust guards:  PYTHONPATH=scripts bash scripts/verify.sh
    Fix what it flags in the task's files, commit, re-run. Same limits.
 
-5. Report-only, never a gate and never a fix:
-     cargo test --tests --no-fail-fast
-   Record the exit status and the names of failing tests.
-
-6. LAST, after your final fix commit:
+5. LAST, after your final fix commit:
      git diff --name-only \$BASE HEAD | python3 scripts/check_schema_regen.py
    Exit 0 -> schemas: not-relevant. Exit 1 -> run as ONE chained command:
      cargo run --bin generate_schemas && git diff --exit-code assets/schemas/
@@ -158,7 +154,7 @@ breaks these rules is discarded.
    time -> schemas: proved-empty. The generator failing -> result: FAIL.
    No fix commit may follow this step.
 
-7. Write the verdict text to a file:
+6. Write the verdict text to a file:
 
 CLOUD-VERIFY-V2
 task: ${task}
@@ -168,7 +164,6 @@ result: PASS | FAIL
 fixes: <rounds used in step 3>
 schemas: not-relevant | regenerated | proved-empty
 guards: <exit status of step 4>
-integration: <exit status of step 5>
 out-of-scope: <path> <code> <identifier> -- <compiler message>
                                       (one line per file and identifier you fixed
                                        outside the task's files; none -> omit)
@@ -176,10 +171,10 @@ cmd: <command> = <exit status>        (one line per command you ran)
 --- errors ---
 <empty on PASS; otherwise the full compiler/guard output with file:line>
 
-   result is PASS only if every step-2 gate and step 4 exited 0 and step 6 did
+   result is PASS only if every step-2 gate and step 4 exited 0 and step 5 did
    not fail.
 
-8. Publish — your commits plus the verdict, to ${ref} and nowhere else:
+7. Publish — your commits plus the verdict, to ${ref} and nowhere else:
      git commit --allow-empty -F <file>
      git push origin HEAD:${ref}
    If the push fails, print the error. Then stop.
@@ -438,9 +433,6 @@ accept_cloud_work() {
     fi
   fi
 
-  local integ
-  integ="$(field "$(cat "$STATE_DIR/$TASK.cloud.verdict")" integration)"
-  case "$integ" in ''|*[!0-9]*) rm -f "$STATE_DIR/$TASK.integration" ;; *) printf '%s\n' "$integ" > "$STATE_DIR/$TASK.integration" ;; esac
   printf '%s\n' "$work" > "$STATE_DIR/$TASK.cloud.head"
   echo "accepted: worktree at $work ($(git rev-list --count "$lease..$work") cloud commit(s))"
 }
