@@ -694,6 +694,20 @@ command -v sccache >/dev/null 2>&1 && sccache --start-server >/dev/null 2>&1 || 
 # that finally wins the slot cold-starts it again from *under* the lock.
 # Closing the fds in the child makes the whole class impossible rather than
 # racing it, and costs the build nothing — it never reads them.
+# FLEET BUILDS COMPILE THE WORKSPACE CRATE AT OPT-LEVEL 0. The dev profile
+# builds it at 1 so a human's `cargo run` is playable; a verify only needs the
+# test binary to exist and pass, and 5,164 unit tests run in seconds either way.
+# Measured on one VM under this script's own JOBS=2 / CGU=8: the `test --lib`
+# build took 417 s at opt-level 0 against 1332 s at 1 (3.2x faster), and peaked
+# at 8.21 GiB against 9.27 GiB. Dependencies are unaffected — they are pinned to
+# opt-level 3 by `[profile.dev.package."*"]` and the opt-0 build recompiled the
+# workspace crate alone — so sccache keeps serving them. Same scoping as CGU:
+# env, so it never reaches a human's dev loop. The memory saving is real but does
+# not reach a second slot, so MEM_PER_BUILD is not lowered on its strength.
+# A caller that needs codegen as a human would see it overrides with its own
+# `env CARGO_PROFILE_DEV_OPT_LEVEL=...` inside "$@", which runs after this one.
+OPT_LEVEL="${CARGO_SEM_OPT_LEVEL:-0}"
+
 run() {
   local rss="$D/.rss.$$" rc=0
   if [ -x /usr/bin/time ]; then
@@ -701,6 +715,7 @@ run() {
       nice -n19 ionice -c3 env \
       CARGO_BUILD_JOBS="$JOBS" \
       CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
+      CARGO_PROFILE_DEV_OPT_LEVEL="$OPT_LEVEL" \
       "$@" 3>&- 5>&- 7>&- 9>&-
     rc=$?
     local m; m=$(tail -n1 "$rss" 2>/dev/null | tr -dc '0-9')
@@ -732,6 +747,7 @@ run() {
   nice -n19 ionice -c3 env \
     CARGO_BUILD_JOBS="$JOBS" \
     CARGO_PROFILE_DEV_CODEGEN_UNITS="$CGU" \
+    CARGO_PROFILE_DEV_OPT_LEVEL="$OPT_LEVEL" \
     "$@" 3>&- 5>&- 7>&- 9>&-
 }
 
