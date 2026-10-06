@@ -50,3 +50,6 @@ tests/release-smoke/test-results/
 tests/release-smoke/playwright-report/
 .superset/
 .claude/worktrees/
+
+# Python bytecode from agent scripts (cloud-pace.py and friends)
+__pycache__/
