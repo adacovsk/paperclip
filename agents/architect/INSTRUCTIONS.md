@@ -171,10 +171,11 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    → [why chaining starves the queue, and why yielding became free](rationale/one-cargo-per-slot.md)
    **Export `CARGO_SEM_PRIORITY=1` before the launch when — and only when — the task is marked priority.** The express lane skips the *queue*, not the *slot*: it still waits for a running build to finish, because preempting one discards real work. A flood of express builds starves the normal lane by design, which is the failure this exists to prevent, not to cause. → [why fairness produces the worst ordering here](rationale/ci-failure-express-lane.md)
 
-   Exactly two things qualify, and nothing else:
+   Exactly three things qualify, and nothing else:
 
    1. **The task carries the `ci-failure` label.** Red `main` gates every merge in the repo.
    2. **The task body carries the line `Priority-verify: <reason>`**, written by the Coordinator. This is the second qualifier, and it exists because strict arrival order schedules the *most* unblocking build last. Measured: the Planner-prioritised fix for a contention hotspot — one file edited by 9 of 52 in-flight worktrees, and the reason zero Worker tasks had been promoted for three consecutive fires — drew a ticket at the back of a **39-deep** queue behind builds it would force a rebase on when it landed. Ten queued verifies edited one of its three files. Those slots were being spent on results a later merge invalidates, and nothing in the pipeline could say *this build unblocks the others*.
+   3. **A freshness re-verify** — the relaunch in §Landing's freshness gate, after a *green* build whose base `origin/main` has since moved in code. The Landing block exports it for you; do not add it to a first launch. Without it the re-verify of an already-green task queued at the back of a day-long FIFO, `main` moved again before it reached a slot, and the green result was discarded a second time — tasks burned up to three full builds and landed nothing for eight hours. It cannot flood the lane: only a build that already passed reaches it, at most `$FRESHNESS_CAP` times per task, and `main` moves in code only when a task lands, so a re-verify that runs next almost always lands.
 
    **The Coordinator writes `Priority-verify:` sparingly and states the reason** — the bar is "this build unblocks other queued work", not "this task matters". If more than one or two verifies in a queue carry it, the lane is being abused and it stops working for anyone; say so rather than adding another. You do not decide priority yourself: no `Priority-verify:` line and no `ci-failure` label means a normal ticket.
    **The test stage runs at `CARGO_SEM_CGU_DIV=2`, the clippy stage does not — do not "tidy" them to match.** The `--test` compile of `src/lib.rs` is the heaviest unit in the whole build, and it is the *only* stage that gets OOM-killed: when several verifies reach it at once, rustc is SIGKILLed and cargo reports it as exit 101, indistinguishable at a glance from a failing test (see §Procedure sentinel `137`). Clippy completes fine at full CGU — measured 22m50s under the same fan-out — so lowering it there would cost codegen parallelism and buy nothing. `CARGO_SEM_CGU_DIV=2` halves whatever CGU this box derived rather than pinning an absolute — 4 -> 2 here, 16 -> 8 on a 16-core machine — so the relief stays proportional and the setting does not have to be re-tuned per host. **Its justification is the measured OOM behaviour of this one stage, NOT a general "lower CGU saves memory" rule** — that rule is false, and `cargo-sem.sh`'s tuning header now records the benchmark that disproves it (CGU=1 measured 2.5x slower *and* 4.5 GB hungrier at peak than CGU=16, so the low end is worse on both axes). What is true is narrower and is what this setting rests on: halving CGU on the `--test` compile specifically, under fan-out, stopped the SIGKILLs. Keep the divisor because that stage stops dying, not because fewer codegen units are generally cheaper; and do not generalise it to the other stages, which is what the next paragraph's "do not tidy them to match" is about. If verifies are still killed, raise the divisor (`CARGO_SEM_CGU_DIV=4`); the header's floor is 1; raising `CARGO_SEM_SLOTS` is the wrong direction and will make it worse.
@@ -196,8 +197,8 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    before the PR step and the task would masquerade as done with no PR.
    The `--lib` gate runs the library unit tests (the ones a task actually
    adds/changes). Integration-crate health on `main` belongs to the Tester
-   (`agents/tester/`), which runs `cargo test --tests` nightly and files each
-   failure as a `test-failure` GitHub issue.
+   (`agents/tester/`), which runs clippy and `cargo test --tests` nightly and files
+   each failure as a `test-failure` GitHub issue.
    If your changed files include anything under `tests/`, additionally run
    `cargo test --test <name>` for just those targets — as a **third `cargo-sem.sh`
    invocation** appended with `&&`, not folded into either of the first two. Folding
@@ -555,6 +556,10 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
     # long enough to write a sentinel. A transient scope reparents the chain out
     # of the service cgroup, which is the only thing that makes the detachment
     # mean what it says. Fall back to bare setsid where there is no user bus.
+    # A freshness re-verify takes the express lane (qualifier 3 under the
+    # CARGO_SEM_PRIORITY rule). This export belongs to the re-verify only: a
+    # FIRST launch of a verify exports it only for qualifiers 1 and 2.
+    export CARGO_SEM_PRIORITY=1
     if systemd-run --user --scope --collect --quiet true >/dev/null 2>&1; then
       systemd-run --user --scope --collect --quiet --unit="verifyrun-{task-id}" \
         --setenv=PAPERCLIP_API_URL --setenv=PAPERCLIP_API_KEY --setenv=PAPERCLIP_AGENT_ID \

@@ -12,7 +12,7 @@ Operator (human; commits to main, sets direction, merges PRs)
       Reviewer      — wake on assignment — optimizes Worker's changed files; commits polish; never pushes
       Architect     — wake on assignment — runs cargo; fixes errors; pushes; opens PR
   Facilitator       — daily 20:45 — pipeline health; blocked-task clearing; stale-branch sweep; comment-without-PATCH
-  Tester            — nightly 02:00 — runs every test target on origin/main; files each failure as a `test-failure` GitHub issue for Planner intake
+  Tester            — nightly 02:00 — clippy -D warnings (both feature sets) + every test target on origin/main; files each failure as a `test-failure` GitHub issue for Planner intake
 ```
 
 Nightly fires run just *after* the 8 PM America/Denver Claude weekly-limit
@@ -50,7 +50,7 @@ Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitato
 
 ¹ Facilitator can file followup issues against any agent's config; only Planner edits the actual files.
 ² Facilitator deletes branches that are already-merged or empty-diff vs main (cases 1 & 2 of its stale-branch sweep); Coordinator deletes branches as part of the post-merge teardown.
-³ Tester only, and only through `agents/tester/run-integration-tests.sh`: one `cargo test --tests` a night against a detached worktree of `origin/main` at `~/code/bevy-rpg-tester`, under `cargo-sem.sh`. It never builds a task branch.
+³ Tester only, and only through `agents/tester/run-nightly.sh`: two clippy runs and one `cargo test --tests` a night against a detached worktree of `origin/main` at `~/code/bevy-rpg-tester`, under `cargo-sem.sh`. It never builds a task branch.
 
 ## Task lifecycle
 
