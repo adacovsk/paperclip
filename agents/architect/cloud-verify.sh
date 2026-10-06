@@ -369,11 +369,18 @@ check_out_of_scope() {
     END { if (in_hunk) done_hunk(); exit bad }'
 }
 
-reject() { printf '%s\n' "$1" > "$STATE_DIR/$TASK.cloud.rejected"; echo "REJECTED: $1"; exit 1; }
+reject() {
+  printf '%s\n' "$1" > "$STATE_DIR/$TASK.cloud.rejected"
+  cp -f "$STATE_DIR/$TASK.cloud.launched-head" "$STATE_DIR/$TASK.cloud.rejected-head" 2>/dev/null || true
+  echo "REJECTED: $1"; exit 1
+}
 
 # Accept the VM's commits into the worktree, or refuse them. Refusal writes
-# `<task>.cloud.rejected`, which also closes the lane for that task so the
-# Architect verifies it locally rather than re-offloading into the same result.
+# `<task>.cloud.rejected`, which closes the lane for that task *at that head* so
+# the Architect verifies it locally rather than re-offloading into the same
+# result. A different head (a rebase, a fix commit) is a different input and
+# goes back to the cloud: a task-wide ban kept in-review verifies on the single
+# local slot indefinitely, long after the rejected head was gone.
 accept_cloud_work() {
   TASK="$1"
   local ref lease base work f bad
@@ -446,7 +453,14 @@ accept_cloud_work() {
 cmd_offload() {
   local task="${1:?task id}" branch="${2:?branch}" verify_task="${3:-$1}" open
   [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
-  [ ! -f "$STATE_DIR/$task.cloud.rejected" ] || { echo "cloud work for $task was rejected ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1; }
+  if [ -f "$STATE_DIR/$task.cloud.rejected" ]; then
+    local rejected_head
+    rejected_head="$(cat "$STATE_DIR/$task.cloud.rejected-head" 2>/dev/null || cat "$STATE_DIR/$task.cloud.launched-head" 2>/dev/null)"
+    if [ -z "$rejected_head" ] || [ "$rejected_head" = "$(git rev-parse HEAD)" ]; then
+      echo "cloud work for $task was rejected at this head ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1
+    fi
+    rm -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.rejected-head"
+  fi
   mkdir -p "$STATE_DIR"
   open="$(python3 "$(dirname "$0")/cloud-pace.py" 2>>"$STATE_DIR/pace.log")" || open=0
   if [ "$open" != "1" ]; then

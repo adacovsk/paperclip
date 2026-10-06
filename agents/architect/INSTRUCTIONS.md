@@ -403,8 +403,9 @@ above, with these cloud-specific meanings (you can tell a cloud result by
   escalate to operator (§Final message).
 - **`95`** → rejected; the reason is in `{task-id}.cloud.rejected` and the tail
   of `{task-id}.cloud.log`. Your worktree was left at the head you pushed, and
-  `offload` now refuses this task. Comment the reason, `rm -f "$EXIT"`, and
-  launch the **local** chain.
+  `offload` now refuses this task *at that head*. Comment the reason,
+  `rm -f "$EXIT"`, and launch the **local** chain. A later head (a rebase or a
+  fix commit) offloads normally — the refusal does not outlive the head it judged.
 - **`99`** → no verdict ref by the deadline. That is usually a slow session, not
   a dead one, and its verdict can still land after the sentinel is written. So
   `rm -f "$EXIT"` and offload again **on the same head**. The ref is keyed on the
