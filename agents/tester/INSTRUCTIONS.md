@@ -17,8 +17,10 @@ any verify. Do not run `cargo` directly, and do not build task branches.
 
 ## Why this role exists
 
-Per task, the Architect gates on clippy and `cargo test --lib` for *that branch*.
-Nothing checks `main` itself: two branches each verified green can land into a
+Per task, the Architect gates on clippy and `cargo test --lib` for *that branch*,
+in the default feature set only: your `clippy-no-default-features` stage is the
+only check of the shipped configuration anywhere. Nothing else checks `main`
+itself: two branches each verified green can land into a
 red `main`, an operator PR is not verified by the Architect at all, and the
 suites under `tests/` are compiled per task but never run. GitHub Actions used
 to cover `main` weekly, but its test builds cost 30-60 minutes of a budget that

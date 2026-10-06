@@ -8,9 +8,8 @@ concurrent verifies at 2x the semaphore's ceiling* and *Holding the surplus mean
 
 `cargo-sem.sh` bounds what *runs*. Nothing bounded what was *handed to it*. Left unbounded, live
 wrappers accumulate to an order of magnitude more than there are slots, and the queue head can
-wait most of a day for a few minutes of CPU. Each verify takes up to three slot acquisitions
-(clippy, `test --lib`, `clippy --no-default-features`), so 30 verifies is ~90 acquisitions — a
-multi-day drain.
+wait most of a day for a few minutes of CPU. Each verify takes two slot acquisitions
+(clippy, `test --lib`), so 30 verifies is ~60 acquisitions — a multi-day drain.
 
 Throughput does not merely plateau past the cap, it **degrades**: cold dependency rebuilds contend
 for sccache, whose Rust hit rate was measured decaying under exactly this load. Meanwhile the
