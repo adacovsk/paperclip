@@ -10,7 +10,7 @@ import { queryKeys } from "../lib/queryKeys";
 import {
   computeInboxBadgeData,
   getRecentTouchedIssues,
-  INBOX_MINE_STATUSES,
+  INBOX_ISSUE_STATUSES,
   loadDismissedInboxItems,
   saveDismissedInboxItems,
   loadReadInboxItems,
@@ -113,7 +113,7 @@ export function useInboxBadge(companyId: string | null | undefined) {
       issuesApi.list(companyId!, {
         touchedByUserId: "me",
         inboxArchivedByUserId: "me",
-        status: INBOX_MINE_STATUSES,
+        status: INBOX_ISSUE_STATUSES,
       }),
     enabled: !!companyId,
   });

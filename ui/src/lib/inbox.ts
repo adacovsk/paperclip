@@ -7,8 +7,10 @@ import type {
 } from "@paperclipai/shared";
 
 export const RECENT_ISSUES_LIMIT = 100;
-export const INBOX_MINE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
-export const INBOX_ALL_STATUSES = "backlog,todo,in_progress,in_review,blocked,done,cancelled";
+// The inbox lists only work that has gone wrong. Healthy statuses (todo,
+// in_progress, in_review, done) are the board's job; listing them here buried
+// the few blocked issues among thousands of finished ones.
+export const INBOX_ISSUE_STATUSES = "blocked";
 export const FAILED_RUN_STATUSES = new Set(["failed", "timed_out"]);
 export const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending", "revision_requested"]);
 export const DISMISSED_KEY = "paperclip:inbox:dismissed";
@@ -155,8 +157,7 @@ export function getApprovalsForTab(
     (a, b) => normalizeTimestamp(b.updatedAt) - normalizeTimestamp(a.updatedAt),
   );
 
-  if (tab === "mine" || tab === "recent") return sortedApprovals;
-  if (tab === "unread") {
+  if (tab !== "all") {
     return sortedApprovals.filter((approval) => ACTIONABLE_APPROVAL_STATUSES.has(approval.status));
   }
   if (filter === "all") return sortedApprovals;

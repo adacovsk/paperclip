@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { approvalsApi } from "../api/approvals";
 import { accessApi } from "../api/access";
 import { ApiError } from "../api/client";
@@ -48,8 +48,7 @@ import {
   getInboxWorkItems,
   getLatestFailedRunsByAgent,
   getRecentTouchedIssues,
-  INBOX_ALL_STATUSES,
-  INBOX_MINE_STATUSES,
+  INBOX_ISSUE_STATUSES,
   sortIssuesByMostRecentActivity,
   InboxApprovalFilter,
   saveLastInboxTab,
@@ -580,8 +579,8 @@ export function Inbox() {
   });
 
   const { data: issues, isLoading: isIssuesLoading } = useQuery({
-    queryKey: queryKeys.issues.list(selectedCompanyId!),
-    queryFn: () => issuesApi.list(selectedCompanyId!),
+    queryKey: queryKeys.issues.listByStatus(selectedCompanyId!, INBOX_ISSUE_STATUSES),
+    queryFn: () => issuesApi.list(selectedCompanyId!, { status: INBOX_ISSUE_STATUSES }),
     enabled: !!selectedCompanyId,
   });
   const {
@@ -593,7 +592,7 @@ export function Inbox() {
       issuesApi.list(selectedCompanyId!, {
         touchedByUserId: "me",
         inboxArchivedByUserId: "me",
-        status: INBOX_MINE_STATUSES,
+        status: INBOX_ISSUE_STATUSES,
       }),
     enabled: !!selectedCompanyId,
   });
@@ -605,7 +604,7 @@ export function Inbox() {
     queryFn: () =>
       issuesApi.list(selectedCompanyId!, {
         touchedByUserId: "me",
-        status: INBOX_ALL_STATUSES,
+        status: INBOX_ISSUE_STATUSES,
       }),
     enabled: !!selectedCompanyId,
   });
@@ -642,16 +641,35 @@ export function Inbox() {
     return map;
   }, [agents]);
 
-  const issueById = useMemo(() => {
-    const map = new Map<string, Issue>();
-    for (const issue of issues ?? []) map.set(issue.id, issue);
-    return map;
-  }, [issues]);
-
   const failedRuns = useMemo(
     () => getLatestFailedRunsByAgent(heartbeatRuns ?? []).filter((r) => !dismissed.has(`run:${r.id}`)),
     [heartbeatRuns, dismissed],
   );
+  // A failed run's issue is usually not blocked, so it is absent from the
+  // blocked-issue list; fetch just those few for the run rows' titles.
+  const blockedIssueIds = useMemo(() => new Set((issues ?? []).map((issue) => issue.id)), [issues]);
+  const failedRunIssueIds = useMemo(
+    () => [
+      ...new Set(
+        failedRuns
+          .map(readIssueIdFromRun)
+          .filter((id): id is string => !!id && !blockedIssueIds.has(id)),
+      ),
+    ],
+    [failedRuns, blockedIssueIds],
+  );
+  const failedRunIssues = useQueries({
+    queries: failedRunIssueIds.map((id) => ({
+      queryKey: queryKeys.issues.detail(id),
+      queryFn: () => issuesApi.get(id),
+    })),
+  });
+  const issueById = useMemo(() => {
+    const map = new Map<string, Issue>();
+    for (const issue of issues ?? []) map.set(issue.id, issue);
+    for (const { data } of failedRunIssues) if (data) map.set(data.id, data);
+    return map;
+  }, [issues, failedRunIssues]);
   const liveIssueIds = useMemo(() => {
     const ids = new Set<string>();
     for (const run of heartbeatRuns ?? []) {
@@ -1028,7 +1046,7 @@ export function Inbox() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="everything">All categories</SelectItem>
-                <SelectItem value="issues_i_touched">My recent issues</SelectItem>
+                <SelectItem value="issues_i_touched">Blocked issues</SelectItem>
                 <SelectItem value="join_requests">Join requests</SelectItem>
                 <SelectItem value="approvals">Approvals</SelectItem>
                 <SelectItem value="failed_runs">Failed runs</SelectItem>
