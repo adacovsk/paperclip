@@ -609,9 +609,18 @@ export function Inbox() {
     enabled: !!selectedCompanyId,
   });
 
+  // Failed-run rows need only each agent's latest run, and the Live pulse only
+  // runs that are queued or running. Both queries are the ones the sidebar has
+  // already loaded, so opening the inbox reuses their cache instead of pulling
+  // the last 200 full runs.
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!),
+    queryKey: queryKeys.heartbeatsLatestByAgent(selectedCompanyId!),
+    queryFn: () => heartbeatsApi.latestByAgent(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const { data: liveRuns } = useQuery({
+    queryKey: queryKeys.liveRuns(selectedCompanyId!),
+    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
 
@@ -670,15 +679,10 @@ export function Inbox() {
     for (const { data } of failedRunIssues) if (data) map.set(data.id, data);
     return map;
   }, [issues, failedRunIssues]);
-  const liveIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const run of heartbeatRuns ?? []) {
-      if (run.status !== "running" && run.status !== "queued") continue;
-      const issueId = readIssueIdFromRun(run);
-      if (issueId) ids.add(issueId);
-    }
-    return ids;
-  }, [heartbeatRuns]);
+  const liveIssueIds = useMemo(
+    () => new Set((liveRuns ?? []).flatMap((run) => (run.issueId ? [run.issueId] : []))),
+    [liveRuns],
+  );
 
   const approvalsToRender = useMemo(() => {
     let filtered = getApprovalsForTab(approvals ?? [], tab, allApprovalFilter);

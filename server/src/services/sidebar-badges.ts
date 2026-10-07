@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, not, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, heartbeatRuns } from "@paperclipai/db";
 import type { SidebarBadges } from "@paperclipai/shared";
@@ -30,6 +30,11 @@ export function sidebarBadgeService(db: Db) {
         )
         .then((rows) => Number(rows[0]?.count ?? 0));
 
+      // Bounding the scan by the freshness window returns the same answer: an
+      // agent's latest run can only count if it falls inside the window, and any
+      // run inside it is newer than every run outside. Unbounded, DISTINCT ON
+      // sorts the whole run history on every page load.
+      const freshnessCutoff = Date.now() - FAILED_HEARTBEAT_FRESHNESS_MS;
       const latestRunByAgent = await db
         .selectDistinctOn([heartbeatRuns.agentId], {
           runStatus: heartbeatRuns.status,
@@ -42,11 +47,11 @@ export function sidebarBadgeService(db: Db) {
             eq(heartbeatRuns.companyId, companyId),
             eq(agents.companyId, companyId),
             not(eq(agents.status, "terminated")),
+            gte(heartbeatRuns.createdAt, new Date(freshnessCutoff)),
           ),
         )
         .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));
 
-      const freshnessCutoff = Date.now() - FAILED_HEARTBEAT_FRESHNESS_MS;
       const failedRuns = latestRunByAgent.filter(
         (row) =>
           FAILED_HEARTBEAT_STATUSES.includes(row.runStatus) &&
