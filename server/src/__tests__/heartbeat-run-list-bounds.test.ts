@@ -20,8 +20,9 @@ if (!embeddedPostgresSupport.supported) {
 /**
  * Run lists grow with every agent run and never shrink, so an unbounded list query is
  * a latency bug that gets worse over time rather than a fixed cost. These tests pin
- * the two properties that keep it bounded: `list` caps rows even when the caller
- * passes no limit, and the badge probe returns one row per agent instead of history.
+ * the properties that keep it bounded: `list` caps rows even when the caller passes
+ * no limit, and the badge probe returns one row per agent from the last day instead
+ * of scanning history.
  */
 describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   let db!: ReturnType<typeof createDb>;
@@ -48,7 +49,8 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
     await tempDb?.cleanup();
   });
 
-  async function seedRuns(count: number) {
+  // Runs end shortly before now so they fall inside the badge probe's one-day window.
+  async function seedRuns(count: number, base = Date.now() - count * 1000 - 60_000) {
     await db.insert(companies).values({
       id: companyId,
       name: "Paperclip",
@@ -70,7 +72,6 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
       })),
     );
 
-    const base = Date.UTC(2026, 0, 1);
     await db.insert(heartbeatRuns).values(
       Array.from({ length: count }, (_, i) => ({
         id: randomUUID(),
@@ -130,5 +131,13 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
     // The final two seeded rows are the newest per agent and the only "succeeded" ones,
     // so status doubles as a marker that the newest row won.
     expect(latest.map((run) => run.status)).toEqual(["succeeded", "succeeded"]);
+  });
+
+  it("omits agents whose latest run is older than a day from the badge probe", async () => {
+    await seedRuns(60, Date.now() - 2 * 24 * 60 * 60 * 1000);
+
+    const latest = await svc.latestRunsByAgent(companyId);
+
+    expect(latest).toEqual([]);
   });
 });

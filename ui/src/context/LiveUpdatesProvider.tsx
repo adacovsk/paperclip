@@ -453,6 +453,7 @@ function invalidateHeartbeatQueries(
 ) {
   queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsLatestByAgent(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.costs(companyId) });

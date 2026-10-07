@@ -3,7 +3,7 @@ import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, not, sql } from "drizzle-orm";
 import {
   agentSkillSyncSchema,
   createAgentKeySchema,
@@ -2268,7 +2268,10 @@ export function agentRoutes(db: Db) {
       // Latest run per (non-terminated) agent, then keep only the ones that are
       // a fresh failure. Matches the inbox badge's semantics exactly: an agent
       // is "errored" only when its most recent run failed within the freshness
-      // window — a newer queued/running run supersedes an older failure.
+      // window — a newer queued/running run supersedes an older failure. The
+      // window also bounds the scan without changing the answer (see
+      // sidebarBadgeService).
+      const freshnessCutoff = Date.now() - FAILED_HEARTBEAT_FRESHNESS_MS;
       const latestRunPerAgent = await db
         .selectDistinctOn([heartbeatRuns.agentId], columns)
         .from(heartbeatRuns)
@@ -2277,11 +2280,11 @@ export function agentRoutes(db: Db) {
           and(
             eq(heartbeatRuns.companyId, companyId),
             not(eq(agentsTable.status, "terminated")),
+            gte(heartbeatRuns.createdAt, new Date(freshnessCutoff)),
           ),
         )
         .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));
 
-      const freshnessCutoff = Date.now() - FAILED_HEARTBEAT_FRESHNESS_MS;
       for (const run of latestRunPerAgent) {
         if (
           FAILED_HEARTBEAT_STATUSES.includes(run.status) &&

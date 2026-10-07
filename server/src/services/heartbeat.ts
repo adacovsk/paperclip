@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, type BillingType } from "@paperclipai/shared";
 import {
@@ -70,6 +70,7 @@ import {
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
+const LATEST_RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 // Invocation source for runs whose work executes entirely outside this process,
@@ -4905,12 +4906,21 @@ export function heartbeatService(db: Db) {
      * The inbox badge only needs each agent's most recent run to decide whether it
      * failed. Fetching the whole run list to reduce it client-side meant every page
      * load carrying the company's entire run history.
+     *
+     * Only runs from the last day are considered, so an agent idle longer than
+     * that has no row. Unbounded, DISTINCT ON sorts every run the company has
+     * ever made, and this backs the sidebar badge on every route.
      */
     latestRunsByAgent: async (companyId: string) => {
       const rows = await db
         .selectDistinctOn([heartbeatRuns.agentId], heartbeatRunListColumns)
         .from(heartbeatRuns)
-        .where(eq(heartbeatRuns.companyId, companyId))
+        .where(
+          and(
+            eq(heartbeatRuns.companyId, companyId),
+            gte(heartbeatRuns.createdAt, new Date(Date.now() - LATEST_RUN_WINDOW_MS)),
+          ),
+        )
         .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));
 
       return rows
