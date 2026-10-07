@@ -1,6 +1,6 @@
-# Why a fire drains to the Worker's run slots, and wakes the Planner when it runs dry
+# Why a fire drains to the Worker's run slots, and wakes the Planner when the backlog runs short
 
-**Justifies:** *Promote backlog → `todo` until the Worker's run slots are full*, *No per-fire cap while the cloud lane is open* and *Drained → wake the Planner, once.* (Run steps 5, 9d, 9j), and *Every wake refills free Worker slots* (Wake triage)
+**Justifies:** *Promote backlog → `todo` until the Worker's run slots are full* (Run step 5), *Backlog low → wake the Planner.* (Run step 9), and *Every wake refills free Worker slots* (Wake triage)
 
 ## Why the ceiling is the Worker's own run slots
 
@@ -33,44 +33,41 @@ debounce, because those are the expensive re-derivations it was written for. The
 contended-edit-surface hold is unchanged: refilling faster must not become merging-in-parallel
 on one file.
 
-## Why intake follows the lane
+## Why the Planner keeps the backlog
 
-The cap of 3 new roadmap promotions per fire protected the local cargo slots: every `needs-build`
-item taken in eventually competes for them. While the cloud lane is open, verifies build on VMs
-and the Architect is not the binding resource, so the cap only defers supply that step 5 could
-already dispatch. Backlog is supply; step 5 bounds dispatch. With the lane closed the local
-constraint is back, and so is the cap.
+Roadmap intake used to be this agent's step 9, with the Planner restocking the roadmap behind
+it. That split gave the backlog two owners and each read the other's state as the reason to
+wait. The Planner counted about 200 free fronts and skipped its restock, because supply was not
+the constraint. The Coordinator found the backlog empty and an open restock request on the
+Planner, and recorded intake as "not run, the Planner holds the restock". Backlog, `todo` and
+`in_progress` all sat at zero with twelve Worker slots free, while every fire of both agents
+succeeded.
 
-The same reasoning removes the `inflight` row of the capacity gate while the lane is open — see
-the verify-dispatch-cap rationale.
+Intake is also the most expensive part of a full sweep — an overlap search and a contention
+test per front — and the sweep is debounced, so it ran at most twice an hour and was the step a
+fire short on budget cut first. The Planner already reads the whole index every fire and owns
+the rules that decide what is promotable, so it files the backlog directly. This agent keeps
+dispatch, where the slot count and the worktrees live.
 
-## Why one drained fire wakes the Planner
+## Why a short backlog wakes the Planner, and on every wake
 
-The escalation used to wait for two consecutive wraps with zero promotions. That was a guard
-against a capped scan: a fire that took in 3 items and stopped mid-index could not tell "nothing
-left" from "not reached yet", so it needed a second pass. An uncapped fire scans the whole index,
-so one fire that scanned all of it, dispatched what it found, and still has zero dispatchable
-backlog has measured the drain directly. Waiting another two hours for a second wrap just idles
-the Worker.
+The request is created on a debounced wake as well as a full sweep, because Worker stages end
+in minutes and a short backlog found only by the half-hourly fire idles the freed slots for the
+half hour. Creating it is two reads and one write, and the open-request dedupe makes repeating it
+free.
 
-The Planner restocks to a band rather than a per-fire quota, runs one fire at a time, and is the
-most expensive agent in the fleet. A second restock request while one is open only queues a
-duplicate fire, so the escalation is skipped while any `Roadmap intake starved` task for the
-Planner is still open. The title prefix is kept so that dedupe also recognises requests filed
-under the older wording.
+Re-dispatching an idle open request is different: on every callback wake it would fire the
+Planner, the most expensive agent in the fleet, every few minutes. So only the full sweep
+re-dispatches it.
 
 ## Why an open request is re-dispatched, not just skipped
 
-Skipping while a request is open assumed the request would close. The Planner is told to keep it
-open until it has rewritten or added promotable fronts, and a bounded fire routinely ends short of
-that — prune pushed, next-slice rewrites not reached. Its instructions call the unmet floor "a
-signal the next fire is woken by", but the only waker was this escalation, and this escalation
-skipped because the request was open. The two rules deadlocked: the Planner ran once on a request,
-pruned, left it `todo`, and the pipeline sat with zero dispatchable backlog for eight hours while
-every Coordinator fire succeeded in about a minute. Nothing in the fleet read as failing.
+Skipping while a request is open assumed the request would close. The Planner keeps it open
+until the backlog reaches target, and a bounded fire routinely ends short of that. If skipping
+were the only rule, the one waker would wait on the one thing that cannot happen without it: an
+earlier form of these two rules left the pipeline with zero dispatchable backlog for eight hours
+while every Coordinator fire succeeded in about a minute.
 
-Re-dispatching the same task keeps the one-request dedupe and closes the loop. The live-run check
-is the only brake: it stops a second fire landing on one already in flight. There is deliberately
-no idle cooldown on top of it. A drained backlog is the pipeline stopped, so throttling the restock
-to protect per-run cost buys idle Worker slots at a far worse price, and a Planner with nothing
-writable left says so in a run measured in seconds.
+Re-dispatching the same task keeps the one-request dedupe and closes the loop. The live-run
+check stops a second fire landing on one already in flight, and the full-sweep cadence bounds
+the rest.

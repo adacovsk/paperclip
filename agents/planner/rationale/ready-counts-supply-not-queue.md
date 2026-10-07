@@ -1,8 +1,8 @@
 # Why `ready` counts `backlog` and nothing else
 
-**Justifies:** *`ready = count(status == backlog)`* (Run step 9a)
+**Justifies:** *`ready` = `count(status == backlog)`* (Run step 8a)
 
-Step 9a carries two questions that look like one:
+Backlog intake carried two questions that look like one:
 
 1. **Is there un-started supply?** — what roadmap intake restocks. The population is `backlog`.
 2. **Is there queue depth a Worker can pull from?** — what step 5 promotion restocks. The
@@ -22,7 +22,7 @@ counter was being asked both questions.
 Splitting them makes each gate act on the thing it can actually fix: deep `backlog` → skip intake
 and promote; shallow `backlog` → intake. The failure mode to watch for is someone re-merging the
 counters to make a starved Worker show up in the intake gate. It will not help: the Worker is
-starved by step 5, and step 9 cannot feed it.
+starved by Coordinator step 5, and backlog intake cannot feed it.
 
 This counter has now been repaired four times (dispatchable-only, `inflight` scope,
 two-gates-not-one, and this). That history is the argument for leaving the rationale attached to
