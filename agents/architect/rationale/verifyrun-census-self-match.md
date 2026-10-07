@@ -1,6 +1,6 @@
 # Why liveness uses a census, not a per-id grep
 
-**Justifies:** *The `+` is load-bearing* — the wrapper census (Cargo discipline rule 7)
+**Justifies:** *Census through the script, never inline — an inline probe self-matches.* (Cargo discipline rule 7)
 
 A process listing filtered for a specific build's tag matches the filtering command itself,
 because that command's own arguments contain the tag. So the probe reports the build alive
