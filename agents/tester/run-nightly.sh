@@ -21,11 +21,17 @@
 #   exit            0 once every stage ran; 96-99 = environment, no verdict
 #   result.json     written last; its presence is what the Tester reads
 #   last-green      the newest origin/main SHA on which every stage passed
+#
+# The verdict is also posted as a `tester/nightly` commit status on the SHA it
+# checked. A session asking "is main green?" starts at GitHub, where every
+# Actions run may be a zero-step billing rejection; the status is the one Rust
+# reading there that actually ran, and its link lists the issues filed for it.
 set -u
 
 WAKE_ISSUE="${1:?usage: run-nightly.sh <issue-id>}"
 STATE="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-tester"
 PROJECT="${PAPERCLIP_PROJECT:-$HOME/code/bevy-rpg}"
+REPO="${TESTER_REPO:-adacovsk/bevy-rpg}"
 WT="${TESTER_WORKTREE:-$HOME/code/bevy-rpg-tester}"
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 SEM="$HERE/../architect/cargo-sem.sh"
@@ -60,6 +66,40 @@ wake() {
     >/dev/null 2>&1 || true
 }
 
+# Best effort: a failed post must not cost the Tester its wake. The issues the
+# Tester files carry the SHA in their body, so a search on it finds them.
+post_status() {
+  local sha="$1" state="$2" desc="$3"
+  [ -n "$sha" ] || return 0
+  gh api -X POST "repos/$REPO/statuses/$sha" -f context=tester/nightly \
+    -f state="$state" -f description="${desc:0:140}" \
+    -f target_url="https://github.com/$REPO/issues?q=is%3Aissue+label%3Atest-failure+$sha" \
+    >/dev/null 2>&1 || echo "STATUS: could not post $state on $sha" >> "$STATE/log"
+}
+
+# success only when every stage ran and passed; failure when a stage that ran
+# found something; error when no stage could give a verdict (killed, not run).
+status_from_result() {
+  python3 - "$STATE/result.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+parts, found, unknown = [], False, False
+for name, st in r.get("stages", {}).items():
+    if not st.get("ran"):
+        unknown = True; parts.append(f"{name} not run")
+    elif st["exit"] == 0:
+        parts.append(f"{name} ok")
+    elif st["exit"] == 137:
+        unknown = True; parts.append(f"{name} killed")
+    else:
+        found = True
+        n = len(st.get("failed") or st.get("diagnostics") or [])
+        parts.append(f"{name} {n or '?'} failed" if name == "test" else f"{name} {n or '?'} errors")
+state = "failure" if found else "error" if unknown or r.get("exit") else "success"
+print(state); print("; ".join(parts) or f"no verdict (exit {r.get('exit')})")
+PY
+}
+
 # Every stage ran and exited 0. A stage with no exit file never ran.
 all_green() {
   local s
@@ -78,11 +118,16 @@ finish() {
   if [ "$rc" -eq 0 ] && [ -n "$sha" ] && all_green; then
     echo "$sha" > "$STATE/last-green"
   fi
+  if [ -n "$sha" ] && [ -f "$STATE/result.json" ]; then
+    local verdict
+    verdict="$(status_from_result)"
+    post_status "$sha" "${verdict%%$'\n'*}" "${verdict#*$'\n'}"
+  fi
   rm -f "$STATE/pid"
   wake
 }
-trap '[ -f "$STATE/exit" ] || finish 99' EXIT
-trap 'echo "KILLED: took a signal before every stage reported" >> "$STATE/log"; finish 99; exit 99' HUP INT TERM
+trap '[ -f "$STATE/exit" ] || finish 99 "${SHA:-}"' EXIT
+trap 'echo "KILLED: took a signal before every stage reported" >> "$STATE/log"; finish 99 "${SHA:-}"; exit 99' HUP INT TERM
 
 . "$HOME/.cargo/env" 2>/dev/null || true
 export PATH="$HOME/.local/bin:$PATH"
@@ -103,6 +148,7 @@ else
 fi
 SHA="$(git -C "$WT" rev-parse HEAD)"
 echo "tester: origin/main at $SHA" >> "$STATE/log"
+post_status "$SHA" pending "nightly clippy x2 + tests running"
 cd "$WT" || { finish 97; exit 97; }
 sccache --start-server >/dev/null 2>&1 || true
 
