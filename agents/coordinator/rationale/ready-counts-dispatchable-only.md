@@ -1,6 +1,6 @@
 # Why the capacity gate counts only dispatchable tasks
 
-**Justifies:** *If you find a `backlog` task step 5 would hold, block it now rather than excluding it from the count* (Run step 9a)
+**Justifies:** *step 5 has already moved everything undispatchable to `blocked`* (Run step 9)
 
 The gate asks one question — is there un-started work a Worker could pick up? — so it must
 count only tasks a Worker will ever be handed.

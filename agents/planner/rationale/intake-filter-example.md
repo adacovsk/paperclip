@@ -1,6 +1,6 @@
 # Worked example — reshaping a mis-phrased item
 
-**Justifies:** Output quality — *Write for the Coordinator's intake filter*
+**Justifies:** Output quality — *Write for the intake filter*
 
 §4.5's foundational metadata-lookup migration was titled "Audit metadata-lookup match arms"
 (skip-word) with ~25 confirmed instances as sub-bullets, positioned *below* its dependents
