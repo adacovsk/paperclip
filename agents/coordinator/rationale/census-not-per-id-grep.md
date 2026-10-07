@@ -1,6 +1,6 @@
 # Why liveness is a census, not a per-id grep
 
-**Justifies:** *Take the census once, for every id — never `pgrep`/`grep` per task.* (Landing sweep)
+**Justifies:** *Take the census through `agents/architect/verify-census.sh`, never inline.* (Landing sweep)
 
 Filtering a process list for one build's tag matches the filtering command itself, because that
 command's own arguments contain the tag. The probe observes its own presence and reports the

@@ -50,7 +50,7 @@ Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitato
 
 ¹ Facilitator can file followup issues against any agent's config; only Planner edits the actual files.
 ² Facilitator deletes branches that are already-merged or empty-diff vs main (cases 1 & 2 of its stale-branch sweep); Coordinator deletes branches as part of the post-merge teardown.
-³ Tester only, and only through `agents/tester/run-nightly.sh`: two clippy runs and one `cargo test --tests` a night against a detached worktree of `origin/main` at `~/code/bevy-rpg-tester`, under `cargo-sem.sh`. It never builds a task branch.
+³ Tester only, and only through `agents/tester/run-nightly.sh`: two clippy runs and one `cargo test --tests` a night against its own detached worktree of `origin/main`, under `cargo-sem.sh`. It never builds a task branch.
 
 ## Task lifecycle
 
