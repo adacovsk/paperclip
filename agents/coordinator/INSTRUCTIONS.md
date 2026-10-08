@@ -37,21 +37,21 @@ nine produced zero state change — each re-deriving an identical picture and
 filing a record saying so. Those records are themselves the visible cost: nine
 `done` tasks per 38 minutes of no-op, which is what buries the real signal.
 
-**Stage completions go to the Advancer, not to you, while it is live.** The Advancer is a
-`process` agent (`agents/advancer/advance.py`, no model) that the server routes every <!-- privacy-ok: the pipeline's own advancer script, not project source -->
+**Stage completions go to the Dispatcher, not to you, while it is live.** The Dispatcher is a
+`process` agent (`agents/dispatcher/dispatch.py`, no model) that the server routes every <!-- privacy-ok: the pipeline's own dispatcher script, not project source -->
 `subtask_completed` wake to. It runs step 3's mechanical rows itself: it creates Review and Verify
 subtasks, dispatches held verifies when capacity frees, closes a rebase whose branch now merges cleanly and
 re-verifies its parent, and releases `Held: waiting on <id>` holds whose blocker resolved. It wakes
-you only with `reason: advancer_handoff` (below). A paused or terminated Advancer sends these wakes
+you only with `reason: dispatcher_handoff` (below). A paused or terminated Dispatcher sends these wakes
 back to you, so the `subtask_completed` branch stays live.
-→ [why stage advance is a script](../advancer/advance.py) <!-- privacy-ok: the pipeline's own advancer script, not project source -->
+→ [why stage advance is a script](../dispatcher/dispatch.py) <!-- privacy-ok: the pipeline's own dispatcher script, not project source -->
 
 So branch on the wake:
 
-- **`reason: advancer_handoff`** → take the hand-off file first, so a run that lands while you work
-  starts a fresh one: `mv ~/.cache/paperclip-advancer/handoff.json ~/.cache/paperclip-advancer/handoff.read.json`
+- **`reason: dispatcher_handoff`** → take the hand-off file first, so a run that lands while you work
+  starts a fresh one: `mv ~/.cache/paperclip-dispatcher/handoff.json ~/.cache/paperclip-dispatcher/handoff.read.json`
   (absent → another wake already took it; exit). Its `handoff` list names each task and the row the
-  Advancer could not resolve. Advance **each listed task** with step 3's table, exactly as a
+  Dispatcher could not resolve. Advance **each listed task** with step 3's table, exactly as a
   `subtask_completed` wake for it would. Then, if `refill` is true, run the slot refill below.
   Run nothing else and file no routine record.
 
@@ -124,19 +124,19 @@ minutes.
    **`in_review` (assignee = Worker)**, never `done`. The Reviewer carries the paperclip skill and
    self-marks `done`. → [reading a Worker's terminal state](rationale/worker-signal-triage.md)
 
-   The Advancer already ran the rows marked *(Advancer)* by the time you see a task; you reach
+   The Dispatcher already ran the rows marked *(Dispatcher)* by the time you see a task; you reach
    them only as a fallback when it is paused, or on the full sweep.
 
    | Signal | Action |
    |---|---|
    | Worker `in_review`, work committed, **chain task with steps left** | The task body carries `Chain: <N> steps`. Count the distinct `Chain-step:` trailer values on the branch: `git -C <worktree> log origin/main..HEAD --format='%(trailers:key=Chain-step,valueonly)' \| sort -u \| grep -c .`. Fewer than N → post the comment `Chain step: <count+1> of <N>`, then PATCH `status: todo` and toggle `assigneeAgentId` through `null` back to the Worker, and re-GET for a fresh `executionRunId`. **No Reviewer subtask until every step is committed**: the Reviewer and Architect run once over the whole chain, which is the point of it. If the count did not advance since your last `Chain step:` comment, the run stalled: handle it like the zero-commit rows below (probe liveness, re-dispatch once, track `Chain stall: N`, escalate after 2). → [why one branch](../planner/rationale/chain-not-sections.md) |
-   | Worker `in_review`, work committed (not a chain, or every chain step committed) | *(Advancer)* Create the Reviewer subtask (`in_review`, include Worker's changed-file list, `dedupeKey: "review"`). Idempotent — skip if one exists; the dedupe key is the atomic backstop when that check races. |
+   | Worker `in_review`, work committed (not a chain, or every chain step committed) | *(Dispatcher)* Create the Reviewer subtask (`in_review`, include Worker's changed-file list, `dedupeKey: "review"`). Idempotent — skip if one exists; the dedupe key is the atomic backstop when that check races. |
    | Worker `in_review`, **dirty tree + 0 commits** | **Probe liveness first** — live run on the issue/subtasks, a process cwd'd into the worktree, or recent mtime on the dirty files. Any says live → do nothing, re-check next fire. Dead → re-dispatch the Worker once (its Step 0 recovery exception commits the debris). → [why state alone cannot tell live from dead](rationale/dirty-tree-is-not-a-dead-run.md) Do NOT create a Reviewer subtask; its Step 0 rebase fails on unstaged changes. Track `Worker recovery: N`; same state after 2 → `escalate to operator`. |
    | Worker `in_review`, **clean tree + 0 commits** | Look for a `Worker verdict: no-op — ...` comment; **if absent, read the run's `resultJson.result` before re-dispatching** — a Worker that never calls `/api/` writes its conclusion to the run, and comment-absence alone bought four identical re-dispatches. Verdict present (either place) → close on it: `already satisfied` → `done`, `false premise` → `cancelled`, quoting it and the run id. Genuinely silent (failed / signalled / null `resultJson`) → re-dispatch **once**, track `Worker no-op: N`, then escalate. → [why a no-op is indistinguishable from a failed dispatch](rationale/clean-tree-no-op-verdict.md) |
-   | Reviewer done, `needs-build` | *(Advancer)* Assign Architect on the same task branch. |
-   | Reviewer done, `data-only`, diff touches data Rust loads | *(Advancer)* `git -C .paperclip/worktrees/{task-id} diff --name-only origin/main...HEAD \| grep -qE '^assets/(data\|locales)/'` → dispatch a `Verify:` exactly as for `needs-build`. Decide by the diff, not the label: the label was guessed at intake, and `load_shipped()` / `load_from_file()` unit tests read these files, so a data-only change can fail `cargo test --lib` with no Rust touched. → [why a data change needs cargo](rationale/data-only-needs-cargo.md) |
+   | Reviewer done, `needs-build` | *(Dispatcher)* Assign Architect on the same task branch. |
+   | Reviewer done, `data-only`, diff touches data Rust loads | *(Dispatcher)* `git -C .paperclip/worktrees/{task-id} diff --name-only origin/main...HEAD \| grep -qE '^assets/(data\|locales)/'` → dispatch a `Verify:` exactly as for `needs-build`. Decide by the diff, not the label: the label was guessed at intake, and `load_shipped()` / `load_from_file()` unit tests read these files, so a data-only change can fail `cargo test --lib` with no Rust touched. → [why a data change needs cargo](rationale/data-only-needs-cargo.md) |
    | Reviewer done, `data-only`, no such path | Architect opens PR (no cargo); parent goes `done` after merge. |
-   | Rebase task `in_review` (Worker), parent `in_review`, `merge-tree` clean, tree clean | *(Advancer)* Mark the rebase `done` citing the clean `merge-tree`; if the parent's open PR head is not the rebased head, dispatch a fresh `Verify:`. A rebase that still conflicts, or whose parent is `blocked`, is yours: classify the conflict per §Landing sweep step 3. |
+   | Rebase task `in_review` (Worker), parent `in_review`, `merge-tree` clean, tree clean | *(Dispatcher)* Mark the rebase `done` citing the clean `merge-tree`; if the parent's open PR head is not the rebased head, dispatch a fresh `Verify:`. A rebase that still conflicts, or whose parent is `blocked`, is yours: classify the conflict per §Landing sweep step 3. |
    | Architect `done` (branch on origin → PR exists) | Mark parent `done` after the PR merges. |
    | Architect `in_review`, **branch NOT on origin** | **FIRST run §Landing sweep.** Green sentinel + clean merge → Coordinator pushes and opens the PR itself. Re-dispatch the Architect **only** when the sweep is blocked on cargo — a merge conflict is never an Architect re-dispatch (classify it per §Landing sweep step 3). Cap cargo re-dispatches at 2 (`Verify re-dispatch: N` trailer), then comment the stranded SHAs and `escalate to operator`. **A stale red sentinel is not a re-dispatch and does not count toward the cap.** The sentinel is stale when all three hold: its `{task-id}.cloud.verdict` places every failure outside the task's files; `origin/main` has moved past `{task-id}.base`; and some commit in `$(cat {task-id}.base)..origin/main` touches a path the verdict names (`git log --format=%h <base>..origin/main -- <paths>` is non-empty). When it is stale, move every `{task-id}.*` and `{verify-id}.*` file except `.log`/`.freshness` into `~/.cache/paperclip-verify/stale-operator-archive/`. Then re-dispatch with `Verify re-dispatch: 0` and a comment naming the base and the fixing commit. The Architect reads a present `1` as a verdict and never rebuilds, so re-dispatching without the move only spends the cap. The path-touch clause bounds the reset: a main that is still red on those files leaves the sentinel counting as usual. → [why a red-main sentinel outlives its fix](rationale/stale-red-sentinel.md) |
 

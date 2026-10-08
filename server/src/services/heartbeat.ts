@@ -36,7 +36,7 @@ import { shouldWakeNextMover } from "./stage-completion-wake.js";
 import { extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
 import { logActivity } from "./activity-log.js";
 import { resolveSubtaskWakeTarget } from "./subtask-wake-target.js";
-import { stageAdvancerIdFor } from "./coordinator-lookup.js";
+import { stageDispatcherIdFor } from "./coordinator-lookup.js";
 import { usageLimitFromResult } from "./usage-limit.js";
 import { isSweepWakeReason, wakeCoalesceScope } from "./sweep-wake-scope.js";
 import {
@@ -3608,7 +3608,7 @@ export function heartbeatService(db: Db) {
                     `suppressed subtask-completion wake (${target.reason} — nothing downstream can advance)`,
                   );
                 } else if (target.kind === "coordinator") {
-                  wakeTargetAgentId = await stageAdvancerIdFor(db, agent.companyId);
+                  wakeTargetAgentId = await stageDispatcherIdFor(db, agent.companyId);
                   logger.info(
                     {
                       issueId,
@@ -3623,7 +3623,7 @@ export function heartbeatService(db: Db) {
                   wakeTargetAgentId = parentIssue?.assigneeAgentId ?? null;
                 }
               } else {
-                wakeTargetAgentId = await stageAdvancerIdFor(db, agent.companyId);
+                wakeTargetAgentId = await stageDispatcherIdFor(db, agent.companyId);
               }
               if (wakeTargetAgentId) {
                 const wakePivotId = existingIssue.parentId ?? issueId;

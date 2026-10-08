@@ -7,7 +7,7 @@ describe("process adapter wake env", () => {
   it("passes the wake task, reason, run id and token to the command", async () => {
     const result = await execute({
       runId: "run-1",
-      agent: { id: "agent-1", companyId: "company-1", name: "Advancer", adapterType: "process", adapterConfig: {} },
+      agent: { id: "agent-1", companyId: "company-1", name: "Dispatcher", adapterType: "process", adapterConfig: {} },
       runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
       config: {
         command: "sh",
@@ -24,7 +24,7 @@ describe("process adapter wake env", () => {
   it("leaves wake vars unset when the wake carries none", async () => {
     const result = await execute({
       runId: "run-2",
-      agent: { id: "agent-1", companyId: "company-1", name: "Advancer", adapterType: "process", adapterConfig: {} },
+      agent: { id: "agent-1", companyId: "company-1", name: "Dispatcher", adapterType: "process", adapterConfig: {} },
       runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
       config: { command: "sh", args: ["-c", 'printf "%s" "${PAPERCLIP_TASK_ID-unset}"'] },
       context: {},
