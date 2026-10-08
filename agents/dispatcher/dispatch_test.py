@@ -124,6 +124,24 @@ class Holds(unittest.TestCase):
         self.assertIsNone(dispatch.held_waiting_on("Held: operator — design call"))
         self.assertIsNone(dispatch.held_waiting_on("Needs operator merge; waiting on AA-12"))
 
+    def test_a_re_hold_after_our_release_is_final(self):
+        comments = [
+            {"createdAt": "1", "body": "Held: waiting on AA-9 — not on main"},
+            {"createdAt": "2", "body": "Released: AA-9 has an open PR.\n\n> Held: waiting on AA-9"},
+            {"createdAt": "3", "body": "Held: waiting on AA-9 — still unmerged"},
+        ]
+        self.assertTrue(dispatch.overruled(comments, "AA-9"))
+
+    def test_a_release_on_another_blocker_does_not_count(self):
+        comments = [
+            {"createdAt": "1", "body": "Released: AA-8 is done.\n\n> Held: waiting on AA-8"},
+            {"createdAt": "2", "body": "Held: waiting on AA-9 — files"},
+        ]
+        self.assertFalse(dispatch.overruled(comments, "AA-9"))
+
+    def test_a_first_hold_is_not_overruled(self):
+        self.assertFalse(dispatch.overruled([{"createdAt": "1", "body": "Held: waiting on AA-9"}], "AA-9"))
+
     def test_resolution(self):
         self.assertIn("done", dispatch.hold_resolved({"identifier": "A-1", "status": "done"}, False))
         self.assertIn("open PR", dispatch.hold_resolved({"identifier": "A-1", "status": "in_review"}, True))
