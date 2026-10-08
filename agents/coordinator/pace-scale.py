@@ -4,7 +4,8 @@
 Prints one JSON object:
 
     {"deficit": 51, "tier": 3, "worker_slots": 12, "reviewer_slots": 12,
-     "writer_threshold": 3, "planner_floor": 40, "stock": 12, "why": "..."}
+     "writer_threshold": 3, "planner_floor": 40, "stock": 12,
+     "promote_slots": 12, "why": "..."}
 
 `deficit` is the percentage of the week elapsed minus the percentage of the
 weekly limit used. Behind pace, the week's quota is going unused, and three
@@ -33,16 +34,17 @@ Worker slots stop at 12, not higher. Workers run the pytest guard suites on this
 threshold stops at 3: past it, concurrent edits to one file finish later than
 sequential ones (see the Coordinator's contention-hold rationale).
 
-STUCK STOCK CAPS SUPPLY; PACE ONLY WIDENS IT. Stock is work that verified or
+STUCK STOCK CAPS NEW WORK, NOT THE WORKER. Stock is work that verified or
 escalated but cannot land: `blocked` tasks held by the Architect plus open
-`task/*` PRs. Most of it is drained by the operator or by a fix on `main`, not
-by spending quota, so spare quota has nowhere to go except new work, and new
-work on a fast-moving `main` turns into more conflicts and more escalations.
-Pace alone therefore widens supply straight into a pile that is not draining.
-At PACE_SCALE_STOCK_CEILING (default 40) the supply knobs drop to the floor
-tier; from PACE_SCALE_STOCK_BASELINE (default 20) they cap at baseline. The cap
-never widens a tier, and an unreadable stock caps at baseline. Reviewer slots
-are exempt: review drains the pipeline rather than feeding it.
+`task/*` PRs. Pace alone widens supply straight into that pile, and new work on
+a fast-moving `main` turns into more conflicts and more escalations. So stock
+narrows only the knobs that admit *new* work -- `promote_slots`, the
+contention `writer_threshold` and the Planner's `planner_floor`. At
+PACE_SCALE_STOCK_CEILING (default 40) they drop to the floor tier; from
+PACE_SCALE_STOCK_BASELINE (default 20) they cap at baseline. Worker and
+Reviewer slots keep the pace tier, because the Coordinator spends Worker slots
+on unblock work (conflict rebases) before it promotes anything, and review
+drains. The cap never widens, and an unreadable stock caps at baseline.
 """
 
 import importlib.util
@@ -97,11 +99,12 @@ def stock_cap(stock: int | None) -> tuple[int | None, str]:
 def cap_supply(result: dict, stock: int | None) -> dict:
     cap, why = stock_cap(stock)
     result["stock"] = stock
+    result["promote_slots"] = result["worker_slots"]
     result["why"] = f"{result['why']}; {why}"
     if cap is None or cap >= result["tier"]:
         return result
     _, workers, _, writers, floor = TIERS[cap]
-    result.update(tier=cap, worker_slots=workers, writer_threshold=writers, planner_floor=floor)
+    result.update(promote_slots=workers, writer_threshold=writers, planner_floor=floor)
     return result
 
 
