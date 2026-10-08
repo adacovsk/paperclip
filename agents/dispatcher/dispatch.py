@@ -187,6 +187,23 @@ def hold_resolved(blocker: dict | None, blocker_pr_open: bool) -> str | None:
     return None
 
 
+def overruled(comments: list[dict], blocker_id: str) -> bool:
+    """Whether the Coordinator already re-held this task after we released it.
+
+    "Held: waiting on X" covers two different holds that read the same: a file
+    contention hold, released once X stops being written (its PR is open), and
+    a dependency hold, released only once X merges. The text cannot tell them
+    apart, so the Coordinator's re-hold is the answer: once it holds a task
+    again on the same blocker, releasing it again would only buy another
+    Coordinator run to re-hold it.
+    """
+    *earlier, _latest = sorted(comments, key=lambda c: c["createdAt"]) or [None]
+    return any(
+        (c.get("body") or "").startswith("Released:") and blocker_id in (c.get("body") or "")
+        for c in earlier
+    )
+
+
 def handoff_signature(parent: dict, children: list[dict], git: GitState) -> str:
     newest = max((c["updatedAt"] for c in children), default="")
     return f"{parent['status']}|{git.head}|{git.dirty}|{newest}"
@@ -522,13 +539,13 @@ def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
     def latest(issue: dict):
         comments = api.get(f"/issues/{issue['id']}/comments")
         newest = max(comments, key=lambda c: c["createdAt"], default=None)
-        return issue, (newest or {}).get("body") or ""
+        return issue, (newest or {}).get("body") or "", comments
 
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
-        pairs = list(pool.map(latest, held))
+        triples = list(pool.map(latest, held))
 
-    waiting = [(i, body, held_waiting_on(body)) for i, body in pairs]
-    waiting = [w for w in waiting if w[2]]
+    waiting = [(i, body, held_waiting_on(body)) for i, body, comments in triples
+               if held_waiting_on(body) and not overruled(comments, held_waiting_on(body))]
     blockers: dict[str, dict | None] = {}
     released = 0
     for issue, body, blocker_id in waiting:
