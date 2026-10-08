@@ -43,6 +43,7 @@ const mockCoordinatorIdFor = vi.hoisted(() => vi.fn(async () => COORDINATOR_ID a
 
 vi.mock("../services/coordinator-lookup.js", () => ({
   coordinatorIdFor: mockCoordinatorIdFor,
+  stageAdvancerIdFor: mockCoordinatorIdFor,
 }));
 
 vi.mock("../services/index.js", () => ({

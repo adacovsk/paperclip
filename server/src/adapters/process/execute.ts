@@ -10,7 +10,7 @@ import {
 } from "../utils.js";
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const { runId, agent, config, onLog, onMeta } = ctx;
+  const { runId, agent, config, context, onLog, onMeta, authToken } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
 
@@ -18,6 +18,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const cwd = asString(config.cwd, process.cwd());
   const envConfig = parseObject(config.env);
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+  env.PAPERCLIP_RUN_ID = runId;
+  // A process agent is a script acting on the API as itself, so it gets the
+  // same wake context and run-scoped token a CLI agent's prompt is built from.
+  // Without them every write it makes is attributed to the operator.
+  const wakeTaskId = asString(context.taskId, "") || asString(context.issueId, "");
+  if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  const wakeReason = asString(context.wakeReason, "");
+  if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
+  if (authToken) env.PAPERCLIP_API_KEY = authToken;
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
   }

@@ -7,6 +7,9 @@ export const processAdapter: ServerAdapterModule = {
   execute,
   testEnvironment,
   models: [],
+  // Process agents act on the API as themselves (see execute.ts), so they get
+  // the same run-scoped token CLI agents do.
+  supportsLocalAgentJwt: true,
   agentConfigurationDoc: `# process agent configuration
 
 Adapter: process
