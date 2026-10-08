@@ -35,7 +35,7 @@ import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js"
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { commentWakesAssignee, resolveSubtaskWakeTarget } from "../services/subtask-wake-target.js";
-import { coordinatorIdFor } from "../services/coordinator-lookup.js";
+import { stageDispatcherIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
   isDispatchableIssueStatus,
@@ -1209,7 +1209,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
             target.kind === "none"
               ? null
               : target.kind === "coordinator"
-                ? await coordinatorIdFor(db, issue.companyId)
+                ? await stageDispatcherIdFor(db, issue.companyId)
                 : (parent?.assigneeAgentId ?? null);
           if (target.kind !== "parent-assignee") {
             logger.info(

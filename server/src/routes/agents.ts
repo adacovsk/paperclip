@@ -54,6 +54,7 @@ import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
+import { agentMayWake } from "../services/agent-wake-policy.js";
 import {
   FAILED_HEARTBEAT_STATUSES,
   FAILED_HEARTBEAT_FRESHNESS_MS,
@@ -2079,8 +2080,16 @@ export function agentRoutes(db: Db) {
     assertCompanyAccess(req, agent.companyId);
 
     if (req.actor.type === "agent" && req.actor.agentId !== id) {
-      res.status(403).json({ error: "Agent can only invoke itself" });
-      return;
+      const actorAgent = req.actor.agentId ? await svc.getById(req.actor.agentId) : null;
+      if (
+        !agentMayWake(
+          { agentId: req.actor.agentId ?? "", role: actorAgent?.role ?? null },
+          { id, role: agent.role },
+        )
+      ) {
+        res.status(403).json({ error: "Agent can only invoke itself" });
+        return;
+      }
     }
 
     const run = await heartbeat.wakeup(id, {
