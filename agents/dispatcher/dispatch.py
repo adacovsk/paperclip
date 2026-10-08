@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Advance finished pipeline stages without a model.
 
-The Advancer is a `process` agent: the server routes every stage-completion
-wake to it instead of the Coordinator (`stageAdvancerIdFor`). Those wakes were
+The Dispatcher is a `process` agent: the server routes every stage-completion
+wake to it instead of the Coordinator (`stageDispatcherIdFor`). Those wakes were
 nearly nine in ten Coordinator runs, and most of them resolved through the
 mechanical rows of the Coordinator's stage table at the cost of re-reading its
 whole instruction set. This script runs those rows directly:
@@ -28,8 +28,8 @@ that advanced. It sweeps the board instead; every action is idempotent (the
 server's `(parentId, dedupeKey)` index makes a duplicate create return the
 existing subtask).
 
-    advance.py            sweep and act
-    advance.py --dry-run  print the actions, write nothing
+    dispatch.py            sweep and act
+    dispatch.py --dry-run  print the actions, write nothing
 """
 
 from __future__ import annotations
@@ -48,17 +48,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-advancer"
+STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 HANDOFF_FILE = STATE_DIR / "handoff.json"
 #: Hold release reads every held task's comments; once per window is plenty.
-HOLD_SCAN_INTERVAL = float(os.environ.get("ADVANCER_HOLD_SCAN_SECONDS", 300))
+HOLD_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_HOLD_SCAN_SECONDS", 300))
 #: A refill wake the Coordinator just answered needs no repeat inside this window.
-REFILL_INTERVAL = float(os.environ.get("ADVANCER_REFILL_SECONDS", 300))
+REFILL_INTERVAL = float(os.environ.get("DISPATCHER_REFILL_SECONDS", 300))
 
 STAGE_KEYS = {"review": "review", "verify": "verify", "ci-fix": "verify"}
 STAGE_PREFIXES = {"Review:": "review", "Verify:": "verify", "ci-fix:": "verify", "Rebase ": "rebase"}
 OPEN = {"backlog", "todo", "in_progress", "in_review", "blocked"}
 DATA_PATH = re.compile(r"^assets/(data|locales)/")
+#: Paths cargo builds or tests: Rust, its manifests, and the data unit tests load.
+CARGO_PATH = re.compile(r"(\.rs$|(^|/)Cargo\.(toml|lock)$|^assets/(data|locales)/)")
+#: Most tasks carry their pipeline label in the body, not as an issue label.
+LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
 HELD_WAITING = re.compile(r"^Held: waiting on ([A-Z]+-\d+)")
 HELD_VERIFY = "Intended assignee: Architect (held"
 
@@ -94,6 +98,15 @@ def stage_of(child: dict) -> str | None:
 
 def label_names(issue: dict) -> set[str]:
     return {label["name"] for label in issue.get("labels") or []}
+
+
+def pipeline_label(issue: dict) -> str | None:
+    """`needs-build` / `data-only` from the issue's labels, else its `Label:` line."""
+    found = label_names(issue) & {"needs-build", "data-only"}
+    if found:
+        return "needs-build" if "needs-build" in found else "data-only"
+    m = LABEL_LINE.search(issue.get("description") or "")
+    return m.group(1).lower() if m else None
 
 
 def finished_rebase(child: dict) -> bool:
@@ -142,14 +155,16 @@ def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | Non
 
     stage, last = stages[-1]
     if stage == "review" and last["status"] == "done":
-        labels = label_names(parent)
-        if "needs-build" in labels:
+        # Decide by the diff as much as the label: the label was guessed at
+        # intake, and most tasks carry none at all.
+        label = pipeline_label(parent)
+        if label == "needs-build":
             return Decision("verify", "Reviewer done, needs-build")
-        if "data-only" in labels:
-            if any(DATA_PATH.match(path) for path in git.changed):
-                return Decision("verify", "Reviewer done, data-only touching data Rust loads")
-            return Decision("handoff", "Reviewer done, data-only with no data path")
-        return Decision("handoff", "Reviewer done, no pipeline label")
+        if any(CARGO_PATH.search(path) for path in git.changed):
+            return Decision("verify", "Reviewer done, diff touches Rust or data Rust loads")
+        if label == "data-only":
+            return Decision("handoff", "Reviewer done, data-only with nothing cargo reads")
+        return Decision("handoff", "Reviewer done, no label and nothing cargo reads")
     if stage == "verify":
         # Landing and the merge sweep own everything after a verify.
         return Decision("skip", "verify finished; landing owns it")
@@ -302,7 +317,7 @@ def issue_link(identifier: str) -> str:
 
 def create_review(api: Api, agents: dict, parent: dict, git_st: GitState):
     wt, branch = worktree_lines(parent["identifier"])
-    label = next(iter(label_names(parent) & {"needs-build", "data-only"}), "none")
+    label = pipeline_label(parent) or "none"
     files = "\n".join(f"- {p}" for p in git_st.changed) or "- (none)"
     body = (
         f"What: review {branch} against the parent's What/Done-when.\n"
@@ -489,7 +504,7 @@ def sweep(api: Api, project: Path) -> None:
             api.call(
                 "POST",
                 f"/agents/{agents['Coordinator']}/wakeup",
-                {"source": "automation", "triggerDetail": "callback", "reason": "advancer_handoff"},
+                {"source": "automation", "triggerDetail": "callback", "reason": "dispatcher_handoff"},
             )
             if refill:
                 save_state("refill.json", {"at": time.time()}, False)
