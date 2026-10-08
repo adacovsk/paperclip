@@ -12,7 +12,7 @@ whole instruction set. This script runs those rows directly:
   Reviewer done, data-only, data touched  -> Verify subtask
   rebase finished, merge-tree clean       -> close it, re-Verify the parent
   held Verify, capacity free              -> dispatch it
-  `Held: waiting on <id>`, <id> resolved  -> back to backlog
+  `Held: until <id> merges|opens its PR`  -> back to backlog once it has
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
 a chain, a finished rebase, an unlabeled task -- is handed off in ONE wake, and
@@ -63,7 +63,12 @@ DATA_PATH = re.compile(r"^assets/(data|locales)/")
 CARGO_PATH = re.compile(r"(\.rs$|(^|/)Cargo\.(toml|lock)$|^assets/(data|locales)/)")
 #: Most tasks carry their pipeline label in the body, not as an issue label.
 LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
-HELD_WAITING = re.compile(r"^Held: waiting on ([A-Z]+-\d+)")
+#: A hold names its own release condition. `merges`: the task builds on the
+#: blocker's code, which is not on main until it lands. `opens its PR`: the
+#: blocker is being written on the same files (or is the previous link of a
+#: same-shaped chain), and stops contending once it is finished.
+HELD_UNTIL = re.compile(r"^Held: until ([A-Z]+-\d+) (merges|opens its PR)\b")
+LEGACY_HOLD = "Held: waiting on "
 HELD_VERIFY = "Intended assignee: Architect (held"
 
 
@@ -171,31 +176,31 @@ def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | Non
     return Decision("handoff", f"last stage {stage} ended {last['status']}")
 
 
-def held_waiting_on(comment: str) -> str | None:
-    m = HELD_WAITING.match(comment.strip())
-    return m.group(1) if m else None
+def held_until(comment: str) -> tuple[str, str] | None:
+    """(blocker id, "merge" | "pr") for a hold in the release-condition form."""
+    m = HELD_UNTIL.match(comment.strip())
+    if not m:
+        return None
+    return m.group(1), "merge" if m.group(2) == "merges" else "pr"
 
 
-def hold_resolved(blocker: dict | None, blocker_pr_open: bool) -> str | None:
-    """Why a `Held: waiting on <id>` hold is released, or None to keep it."""
+def hold_resolved(blocker: dict | None, kind: str, blocker_pr_open: bool) -> str | None:
+    """Why a `Held: until <id> ...` hold is released, or None to keep it."""
     if blocker is None:
         return None
     if blocker["status"] in ("done", "cancelled"):
         return f"{blocker['identifier']} is {blocker['status']}"
-    if blocker_pr_open:
-        return f"{blocker['identifier']} has an open PR, so it is no longer in flight"
+    if kind == "pr" and blocker_pr_open:
+        return f"{blocker['identifier']} has opened its PR"
     return None
 
 
 def overruled(comments: list[dict], blocker_id: str) -> bool:
     """Whether the Coordinator already re-held this task after we released it.
 
-    "Held: waiting on X" covers two different holds that read the same: a file
-    contention hold, released once X stops being written (its PR is open), and
-    a dependency hold, released only once X merges. The text cannot tell them
-    apart, so the Coordinator's re-hold is the answer: once it holds a task
-    again on the same blocker, releasing it again would only buy another
-    Coordinator run to re-hold it.
+    The hold names its release condition, so a wrong release means the hold
+    was written in the wrong form. The Coordinator's re-hold is the correction;
+    releasing again would only buy another Coordinator run to re-hold it.
     """
     *earlier, _latest = sorted(comments, key=lambda c: c["createdAt"]) or [None]
     return any(
@@ -530,7 +535,7 @@ def sweep(api: Api, project: Path) -> None:
 
 
 def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
-    """Release `Held: waiting on <id>` holds whose blocker resolved. Returns how many."""
+    """Release `Held: until <id> ...` holds whose condition is met. Returns how many."""
     state = load_state("holds.json")
     if time.time() - state.get("at", 0) < HOLD_SCAN_INTERVAL:
         return 0
@@ -544,17 +549,25 @@ def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         triples = list(pool.map(latest, held))
 
-    waiting = [(i, body, held_waiting_on(body)) for i, body, comments in triples
-               if held_waiting_on(body) and not overruled(comments, held_waiting_on(body))]
+    waiting = []
+    legacy = 0
+    for issue, body, comments in triples:
+        parsed = held_until(body)
+        if parsed and not overruled(comments, parsed[0]):
+            waiting.append((issue, body, parsed))
+        legacy += body.startswith(LEGACY_HOLD)
+    if legacy:
+        # Holds that do not say what releases them stay with the Coordinator.
+        print(f"holds   {legacy} in the `Held: waiting on` form; left to the Coordinator", flush=True)
     blockers: dict[str, dict | None] = {}
     released = 0
-    for issue, body, blocker_id in waiting:
+    for issue, body, (blocker_id, kind) in waiting:
         if blocker_id not in blockers:
             try:
                 blockers[blocker_id] = api.get(f"/issues/{blocker_id}")
             except urllib.error.HTTPError:
                 blockers[blocker_id] = None
-        why = hold_resolved(blockers[blocker_id], f"task/{blocker_id}" in pr_heads)
+        why = hold_resolved(blockers[blocker_id], kind, f"task/{blocker_id}" in pr_heads)
         if not why:
             continue
         quoted = body.strip().splitlines()[0]
