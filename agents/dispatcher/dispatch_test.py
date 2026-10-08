@@ -1,16 +1,16 @@
-"""Signal-table tests for advance.py.  Run: python3 -m unittest agents/advancer/advance_test.py"""
+"""Signal-table tests for dispatch.py.  Run: python3 -m unittest agents/dispatcher/dispatch_test.py"""
 
 import importlib.util
 import sys
 import unittest
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location("advance", Path(__file__).with_name("advance.py"))
-advance = importlib.util.module_from_spec(_spec)
-sys.modules["advance"] = advance  # dataclasses resolve annotations through sys.modules
-_spec.loader.exec_module(advance)
+_spec = importlib.util.spec_from_file_location("dispatch", Path(__file__).with_name("dispatch.py"))
+dispatch = importlib.util.module_from_spec(_spec)
+sys.modules["dispatch"] = dispatch  # dataclasses resolve annotations through sys.modules
+_spec.loader.exec_module(dispatch)
 
-GitState, decide = advance.GitState, advance.decide
+GitState, decide = dispatch.GitState, dispatch.decide
 CLEAN = GitState(exists=True, ahead=2, head="a" * 40, changed=("src/x.rs",), merges_clean=True)
 
 
@@ -62,8 +62,20 @@ class ReviewerStage(unittest.TestCase):
         git = GitState(exists=True, ahead=1, changed=("docs/x.md",))
         self.assertEqual(decide(parent(("data-only",)), [self.review], git).kind, "handoff")
 
-    def test_unlabeled_is_handed_off(self):
-        self.assertEqual(decide(parent(()), [self.review], CLEAN).kind, "handoff")
+    def test_unlabeled_touching_rust_gets_a_verify(self):
+        self.assertEqual(decide(parent(()), [self.review], CLEAN).kind, "verify")
+
+    def test_unlabeled_touching_nothing_cargo_reads_is_handed_off(self):
+        git = GitState(exists=True, ahead=1, changed=("scripts/allowlist.txt", "docs/x.md"))
+        self.assertEqual(decide(parent(()), [self.review], git).kind, "handoff")
+
+    def test_label_line_in_the_body_counts(self):
+        git = GitState(exists=True, ahead=1, changed=("docs/x.md",))
+        body = parent((), description="What: x\n**Label**: needs-build\n")
+        self.assertEqual(decide(body, [self.review], git).kind, "verify")
+
+    def test_data_only_label_touching_rust_still_gets_a_verify(self):
+        self.assertEqual(decide(parent(("data-only",)), [self.review], CLEAN).kind, "verify")
 
     def test_cancelled_review_is_handed_off(self):
         self.assertEqual(decide(parent(), [child("Review: T-1", "cancelled", "1", "review")], CLEAN).kind, "handoff")
@@ -108,15 +120,15 @@ class RebaseStage(unittest.TestCase):
 
 class Holds(unittest.TestCase):
     def test_parses_only_the_waiting_form(self):
-        self.assertEqual(advance.held_waiting_on("Held: waiting on AA-12 — files"), "AA-12")
-        self.assertIsNone(advance.held_waiting_on("Held: operator — design call"))
-        self.assertIsNone(advance.held_waiting_on("Needs operator merge; waiting on AA-12"))
+        self.assertEqual(dispatch.held_waiting_on("Held: waiting on AA-12 — files"), "AA-12")
+        self.assertIsNone(dispatch.held_waiting_on("Held: operator — design call"))
+        self.assertIsNone(dispatch.held_waiting_on("Needs operator merge; waiting on AA-12"))
 
     def test_resolution(self):
-        self.assertIn("done", advance.hold_resolved({"identifier": "A-1", "status": "done"}, False))
-        self.assertIn("open PR", advance.hold_resolved({"identifier": "A-1", "status": "in_review"}, True))
-        self.assertIsNone(advance.hold_resolved({"identifier": "A-1", "status": "in_review"}, False))
-        self.assertIsNone(advance.hold_resolved(None, True))
+        self.assertIn("done", dispatch.hold_resolved({"identifier": "A-1", "status": "done"}, False))
+        self.assertIn("open PR", dispatch.hold_resolved({"identifier": "A-1", "status": "in_review"}, True))
+        self.assertIsNone(dispatch.hold_resolved({"identifier": "A-1", "status": "in_review"}, False))
+        self.assertIsNone(dispatch.hold_resolved(None, True))
 
 
 if __name__ == "__main__":
