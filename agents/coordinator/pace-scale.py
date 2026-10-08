@@ -4,7 +4,8 @@
 Prints one JSON object:
 
     {"deficit": 51, "tier": 3, "worker_slots": 12, "reviewer_slots": 12,
-     "writer_threshold": 3, "planner_floor": 40, "why": "..."}
+     "writer_threshold": 3, "planner_floor": 40, "stock": 12,
+     "promote_slots": 12, "why": "..."}
 
 `deficit` is the percentage of the week elapsed minus the percentage of the
 weekly limit used. Behind pace, the week's quota is going unused, and three
@@ -32,11 +33,24 @@ Worker slots stop at 12, not higher. Workers run the pytest guard suites on this
 4-core box, so past that, more concurrency only slows every run. The writer
 threshold stops at 3: past it, concurrent edits to one file finish later than
 sequential ones (see the Coordinator's contention-hold rationale).
+
+STUCK STOCK CAPS NEW WORK, NOT THE WORKER. Stock is work that verified or
+escalated but cannot land: `blocked` tasks held by the Architect plus open
+`task/*` PRs. Pace alone widens supply straight into that pile, and new work on
+a fast-moving `main` turns into more conflicts and more escalations. So stock
+narrows only the knobs that admit *new* work -- `promote_slots`, the
+contention `writer_threshold` and the Planner's `planner_floor`. At
+PACE_SCALE_STOCK_CEILING (default 40) they drop to the floor tier; from
+PACE_SCALE_STOCK_BASELINE (default 20) they cap at baseline. Worker and
+Reviewer slots keep the pace tier, because the Coordinator spends Worker slots
+on unblock work (conflict rebases) before it promotes anything, and review
+drains. The cap never widens, and an unreadable stock caps at baseline.
 """
 
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -67,6 +81,46 @@ BASELINE = 3
 
 API = os.environ.get("PAPERCLIP_API_URL", "http://127.0.0.1:3100").rstrip("/")
 COMPANY = os.environ.get("PAPERCLIP_COMPANY_ID", "cf4422f9-b895-4918-bbe6-985e841e1ffd")
+
+
+def stock_cap(stock: int | None) -> tuple[int | None, str]:
+    """The highest tier stuck stock allows, or None when it allows any."""
+    ceiling = cloud_pace.env_float("PACE_SCALE_STOCK_CEILING", 40)
+    baseline = cloud_pace.env_float("PACE_SCALE_STOCK_BASELINE", 20)
+    if stock is None:
+        return BASELINE, "stock unreadable: capped at baseline"
+    if stock >= ceiling:
+        return 0, f"stock {stock} at or over {ceiling:.0f}: supply at floor"
+    if stock >= baseline:
+        return BASELINE, f"stock {stock} at or over {baseline:.0f}: supply capped at baseline"
+    return None, f"stock {stock}"
+
+
+def cap_supply(result: dict, stock: int | None) -> dict:
+    cap, why = stock_cap(stock)
+    result["stock"] = stock
+    result["promote_slots"] = result["worker_slots"]
+    result["why"] = f"{result['why']}; {why}"
+    if cap is None or cap >= result["tier"]:
+        return result
+    _, workers, _, writers, floor = TIERS[cap]
+    result.update(promote_slots=workers, writer_threshold=writers, planner_floor=floor)
+    return result
+
+
+def read_stock() -> int | None:
+    """Architect-held `blocked` tasks plus open `task/*` PRs."""
+    with urllib.request.urlopen(f"{API}/api/companies/{COMPANY}/agents", timeout=10) as resp:
+        agents = {a["name"]: a["id"] for a in json.load(resp)}
+    url = f"{API}/api/companies/{COMPANY}/issues?status=blocked&assigneeAgentId={agents['Architect']}"
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        blocked = sum(1 for i in json.load(resp) if i["status"] == "blocked")
+    prs = subprocess.run(
+        ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName",
+         "--jq", '[.[] | select(.headRefName | startswith("task/"))] | length'],
+        cwd=os.environ["PAPERCLIP_PROJECT"], capture_output=True, text=True, timeout=60, check=True,
+    )
+    return blocked + int(prs.stdout)
 
 
 def scale(usage: dict | None, now: float) -> dict:
@@ -139,6 +193,11 @@ def main() -> int:
         result = scale(usage, now)
     except Exception as exc:  # a changed meter shape degrades to baseline
         result = _tier(BASELINE, None, f"usage unparseable ({type(exc).__name__}): baseline")
+    try:
+        stock = read_stock()
+    except Exception:
+        stock = None
+    result = cap_supply(result, stock)
     if "--apply" in sys.argv[1:]:
         try:
             result["applied"] = apply(result)

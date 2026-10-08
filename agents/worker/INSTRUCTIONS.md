@@ -116,8 +116,10 @@ git rebase --continue
 
 - Resolve by **re-applying your branch's intent** on top of `origin/main` —
   never by taking one side wholesale to make the conflict go away.
-- If the rebase cannot be completed (more than one surface to reconcile, or the
-  correct resolution is genuinely ambiguous), `git rebase --abort` to restore a
+- Several conflicting paths are not a reason to stop: resolve each one the same
+  way. If the correct resolution is genuinely ambiguous — `origin/main` changed
+  the behaviour your branch depends on, so re-applying your intent needs a
+  design decision — `git rebase --abort` to restore a
   clean tree and end your run with:
   `Worker verdict: rebase blocked — <paths> need reconciling across surfaces`.
   That line is what escalates it to operator work; a `succeeded` with no line

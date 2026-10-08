@@ -18,13 +18,25 @@ A task can be parked for operator merge on a count that is mostly regenerable fi
 the rule also requires **stating the excluded paths in the block comment**: the next reader needs
 to see the count was filtered rather than mis-measured.
 
-## One non-schema path is one author's intent
+## Every conflict is one author's intent first
 
-One file has one conflicting surface and one author's intent to recover — that is the Worker's own
-change re-applied, and re-dispatching it costs one run. Reconciling *across* surfaces is the thing
-an operator is needed for, so the threshold is two or more distinct non-schema paths. Misreading a
-one-file conflict as a hand-merge left two tasks parked five days, and a third parked over a
-one-word comment edit.
+Each conflicting file is the Worker's own change re-applied on top of `origin/main`, and a rebase
+costs one run however many files it touches. A two-or-more-path threshold for operator work sent
+every multi-file conflict straight to a human, and on a `main` merging well over a hundred times a
+day that was most of them. They waited at operator speed while quota flowed into new backlog. What
+an operator is actually needed for is an *ambiguous* resolution, where `main` changed behaviour the
+branch depends on, and the Worker says so with a `rebase blocked` verdict. So the path count no
+longer decides the owner. It only decides whether the rebase dispatches at once (one path) or
+queues in step 5a (two or more). Misreading a one-file conflict as a hand-merge left two tasks
+parked five days, and a third parked over a one-word comment edit.
+
+## Why unblocking outranks promotion
+
+A conflict-blocked task is reviewed work one rebase away from landing. A newly promoted task is a
+future branch on the same files `main` is churning, so promoting it before the rebases adds to the
+pile the rebase would have shrunk. Spending free Worker slots on rebases first means spare quota
+drains the stuck stock instead of feeding it, which is also why the stock cap limits
+`promote_slots` and never the Worker's own slots.
 
 ## A file and its own test are one surface
 
