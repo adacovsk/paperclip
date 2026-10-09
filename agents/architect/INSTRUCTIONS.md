@@ -315,7 +315,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
      That is the cheap test, and it decides the common case: an error naming something the task did not change cannot have been caused by it. **Fall back to the base comparison only when genuinely ambiguous** — a qualifying code whose identifier reaches the file only through a macro, a glob import or a trait bound, so it is not textually in the diff. Then build the base once, in a throwaway worktree under the semaphore (`git worktree add --detach /tmp/base-{task-id} "$(git merge-base HEAD origin/main)"`, clippy `--all-targets` there, `git worktree remove` after): the error present there is not yours.
    - **Everything else outside your list stays an escalation**, exactly as before: any other error code, every lint and warning, any error also present at the base, and anything you cannot tie to your diff. Do not edit it; comment it and `escalate to operator` — unless this is a main-repair task (next bullet).
 
-     **When every error left is one already on `main`, record that before you escalate**, so the escalation clears itself once `main` moves:
+     **When every error left is one already on `main`, record that before you escalate**, so the escalation clears itself once `main` moves. **This holds whether or not you built.** Declining to relaunch because a source read shows `main` still broken is the same escalation and needs the same marker: the requeue script deletes the marker when it re-dispatches you, so an escalation that skips writing a fresh one leaves the task `blocked` with nothing left to wake it when `main` is fixed:
      ```sh
      printf '%s\n%s\n' "$(git rev-parse origin/main)" "{verify-task-id}" > "$VERIFY_DIR/{task-id}.base-red"
      ```
