@@ -20,7 +20,7 @@ def parent(labels=("needs-build",), status="in_review", description=""):
 
 
 def child(title, status, created, key=None):
-    return {"identifier": "T-9", "title": title, "status": status, "createdAt": created,
+    return {"id": f"{title}@{created}", "identifier": "T-9", "title": title, "status": status, "createdAt": created,
             "updatedAt": created, "dedupeKey": key}
 
 
@@ -118,7 +118,97 @@ class RebaseStage(unittest.TestCase):
         self.assertEqual(decide(parent(), stages, CLEAN).kind, "skip")
 
 
+CONFLICTED = GitState(exists=True, ahead=2, head="a" * 40, conflicts=("src/x.rs",))
+VERIFY_BLOCKED = child("Verify: T-1", "blocked", "1", "verify")
+REBASE_DONE = child("Rebase task/T-1 onto origin/main", "in_review", "2")
+
+
+class SupersededStages(unittest.TestCase):
+    def test_a_blocked_verify_does_not_hold_back_its_finished_rebase(self):
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED, REBASE_DONE], CLEAN).kind, "reverify")
+
+    def test_a_blocked_review_resumes_instead_of_a_verify(self):
+        review = child("Review: T-1", "blocked", "1", "review")
+        self.assertEqual(decide(parent(), [review, REBASE_DONE], CLEAN).kind, "resume-review")
+
+    def test_a_stage_opened_after_the_rebase_still_counts(self):
+        later = child("Verify: T-1", "blocked", "3", "verify")
+        self.assertEqual(decide(parent(), [REBASE_DONE, later], CONFLICTED).kind, "rebase")
+        running = child("Verify: T-1", "in_review", "3", "verify")
+        self.assertEqual(decide(parent(), [REBASE_DONE, running], CLEAN).kind, "skip")
+
+    def test_a_running_rebase_still_holds_the_parent(self):
+        running = child("Rebase task/T-1 onto origin/main", "todo", "2")
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED, running], CLEAN).kind, "skip")
+
+
+    def test_a_rebase_closed_by_hand_still_re_verifies(self):
+        closed = child("Rebase task/T-1 onto origin/main", "done", "2")
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED, closed], CLEAN).kind, "reverify")
+
+    def test_a_closed_rebase_with_nothing_blocked_is_history(self):
+        verify = child("Verify: T-1", "done", "1", "verify")
+        closed = child("Rebase task/T-1 onto origin/main", "done", "2")
+        self.assertNotEqual(decide(parent(), [verify, closed], CLEAN).kind, "reverify")
+
+    def test_a_cancelled_parent_is_left_alone(self):
+        self.assertEqual(decide(parent(status="cancelled"), [VERIFY_BLOCKED, REBASE_DONE], CLEAN).kind, "skip")
+
+
+class RebaseDispatch(unittest.TestCase):
+    def test_a_verify_blocked_on_a_conflict_gets_a_rebase(self):
+        d = decide(parent(), [VERIFY_BLOCKED], CONFLICTED)
+        self.assertEqual((d.kind, d.reason), ("rebase", "src/x.rs"))
+
+    def test_a_rebased_branch_main_moved_past_gets_another(self):
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED, REBASE_DONE], CONFLICTED).kind, "rebase")
+
+    def test_the_cap_hands_off_to_the_operator(self):
+        used = [child("Rebase task/T-1 onto origin/main", "done", str(i)) for i in range(2, 2 + dispatch.MAX_REBASES)]
+        last = child("Rebase task/T-1 onto origin/main", "in_review", "9")
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED, *used[1:], last], CONFLICTED).kind, "handoff")
+
+    def test_schema_only_conflicts_are_not_rebased(self):
+        git = GitState(exists=True, ahead=1, conflicts=("assets/schemas/feats.schema.json",))
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED], git).kind, "skip")
+
+    def test_schema_paths_are_left_out_of_the_task(self):
+        git = GitState(exists=True, ahead=1, conflicts=("assets/schemas/a.json", "src/x.rs"))
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED], git).reason, "src/x.rs")
+
+    def test_modify_delete_is_not_rebased(self):
+        git = GitState(exists=True, ahead=1, conflicts=("src/x.rs",), deleted_on_main=True)
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED], git).kind, "skip")
+
+    def test_a_blocked_parent_keeps_its_hold(self):
+        self.assertEqual(decide(parent(status="blocked"), [VERIFY_BLOCKED], CONFLICTED).kind, "skip")
+
+    def test_a_worker_returned_rebase_blocked_is_not_retried(self):
+        gave_up = child("Rebase task/T-1 onto origin/main", "blocked", "2")
+        self.assertNotEqual(decide(parent(), [VERIFY_BLOCKED, gave_up], CONFLICTED).kind, "rebase")
+
+    def test_parses_merge_tree_name_only(self):
+        out = ("abc123\nsrc/x.rs\nsrc/x.rs\nsrc/y.rs\n\nAuto-merging src/x.rs\n"
+               "CONFLICT (content): Merge conflict in src/x.rs\n")
+        self.assertEqual(dispatch.parse_merge_tree(out), (("src/x.rs", "src/y.rs"), ()))
+        out = "abc\nsrc/z.rs\n\nCONFLICT (modify/delete): src/z.rs deleted in origin/main and modified in HEAD.\n"
+        self.assertEqual(dispatch.parse_merge_tree(out), (("src/z.rs",), ("src/z.rs",)))
+
+    def test_a_module_split_on_main_is_ported(self):
+        git = GitState(exists=True, ahead=1, conflicts=("src/x.rs",), split_on_main=("src/x.rs",))
+        self.assertEqual(decide(parent(), [VERIFY_BLOCKED], git).kind, "rebase")
+        self.assertEqual(dispatch.split_dir("src/a/b.rs"), "src/a/b")
+        self.assertIsNone(dispatch.split_dir("assets/a.json"))
+
+
 class Holds(unittest.TestCase):
+    def test_a_legacy_hold_releases_only_once_its_blocker_closed(self):
+        self.assertEqual(dispatch.held_closed("Held: waiting on AA-12 — files"), ("AA-12", "closed"))
+        self.assertIsNone(dispatch.held_closed("Held: waiting on contended edit surface — x"))
+        in_review = {"identifier": "AA-12", "status": "in_review"}
+        self.assertIsNone(dispatch.hold_resolved(in_review, "closed", True))
+        self.assertIn("cancelled", dispatch.hold_resolved({"identifier": "AA-12", "status": "cancelled"}, "closed", False))
+
     def test_parses_only_the_release_condition_forms(self):
         self.assertEqual(dispatch.held_until("Held: until AA-12 merges — builds on its seam"), ("AA-12", "merge"))
         self.assertEqual(dispatch.held_until("Held: until AA-12 opens its PR — files"), ("AA-12", "pr"))
