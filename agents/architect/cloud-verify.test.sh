@@ -156,6 +156,7 @@ case "$1" in
   branch)     echo "task/${OFFLOAD_TASK}" ;;
   status)     ;;
   merge-base) echo aaa111 ;;
+  rev-parse)  echo ccc333 ;;
   push)       printf '%s\n' "$*" >> "$PUSH_LOG" ;;
   *)          exit 0 ;;
 esac
@@ -208,6 +209,9 @@ export ARCHITECT_CLOUD_LANE=1
 for t in 5 6 7 8 9 10; do
   OFFLOAD_TASK="AA-$t" "$CV" offload "AA-$t" "task/AA-$t" >/dev/null 2>&1 || bad "offload AA-$t" "refused while open"
 done
+# detach backgrounds the watcher (through systemd-run where the box has it), so
+# the last one can still be starting when the loop ends.
+for _ in $(seq 50); do [ "$(wc -l < "$DIR/setsid.log")" -ge 6 ] && break; sleep 0.1; done
 check "open lane has no concurrency bound" "$(wc -l < "$DIR/setsid.log")" 6
 # A pre-push hook outlives the Architect's run and strands the launch.
 check "offload pushes each task"             "$(wc -l < "$PUSH_LOG")" 6
@@ -217,8 +221,57 @@ OFFLOAD_TASK=AA-11 "$CV" offload AA-11 task/AA-11 >/dev/null 2>&1; check "ahead 
 check "closed lane detached nothing" "$(wc -l < "$DIR/setsid.log")" 6
 usage 38 6
 echo "guard suite failed" > "$CLOUD_VERIFY_DIR/AA-12.cloud.rejected"
-OFFLOAD_TASK=AA-12 "$CV" offload AA-12 task/AA-12 >/dev/null 2>&1; check "rejected task is not re-offloaded -> 1" "$?" 1
+OFFLOAD_TASK=AA-12 "$CV" offload AA-12 task/AA-12 >/dev/null 2>&1; check "rejection with no recorded head is not re-offloaded -> 1" "$?" 1
+
+echo "a rejection earns one informed retry at the same head:"
+reject_at() { echo "$2" > "$CLOUD_VERIFY_DIR/$1.cloud.rejected"; echo "$3" > "$CLOUD_VERIFY_DIR/$1.cloud.rejected-head"; }
+reject_at AA-13 "guard suite failed" ccc333
+OFFLOAD_TASK=AA-13 "$CV" offload AA-13 task/AA-13 >/dev/null 2>&1; check "first rejection at this head -> re-offloaded" "$?" 0
+check "the retry carries the reason" "$(cat "$CLOUD_VERIFY_DIR/AA-13.cloud.prior-rejection" 2>/dev/null)" "guard suite failed"
+reject_at AA-13 "cloud commits delete files" ccc333
+OFFLOAD_TASK=AA-13 "$CV" offload AA-13 task/AA-13 >/dev/null 2>&1; check "second rejection at the same head -> 1" "$?" 1
+reject_at AA-14 "guard suite failed" ccc333; echo ccc333 > "$CLOUD_VERIFY_DIR/AA-14.cloud.retried-head"
+echo "old reason" > "$CLOUD_VERIFY_DIR/AA-14.cloud.prior-rejection"
+reject_at AA-14 "guard suite failed" ddd444
+OFFLOAD_TASK=AA-14 "$CV" offload AA-14 task/AA-14 >/dev/null 2>&1; check "rejection at an older head -> offloaded" "$?" 0
+check "a new head forgets the old reason" "$([ -f "$CLOUD_VERIFY_DIR/AA-14.cloud.prior-rejection" ] && echo stale || echo clean)" clean
+
+echo "offload records the verify mode for the detached watcher:"
+OFFLOAD_TASK=AA-15 CLOUD_VERIFY_RESOLVE=1 "$CV" offload AA-15 task/AA-15 >/dev/null 2>&1
+check "CLOUD_VERIFY_RESOLVE=1 -> resolve mark" "$([ -f "$CLOUD_VERIFY_DIR/AA-15.cloud.resolve" ] && echo yes)" yes
+OFFLOAD_TASK=AA-15 CLOUD_VERIFY_WIDE=1 "$CV" offload AA-15 task/AA-15 >/dev/null 2>&1
+check "a later offload without it clears the mark" "$([ -f "$CLOUD_VERIFY_DIR/AA-15.cloud.resolve" ] && echo kept || echo cleared)" cleared
+check "CLOUD_VERIFY_WIDE=1 -> wide mark" "$([ -f "$CLOUD_VERIFY_DIR/AA-15.cloud.wide" ] && echo yes)" yes
 unset ARCHITECT_CLOUD_LANE
+
+echo "launch prompt follows the mode:"
+cat > "$BIN/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in ls-remote) exit 0 ;; rev-parse) echo bbb222 ;; *) exit 0 ;; esac
+EOF
+chmod +x "$BIN/git"
+cat > "$BIN/script" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$2" > "$DIR/launch.cmd"
+echo "View: .../session_01ABCDEFGH?from=cli"
+EOF
+chmod +x "$BIN/script"
+launched() { "$CV" launch "$1" "task/$1" >/dev/null 2>&1; cat "$DIR/launch.cmd"; }
+rm -f "$CLOUD_VERIFY_DIR"/AA-16.cloud.*
+P="$(launched AA-16)"
+check "plain verify forbids rebasing"      "$(printf '%s' "$P" | grep -c 'Do NOT rebase or merge')" 1
+check "plain verify runs at low effort"    "$(printf '%s' "$P" | grep -c -- '--effort low')" 1
+: > "$CLOUD_VERIFY_DIR/AA-16.cloud.resolve"
+P="$(launched AA-16)"
+check "resolve verify rebases onto main"   "$(printf '%s' "$P" | grep -c 'CONFLICTS WITH CURRENT main')" 1
+check "resolve verify reports rebased-onto" "$(printf '%s' "$P" | grep -c 'rebased-onto:')" 1
+check "resolve verify runs at high effort" "$(printf '%s' "$P" | grep -c -- '--effort high')" 1
+rm -f "$CLOUD_VERIFY_DIR/AA-16.cloud.resolve"; : > "$CLOUD_VERIFY_DIR/AA-16.cloud.wide"
+echo "guard suite failed" > "$CLOUD_VERIFY_DIR/AA-16.cloud.prior-rejection"
+P="$(launched AA-16)"
+check "wide verify widens scope"           "$(printf '%s' "$P" | grep -c 'WIDE SCOPE')" 1
+check "a retry is told why"                "$(printf '%s' "$P" | grep -c 'for this reason: guard suite failed')" 1
+rm -f "$CLOUD_VERIFY_DIR"/AA-16.cloud.*
 
 echo "completion wake:"
 # The wake must name the Verify task; unnamed, the server binds it to a stale one.
@@ -291,6 +344,7 @@ publish() {
   g update-ref "$(cat "$CLOUD_VERIFY_DIR/$1.cloud.ref")" HEAD
   g checkout -q "task/$1"
 }
+why() { grep -c -- "$2" "$CLOUD_VERIFY_DIR/$1.cloud.rejected" 2>/dev/null; }
 accept() { ( cd "$R" && PATH="$REALPATH" CLOUD_VERIFY_PIXI_BIN="$PIXI" "$CV" accept "$1" >/dev/null 2>&1 ); }
 
 setup AA-20; commit src/a.rs "fn fixed() {}" fix; commit assets/schemas/x.json "{}" schemas
@@ -430,6 +484,76 @@ accept AA-63;                                   check "main-repair: suppression 
 setup AA-64 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' basefix; publish AA-64
 declare_oos AA-64 "src/b.rs too_many_arguments tail -- this function has too many arguments"
 accept AA-64;                                   check "same edit without the main-repair mark -> rejected" "$?" 1
+
+echo "wide scope: a red outside the task's files, re-verified:"
+setup AA-65 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' testfix
+WORK="$(g rev-parse HEAD)"; publish AA-65; : > "$CLOUD_VERIFY_DIR/AA-65.cloud.wide"
+declare_oos AA-65 "src/b.rs systems::tests::tail_counts tail -- assertion failed"
+accept AA-65;                                   check "wide: declared fix outside the task -> accepted" "$?" 0
+setup AA-66 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' testfix
+publish AA-66; : > "$CLOUD_VERIFY_DIR/AA-66.cloud.wide"
+accept AA-66;                                   check "wide: undeclared edit -> rejected" "$?" 1
+rm -f "$CLOUD_VERIFY_DIR"/AA-6[56].cloud.wide
+
+echo "resolve mode: the VM rebases a conflicting branch onto main:"
+# setup_resolve <task> [task-line]: as setup, plus a bare origin holding main
+# and the task branch, then a main commit that conflicts with the task's edit to
+# src/a.rs. Leaves the worktree on the task branch at the launched head and HEAD
+# detached for the VM's work to start from origin/main.
+O="$DIR/origin.git"
+setup_resolve() {
+  setup "$1" "${2:-fn a2() {\}}"; g checkout -q "task/$1"
+  rm -rf "$O"; PATH="$REALPATH" git init -q --bare "$O"
+  g remote add origin "$O"; g push -q origin main "task/$1"
+  g checkout -q main; commit src/a.rs "fn main_moved() {}" main-moves; g push -q origin main
+  ONTO="$(g rev-parse HEAD)"; g fetch -q origin
+  : > "$CLOUD_VERIFY_DIR/$1.cloud.resolve"
+  printf 'rebased-onto: %s\n' "$ONTO" >> "$CLOUD_VERIFY_DIR/$1.cloud.verdict"
+  g checkout -q --detach "$ONTO"
+}
+resolved() {  # the VM's resolution: main's line and the task's line both kept
+  commit src/a.rs "${1:-fn a2() {\}}" "task, resolved onto main"
+}
+
+setup_resolve AA-80; resolved; WORK="$(g rev-parse HEAD)"; publish AA-80
+accept AA-80;                                   check "resolved onto origin/main -> accepted" "$?" 0
+check "worktree moved to the resolved work"     "$(g rev-parse HEAD)" "$WORK"
+check "resolved branch published to origin"     "$(g ls-remote origin refs/heads/task/AA-80 | cut -f1)" "$WORK"
+check "landing's base is the commit it was rebased onto" "$(cat "$CLOUD_VERIFY_DIR/AA-80.base")" "$ONTO"
+
+setup_resolve AA-81; resolved; publish AA-81
+sed -i '/^rebased-onto:/d' "$CLOUD_VERIFY_DIR/AA-81.cloud.verdict"
+accept AA-81;                                   check "no rebased-onto -> rejected" "$?" 1
+check "  ...for that reason (AA-81)" "$(why AA-81 'no rebased-onto')" 1
+
+setup_resolve AA-82; g checkout -q --detach "$ONTO"; commit src/a.rs "fn off_main() {}" side
+SIDE="$(g rev-parse HEAD)"; resolved; publish AA-82
+sed -i "s/^rebased-onto: .*/rebased-onto: $SIDE/" "$CLOUD_VERIFY_DIR/AA-82.cloud.verdict"
+accept AA-82;                                   check "rebased-onto not on origin/main -> rejected" "$?" 1
+check "  ...for that reason (AA-82)" "$(why AA-82 'is not on origin/main')" 1
+check "worktree left at launched head"          "$(g rev-parse HEAD)" "$LEASE"
+
+setup_resolve AA-83; resolved; commit src/b.rs "fn widened() {}" widen; publish AA-83
+accept AA-83;                                   check "resolution into a file the task never touched -> rejected" "$?" 1
+check "  ...for that reason (AA-83)" "$(why AA-83 'outside the task')" 1
+
+setup_resolve AA-84 "#[allow(dead_code)] fn a2() {}"; resolved "#[allow(dead_code)] fn a2() {}"; publish AA-84
+accept AA-84;                                   check "the task's own suppression is not charged to the VM -> accepted" "$?" 0
+
+setup_resolve AA-85; resolved; commit src/a.rs "#[allow(unused)]" sup; publish AA-85
+accept AA-85;                                   check "a suppression the VM added -> rejected" "$?" 1
+check "  ...for that reason (AA-85)" "$(why AA-85 'suppression')" 1
+
+setup_resolve AA-86; resolved; publish AA-86
+g push -q origin "$(g rev-parse main):refs/heads/task/AA-86" -f
+accept AA-86;                                   check "task branch moved on origin since launch -> rejected" "$?" 1
+check "  ...for that reason (AA-86)" "$(why AA-86 'moved on origin')" 1
+check "worktree returned to launched head"      "$(g rev-parse HEAD)" "$LEASE"
+
+setup_resolve AA-87; resolved; publish AA-87; rm -f "$CLOUD_VERIFY_DIR/AA-87.cloud.resolve"
+accept AA-87;                                   check "rebased work without the resolve mark -> rejected" "$?" 1
+check "  ...for that reason (AA-87)" "$(why AA-87 'do not descend from the launched head')" 1
+rm -f "$CLOUD_VERIFY_DIR"/AA-8?.cloud.resolve
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
