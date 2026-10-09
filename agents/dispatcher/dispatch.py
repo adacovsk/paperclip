@@ -16,6 +16,7 @@ whole instruction set. This script runs those rows directly:
   held Verify, capacity free              -> dispatch it
   `Held: until <id> merges|opens its PR`  -> back to backlog once it has
   `Held: waiting on <id>`, <id> closed     -> back to backlog
+  its own routine fire, sweep finished      -> close the routine's issue
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
 a chain, a finished rebase, an unlabeled task -- is handed off in ONE wake, and
@@ -824,12 +825,33 @@ def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
     return released
 
 
+def routine_fire(issue: dict | None, agent_id: str | None) -> bool:
+    """Whether the wake's task is an open routine issue assigned to this agent.
+
+    A scheduled fire creates an issue and wakes us on it. Nothing else ever closes
+    it, so without this every fire would leave one open `todo` behind.
+    """
+    return bool(
+        issue
+        and agent_id
+        and issue.get("originKind") == "routine_execution"
+        and issue.get("assigneeAgentId") == agent_id
+        and issue.get("status") in OPEN
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     project = Path(os.environ["PAPERCLIP_PROJECT"])
-    sweep(Api(args.dry_run), project)
+    api = Api(args.dry_run)
+    sweep(api, project)
+    # Closed only after a sweep that returned: a crash leaves the fire's issue open as the trace.
+    task_id = os.environ.get("PAPERCLIP_TASK_ID")
+    issue = api.get(f"/issues/{task_id}") if task_id else None
+    if routine_fire(issue, os.environ.get("PAPERCLIP_AGENT_ID")):
+        api.set_status(issue, {"status": "done"}, "Sweep finished.", f"routine {issue['identifier']}: close")
     return 0
 
 

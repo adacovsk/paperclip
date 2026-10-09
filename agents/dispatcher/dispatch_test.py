@@ -244,5 +244,26 @@ class Holds(unittest.TestCase):
         self.assertIsNone(dispatch.hold_resolved(in_review, "pr", False))
         self.assertIsNone(dispatch.hold_resolved(None, "pr", True))
 
+
+
+class RoutineFire(unittest.TestCase):
+    FIRE = {"originKind": "routine_execution", "assigneeAgentId": "me", "status": "todo"}
+
+    def test_own_open_routine_issue_is_closed(self):
+        self.assertTrue(dispatch.routine_fire(self.FIRE, "me"))
+
+    def test_stage_completion_wake_is_not_a_fire(self):
+        self.assertFalse(dispatch.routine_fire({**self.FIRE, "originKind": "manual"}, "me"))
+
+    def test_another_agents_routine_is_left_alone(self):
+        self.assertFalse(dispatch.routine_fire(self.FIRE, "coordinator"))
+
+    def test_closed_issue_is_left_alone(self):
+        self.assertFalse(dispatch.routine_fire({**self.FIRE, "status": "done"}, "me"))
+
+    def test_no_task_is_not_a_fire(self):
+        self.assertFalse(dispatch.routine_fire(None, "me"))
+
+
 if __name__ == "__main__":
     unittest.main()
