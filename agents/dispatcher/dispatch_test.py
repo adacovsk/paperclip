@@ -265,5 +265,31 @@ class RoutineFire(unittest.TestCase):
         self.assertFalse(dispatch.routine_fire(None, "me"))
 
 
+class MainHasDir(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import subprocess, tempfile
+        cls.tmp = tempfile.TemporaryDirectory()
+        wt = Path(cls.tmp.name)
+        run = lambda *a: subprocess.run(["git", "-C", str(wt), *a], check=True, capture_output=True)
+        run("init", "-q")
+        (wt / "a").mkdir()
+        (wt / "a" / "b.rs").write_text("")
+        run("add", ".")
+        run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
+        run("update-ref", "refs/remotes/origin/main", "HEAD")
+        cls.wt = wt
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_split_directory_is_found(self):
+        self.assertTrue(dispatch.main_has_dir(self.wt, "a"))
+
+    def test_plain_delete_is_not_a_split(self):
+        self.assertFalse(dispatch.main_has_dir(self.wt, "gone"))
+
+
 if __name__ == "__main__":
     unittest.main()
