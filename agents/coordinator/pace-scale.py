@@ -41,7 +41,13 @@ a fast-moving `main` turns into more conflicts and more escalations. So stock
 narrows only the knobs that admit *new* work -- `promote_slots`, the
 contention `writer_threshold` and the Planner's `planner_floor`. At
 PACE_SCALE_STOCK_CEILING (default 40) they drop to the floor tier; from
-PACE_SCALE_STOCK_BASELINE (default 20) they cap at baseline. Worker and
+PACE_SCALE_STOCK_BASELINE (default 20) they cap at baseline. At the ceiling
+promotion closes outright: `promote_slots` goes to 0, so nothing leaves the
+backlog until the pile drains below it. The floor tier still admitted 2
+promotions a fire, ~96 a day, more than the pipeline lands. The backlog itself
+keeps filling (the Planner's target is `worker_slots`, and `planner_floor`
+keeps the floor tier's value): it is a queue, not load, and is ready the
+moment promotion reopens. Worker and
 Reviewer slots keep the pace tier, because the Coordinator spends Worker slots
 on unblock work (conflict rebases) before it promotes anything, and review
 drains. The cap never widens, and an unreadable stock caps at baseline.
@@ -90,7 +96,7 @@ def stock_cap(stock: int | None) -> tuple[int | None, str]:
     if stock is None:
         return BASELINE, "stock unreadable: capped at baseline"
     if stock >= ceiling:
-        return 0, f"stock {stock} at or over {ceiling:.0f}: supply at floor"
+        return 0, f"stock {stock} at or over {ceiling:.0f}: promotion closed"
     if stock >= baseline:
         return BASELINE, f"stock {stock} at or over {baseline:.0f}: supply capped at baseline"
     return None, f"stock {stock}"
@@ -101,10 +107,11 @@ def cap_supply(result: dict, stock: int | None) -> dict:
     result["stock"] = stock
     result["promote_slots"] = result["worker_slots"]
     result["why"] = f"{result['why']}; {why}"
-    if cap is None or cap >= result["tier"]:
-        return result
-    _, workers, _, writers, floor = TIERS[cap]
-    result.update(promote_slots=workers, writer_threshold=writers, planner_floor=floor)
+    if cap is not None and cap < result["tier"]:
+        _, workers, _, writers, floor = TIERS[cap]
+        result.update(promote_slots=workers, writer_threshold=writers, planner_floor=floor)
+    if cap == 0:
+        result["promote_slots"] = 0  # promotion closed: unblock and land only
     return result
 
 
