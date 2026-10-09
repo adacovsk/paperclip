@@ -405,5 +405,31 @@ declare_oos AA-49 "src/b.rs E0004 Added -- non-exhaustive patterns"
 declare_oos AA-49 "README E0004 Added -- non-exhaustive patterns"
 accept AA-49;                                   check "non-Rust out-of-scope file -> rejected" "$?" 1
 
+echo "main-repair tasks: base breakage outside the task is in scope:"
+repair() { : > "$CLOUD_VERIFY_DIR/$1.cloud.main-repair"; }
+
+# The same edit AA-45 rejects (a hunk unrelated to the task's diff) is the job
+# when the task restores main.
+setup AA-60 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' basefix
+WORK="$(g rev-parse HEAD)"; publish AA-60; repair AA-60
+declare_oos AA-60 "src/b.rs too_many_arguments tail -- this function has too many arguments"
+accept AA-60;                                   check "main-repair: declared base fix -> accepted" "$?" 0
+check "main-repair: worktree fast-forwarded" "$(g rev-parse HEAD)" "$WORK"
+
+setup AA-61 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' basefix; publish AA-61; repair AA-61
+accept AA-61;                                   check "main-repair: undeclared edit -> rejected" "$?" 1
+
+setup AA-62 "    Added,"; commit src/c.rs "fn c() {}" new; publish AA-62; repair AA-62
+declare_oos AA-62 "src/c.rs E0425 c -- cannot find function"
+accept AA-62;                                   check "main-repair: new file -> rejected" "$?" 1
+
+setup AA-63 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/#[allow(clippy::all)]\nfn tail() {}/' sup; publish AA-63; repair AA-63
+declare_oos AA-63 "src/b.rs too_many_arguments tail -- this function has too many arguments"
+accept AA-63;                                   check "main-repair: suppression -> rejected" "$?" 1
+
+setup AA-64 "    Added,"; sed_commit src/b.rs 's/^fn tail() {}$/fn tail() { unrelated() }/' basefix; publish AA-64
+declare_oos AA-64 "src/b.rs too_many_arguments tail -- this function has too many arguments"
+accept AA-64;                                   check "same edit without the main-repair mark -> rejected" "$?" 1
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
