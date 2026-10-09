@@ -119,6 +119,7 @@ minutes.
    c. Assign Architect. It runs cargo against the worktree and comments the result on the PR; it does **not** merge — dependency bumps stay an operator decision.
    Scoped to manifest changes rather than to a bot actor, so a hand-edited dependency is covered too.
    **Why this exists**: this step replaces the `pull_request` trigger that was removed to conserve Actions minutes. A bump is not a task, so no agent otherwise ever builds it. **Do not drop this step without restoring that trigger** — deleting both leaves dependency bumps verified by nobody. → [why nothing else ever builds a bump](rationale/dependency-bump-intake.md)
+2b. **Requeue base-red verifies.** Run `"$HOME/code/paperclip/agents/architect/requeue-base-red.sh"` (needs `PAPERCLIP_PROJECT` and `PAPERCLIP_COMPANY_ID`). An Architect that escalates a red already on `main` leaves a `<task>.base-red` marker naming the `origin/main` it built against; once `main` has moved past it the script deletes the stale result and re-dispatches the blocked verify, with a comment naming what resolved it. Run it every fire, before step 3: a base-red verify is otherwise `blocked` with nothing left to wait on, and it was an operator deleting sentinels by hand that unstranded the last batch — one of them the fix `main` itself was waiting on. Record the lines it prints.
 3. Advance completed stages (dispatch Architect synchronously — see §Architect dispatch).
    A Worker never pushes, so the server's Layer-2 gate lands a finished Worker stage at
    **`in_review` (assignee = Worker)**, never `done`. The Reviewer carries the paperclip skill and
@@ -279,6 +280,10 @@ its Architect immediately:
 - Create the verify subtask (`in_review` status, `assigneeAgentId` =
   Architect, label `needs-build`, `dedupeKey: "verify"` — or `"ci-fix"` for a
   `ci-fix:` subtask; see §Stage-subtask dedupe).
+- **Carry a `Main-repair:` line across.** If the parent's body has one, copy
+  it verbatim into the subtask body. The Architect reads its own task, and the
+  line is what tells it that breakage already on `main` is in scope and puts the
+  build in the express lane (architect INSTRUCTIONS §Procedure step 4).
 - **Title contract**: Architect subtasks must start with `Verify:` or
   `ci-fix:`. Never `Review:`, `Verify+Review:`, `Review and verify:`,
   or anything that asks Architect to evaluate code quality, IP, or
@@ -298,7 +303,8 @@ overtakes, so nothing can otherwise say *this build unblocks the others*. To put
 Priority-verify: <one line — what queued work this build unblocks>
 ```
 
-The Architect exports `CARGO_SEM_PRIORITY=1` on that line or the `ci-failure` label, and nothing
+The Architect exports `CARGO_SEM_PRIORITY=1` on that line or a main-repair marker (`ci-failure`
+label, `ci-fix:` title, `Main-repair:` line), and nothing
 else (architect INSTRUCTIONS §Cargo discipline rule 2). It skips the *queue*, not the *slot* — it
 never preempts a running build. **The bar is "this unblocks other queued work", not "this task
 matters", and the lane stops working for anyone if it is crowded** — one or two in a queue, at
@@ -870,7 +876,9 @@ Four rules, all mandatory:
    is clearing and name what resolved it** — a dependency now `done`, a merged PR, a specific
    cleared condition. If you cannot quote it, you did not read it, and you must leave the status
    alone. The one exception to authorship is a block whose comment starts with `Held:` — step 5
-   releases those whoever wrote them, still quoting the line.
+   releases those whoever wrote them, still quoting the line. Step 2b's script is the other: it
+   clears only an Architect base-red escalation, and only once `origin/main` has moved past the
+   sha the escalation recorded, and its own comment names that as the resolution.
 3. **Direction, not presence.** "blocked on red main", "needs operator merge", "waiting on AA-nnnn"
    all contain status words and all point the opposite way. Match on what the comment says was
    **resolved**, never on the fact that it discusses status. Ambiguous → surface it in your record

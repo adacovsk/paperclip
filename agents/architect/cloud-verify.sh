@@ -11,7 +11,8 @@
 # `cloud-verify/` branch — never the task branch, never a PR. This box then
 # accepts or rejects those commits (`accept_cloud_work`): they must descend from
 # the launched head, touch only the task's files, regenerated schemas or declared
-# diff-caused fixes, add no lint or test suppression, delete no file, and pass
+# diff-caused fixes (for a main-repair task, any declared fix to an existing Rust
+# file — see `check_main_repair_edit`), add no lint or test suppression, delete no file, and pass
 # the guard suite locally. Accepted work is
 # fast-forwarded into the worktree and the Architect lands it through its
 # ordinary Landing; rejected work is never used and the task verifies locally.
@@ -90,7 +91,16 @@ die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 ref_for() { printf 'refs/heads/cloud-verify/%s/%s' "$1" "$2"; }
 
 verify_prompt() {
-  local task="$1" head="$2" ref="$3" cap="$4"
+  local task="$1" head="$2" ref="$3" cap="$4" repair="${5:-0}" repair_text=""
+  if [ "$repair" = "1" ]; then
+    repair_text="
+   THIS TASK RESTORES A RED main. An error that is also present at \$BASE is
+   in scope too, wherever it is: that breakage is exactly what this task exists
+   to remove, and a second break on main is no less its job than the first. Fix
+   it in the existing .rs file it is in and declare that file with an
+   out-of-scope line (code = the error code or lint name, identifier = the item
+   you changed). The suppression and deletion bans below still apply."
+  fi
   cat <<PROMPT
 Verify commit ${head} of task ${task}, fixing what you can within the task's scope.
 
@@ -132,9 +142,9 @@ breaks these rules is discarded.
    ${OOS_MAX_REMOVED_PER_HUNK} lines. If unsure whether the error also exists at \$BASE, check out
    \$BASE in a separate worktree and run the clippy gate there; failing there too
    means it is not this task's. Anything else outside the task's files is not
-   yours: do not edit it; finish with result: FAIL and name it. Declare every
-   out-of-scope file you edit in the verdict (step 6) — an undeclared one gets
-   all of your work rejected. Fix causes, not symptoms: adding
+   yours: do not edit it; finish with result: FAIL and name it.${repair_text}
+   Declare every out-of-scope file you edit in the verdict (step 6) — an
+   undeclared one gets all of your work rejected. Fix causes, not symptoms: adding
    #[allow(...)], #[expect(...)] or #[ignore], deleting a test, or weakening an
    assertion gets all of your work rejected. Commit each round as
    'fix: <what>' with a 'Stage: architect' line. Still red after ${cap} rounds
@@ -195,7 +205,9 @@ cmd_launch() {
 
   # `--effort` must precede `--cloud`: `--cloud` takes an optional description,
   # so `--cloud --effort low "..."` swallows the flag and the prompt never arrives.
-  out="$(script -qec "claude --effort ${CLOUD_VERIFY_EFFORT:-low} --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}")")" /dev/null 2>&1)"
+  local repair=0
+  [ -f "$STATE_DIR/$task.cloud.main-repair" ] && repair=1
+  out="$(script -qec "claude --effort ${CLOUD_VERIFY_EFFORT:-low} --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}" "$repair")")" /dev/null 2>&1)"
   sid="$(printf '%s' "$out" | sed -n 's/.*\(session_[A-Za-z0-9]\{8,\}\).*/\1/p' | head -1)"
   [ -n "$sid" ] || { printf '%s\n' "$out" >&2; die "no session id in launch output"; }
 
@@ -379,6 +391,30 @@ check_out_of_scope() {
     END { if (in_hunk) done_hunk(); exit bad }'
 }
 
+# MAIN-REPAIR TASKS. A task that exists to restore a red `main` (the Architect
+# offloads it with CLOUD_VERIFY_MAIN_REPAIR=1, recorded as
+# `<task>.cloud.main-repair`) is the one case where an error already present at
+# the base IS the task's: excluding pre-existing breakage is what scope is for
+# everywhere else, and here it is the whole job. Without this a main-repair
+# verify that met a second, unrelated break on main escalated it as "not mine"
+# and stranded the very fix that would have unblocked everything.
+#
+# So for those tasks a declared edit to an existing .rs file is admitted without
+# the diff-tie and per-hunk bounds — a lint like too-many-arguments is fixed by
+# restructuring, not by editing uses of one identifier. Still enforced, for every
+# task: the declaration (nothing reaches the tree unnamed, and the PR body lists
+# it), no suppression, no deleted file, the guard suite. The operator's merge
+# stays the final gate.
+check_main_repair_edit() {
+  local f="$1" lease="$2" body="$3" path rest
+  case "$f" in *.rs) ;; *) echo "not a Rust file"; return 1 ;; esac
+  git cat-file -e "$lease:$f" 2>/dev/null || { echo "not present at the launched head"; return 1; }
+  while read -r path rest; do
+    [ "$path" = "$f" ] && [ -n "$rest" ] && return 0
+  done < <(printf '%s\n' "$body" | sed -n 's/^out-of-scope: *//p')
+  echo "undeclared"; return 1
+}
+
 reject() {
   printf '%s\n' "$1" > "$STATE_DIR/$TASK.cloud.rejected"
   cp -f "$STATE_DIR/$TASK.cloud.launched-head" "$STATE_DIR/$TASK.cloud.rejected-head" 2>/dev/null || true
@@ -407,14 +443,19 @@ accept_cloud_work() {
   # Scope: every file the VM changed must be one of the task's files, a
   # regenerated schema, or a declared out-of-scope fix the task's own diff
   # forced (`check_out_of_scope`).
-  local task_files body why
+  local task_files body why repair=0
   task_files="$(git diff --name-only "$base" "$lease")"
   body="$(cat "$STATE_DIR/$TASK.cloud.verdict" 2>/dev/null)"
+  [ -f "$STATE_DIR/$TASK.cloud.main-repair" ] && repair=1
   bad=""
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in assets/schemas/*) continue ;; esac
     printf '%s\n' "$task_files" | grep -qxF -- "$f" && continue
+    if [ "$repair" = 1 ]; then
+      why="$(check_main_repair_edit "$f" "$lease" "$body")" || bad="$bad $f ($why)"
+      continue
+    fi
     why="$(check_out_of_scope "$f" "$base" "$lease" "$work" "$body")" || bad="$bad $f ($why)"
   done < <(git diff --name-only "$lease" "$work")
   [ -z "$bad" ] || reject "cloud commits touch files outside the task:$bad"
@@ -490,7 +531,14 @@ cmd_offload() {
   # baseline that makes the next offload refuse as uncommitted. The push is only
   # the VM's input; the VM runs the suite and acceptance re-runs it on this box.
   git push -q --no-verify --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed — run locally"; exit 1; }
-  rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict"
+  rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict" "$STATE_DIR/$task.base-red"
+  # Recorded as a file, not passed as env: the watcher runs in a transient scope
+  # that does not inherit the caller's environment.
+  if [ "${CLOUD_VERIFY_MAIN_REPAIR:-}" = "1" ]; then
+    : > "$STATE_DIR/$task.cloud.main-repair"
+  else
+    rm -f "$STATE_DIR/$task.cloud.main-repair"
+  fi
   detach "$task" watch "$task" "$branch" "$verify_task"
   echo "offloaded $task: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null)"
 }
