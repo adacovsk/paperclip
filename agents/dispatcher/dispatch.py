@@ -399,12 +399,25 @@ def git_state(project: Path, identifier: str) -> GitState:
     except (subprocess.SubprocessError, ValueError):
         return GitState(exists=False)
     conflicts, deleted = parse_merge_tree(merge.stdout) if merge.returncode == 1 else ((), ())
-    split = tuple(p for p in deleted if split_dir(p) and git(wt, "ls-tree", "--name-only", f"origin/main:{split_dir(p)}").strip())
+    split = tuple(p for p in deleted if split_dir(p) and main_has_dir(wt, split_dir(p)))
     return GitState(
         exists=True, dirty=dirty, ahead=ahead, head=head, changed=changed,
         merges_clean=merge.returncode == 0, conflicts=conflicts,
         deleted_on_main=len(split) < len(deleted), split_on_main=split,
     )
+
+
+def main_has_dir(wt: Path, path: str) -> bool:
+    """Whether `origin/main` has a non-empty directory at `path`.
+
+    A plain delete leaves no such path, and `ls-tree` exits 128 on it; that is
+    the answer "not split", not an error, and raising here aborts the whole sweep.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(wt), "ls-tree", "--name-only", f"origin/main:{path}"],
+        capture_output=True, text=True, timeout=60,
+    )
+    return out.returncode == 0 and bool(out.stdout.strip())
 
 
 def split_dir(path: str) -> str | None:
