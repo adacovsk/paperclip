@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Relaunch a verify in the cloud lane without a model run, for the two sentinel
-# results whose next step is fixed by rule:
+# Launch or relaunch a verify in the cloud lane without a model run, for the
+# first launch and the two sentinel results whose next step is fixed by rule:
 #
+#   launch the first build of a Verify: Step 0's checks, sync onto origin/main,
+#          offload. A branch that conflicts goes out in resolve mode, as Step 0
+#          sends it, unless a resolve verify of it already came back.
 #   retry  `99` or `75`: the build never reported (wrapper signalled, worktree lock
 #          never freed). The code was not judged, so the same head goes out again.
 #   fresh  `0`, but origin/main moved past the verified base: §Landing's freshness
@@ -14,17 +17,18 @@
 # not sure of exits 1, and the caller wakes the Architect exactly as before, so
 # the fallback is today's behaviour, never a dropped verify.
 #
-# Usage:  relaunch-verify.sh <task-id> <verify-task-id> retry|fresh
+# Usage:  relaunch-verify.sh <task-id> <verify-task-id> launch|retry|fresh
 # Exit:   0  relaunched in the cloud lane; the next sentinel arrives as usual
 #         3  fresh only: nothing to re-verify, Landing should run (main has not
 #            moved in code, or the freshness cap is reached)
 #         1  a model has to look: no worktree, wrong branch, dirty tree, a sync
-#            conflict, or the lane refused the offload
+#            conflict, the lane refused the offload, or (launch) no commits to
+#            verify, a result or build already present, a resolve already tried
 # Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME, FRESHNESS_CAP (default 2,
 #         as in §Landing), RELAUNCH_CV / RELAUNCH_FRESHNESS (test seams).
 set -uo pipefail
 
-task="${1:?task id}"; verify="${2:?verify task id}"; mode="${3:?retry|fresh}"
+task="${1:?task id}"; verify="${2:?verify task id}"; mode="${3:?launch|retry|fresh}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CV="${RELAUNCH_CV:-$HERE/cloud-verify.sh}"
 FRESHNESS="${RELAUNCH_FRESHNESS:-$HERE/freshness-reverify-needed.sh}"
@@ -40,6 +44,16 @@ cd "${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}/.paperclip/worktrees/$task" 2>/d
 # committed head without it, and the sync below would refuse anyway.
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { say "uncommitted changes in the worktree"; exit 1; }
 
+# §Landing's sync, verbatim in effect: a branch already on origin is never
+# rebased, because Landing's push is not forced. Returns 1 on a conflict, with
+# no rebase or merge left in progress.
+sync() {
+  { ! git ls-remote --exit-code --heads origin "task/$task" >/dev/null 2>&1 && git rebase -q origin/main 2>/dev/null; } \
+    || { git rebase --abort >/dev/null 2>&1
+         git merge -q --no-edit origin/main >/dev/null 2>&1 \
+           || { git merge --abort >/dev/null 2>&1; return 1; }; }
+}
+
 offload() {
   rm -f "$S/$task.exit"
   if "$CV" offload "$task" "task/$task" "$verify" >/dev/null 2>&1; then
@@ -52,6 +66,25 @@ offload() {
 }
 
 case "$mode" in
+  launch)
+    # Anything already on disk for this task is a result or a build a model
+    # should read first; launching over it would discard or duplicate it.
+    [ ! -e "$S/$task.exit" ] || { say "a sentinel is already present"; exit 1; }
+    ! "${RELAUNCH_CENSUS:-$HERE/verify-census.sh}" "$task" >/dev/null 2>&1 || { say "a local build is running"; exit 1; }
+    git fetch -q origin main || { say "cannot fetch origin/main"; exit 1; }
+    [ -n "$(git rev-list -1 origin/main..HEAD)" ] || { say "no commits beyond origin/main"; exit 1; }
+    if sync; then
+      offload "first launch"
+    fi
+    # Step 0: a conflict goes to the lane in resolve mode, from the un-rebased
+    # head; only a resolve already tried makes it a model's (and the operator's).
+    [ ! -e "$S/$task.cloud.resolve" ] || { say "conflicts with origin/main and a resolve verify was already tried"; exit 1; }
+    rm -f "$S/$task.exit"
+    if CLOUD_VERIFY_RESOLVE=1 "$CV" offload "$task" "task/$task" "$verify" >/dev/null 2>&1; then
+      say "conflicts with origin/main; launched in resolve mode"; exit 0
+    fi
+    say "the cloud lane refused the resolve offload"; exit 1
+    ;;
   retry)
     offload "retry after an inconclusive build"
     ;;
@@ -66,12 +99,7 @@ case "$mode" in
     "$FRESHNESS" "$old" "$main" || { say "origin/main moved only in documentation; land"; exit 3; }
     n="$(cat "$S/$task.freshness" 2>/dev/null || echo 0)"
     [ "$n" -lt "$CAP" ] || { say "freshness cap $CAP reached; land and flag"; exit 3; }
-    # §Landing's sync, verbatim in effect: a branch already on origin is never
-    # rebased, because Landing's push is not forced.
-    { ! git ls-remote --exit-code --heads origin "task/$task" >/dev/null 2>&1 && git rebase -q origin/main 2>/dev/null; } \
-      || { git rebase --abort >/dev/null 2>&1
-           git merge -q --no-edit origin/main >/dev/null 2>&1 \
-             || { git merge --abort >/dev/null 2>&1; say "neither rebase nor merge onto origin/main succeeds"; exit 1; }; }
+    sync || { say "neither rebase nor merge onto origin/main succeeds"; exit 1; }
     echo "$main" > "$S/$task.base"
     echo "$((n + 1))" > "$S/$task.freshness"
     offload "freshness re-verify $((n + 1))/$CAP"
