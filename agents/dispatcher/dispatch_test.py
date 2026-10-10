@@ -291,6 +291,28 @@ class VerifyLanded(unittest.TestCase):
         self.assertIsNone(dispatch.verify_landed({**self.VERIFY, "status": "blocked"}, None, 7, None))
 
 
+class TrainHeads(unittest.TestCase):
+    def test_train_head_is_also_the_tasks_pr(self):
+        heads = dispatch.by_head([{"headRefName": "train/7/AA-13055", "headRefOid": "o"}], "headRefOid")
+        self.assertEqual(heads["task/AA-13055"], "o")
+        self.assertEqual(heads["train/7/AA-13055"], "o")
+
+    def test_real_task_head_wins_over_the_alias(self):
+        prs = [{"headRefName": "train/7/AA-1", "number": 2}, {"headRefName": "task/AA-1", "number": 1}]
+        self.assertEqual(dispatch.by_head(prs, "number")["task/AA-1"], 1)
+
+    def test_other_heads_get_no_alias(self):
+        heads = dispatch.by_head([{"headRefName": "train-src/AA-1", "number": 3},
+                                  {"headRefName": "op/train/7/AA-1", "number": 4}], "number")
+        self.assertNotIn("task/AA-1", heads)
+
+    def test_a_train_prd_task_is_skipped_as_pr_open(self):
+        heads = dispatch.by_head([{"headRefName": "train/2/T-1", "headRefOid": "o"}], "headRefOid")
+        stages = [child("Review: Thing", "done", "t3")]
+        self.assertEqual(decide(parent(), stages, CLEAN).kind, "verify")  # without the PR
+        self.assertEqual(decide(parent(), stages, CLEAN, heads.get("task/T-1")).reason, "PR open")
+
+
 class MainHasDir(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

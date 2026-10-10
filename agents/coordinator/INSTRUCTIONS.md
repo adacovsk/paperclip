@@ -91,6 +91,7 @@ minutes.
 0a. **Close superseded routine fires.** Your own routine tasks (`Coordinator routine <date> fire <n>`) never close themselves. A fire that waits hours behind a deep callback queue can time out before it ever runs, stranding the task it checked out. → [why a stalled fire cannot close its own task](rationale/superseded-routine-fires.md) You are the current fire by definition, so any *older* routine task still `in_progress` is dead. PATCH each to `cancelled`. One short comment naming the superseding fire, or none at all when the run queue is deep — the status is the load-bearing part, and each comment costs another wake into the queue you are trying to drain.
 1. Inbox (`GET /agents/me/inbox-lite`). If `PAPERCLIP_TASK_ID` set, handle first. Empty is normal.
 2. CI: `gh issue list --label ci-failure --state open --json number,title,body` from the project checkout. For each issue not already mapped to an active AA task (search existing task titles for the commit SHA mentioned in the issue body):
+   0. **Zero-step check first.** For the issue's failed run, `gh run view <run-id> --json jobs --jq '[.jobs[] | select(.conclusion=="failure") | .steps | length] | min'`. `0` → the run was rejected before executing (billing), so it has no compile errors to extract: comment that on the issue, close it, and create no task. Anything else → continue.
    a. Create AA-<n> titled `ci-fix: <commit-sha>`, label `ci-failure`, status `todo`.
    b. Allocate worktree at `.paperclip/worktrees/AA-<n>/` branched from **`origin/main`** (NOT from a task branch — `main` is what's broken; task branches diverged earlier and may not reproduce the failure).
    c. Pull the failed run's log via `gh run view <run-id> --log-failed`, extract the first ~30 unique error messages with file:line context, write them into the task body under `## Compile errors`.
@@ -120,7 +121,7 @@ minutes.
    Scoped to manifest changes rather than to a bot actor, so a hand-edited dependency is covered too.
    **Why this exists**: this step replaces the `pull_request` trigger that was removed to conserve Actions minutes. A bump is not a task, so no agent otherwise ever builds it. **Do not drop this step without restoring that trigger** — deleting both leaves dependency bumps verified by nobody. → [why nothing else ever builds a bump](rationale/dependency-bump-intake.md)
 2b. **Requeue base-red verifies.** Run `"$HOME/code/paperclip/agents/architect/requeue-base-red.sh"` (needs `PAPERCLIP_PROJECT` and `PAPERCLIP_COMPANY_ID`). An Architect that escalates a red already on `main` leaves a `<task>.base-red` marker naming the `origin/main` it built against; once `main` has moved past it the script deletes the stale result and re-dispatches the blocked verify, with a comment naming what resolved it. Run it every fire, before step 3: a base-red verify is otherwise `blocked` with nothing left to wait on, and it was an operator deleting sentinels by hand that unstranded the last batch — one of them the fix `main` itself was waiting on. Record the lines it prints.
-2c. **Sync stacked PRs.** Run `"$HOME/code/paperclip/agents/coordinator/train-sync.sh"` (needs `PAPERCLIP_PROJECT`). For every open PR whose base is another open PR's branch, it merges the parent's tip into the child, bottom-up, and pushes it as a fast-forward. A conflict with `main` is then resolved once at the bottom and does not reappear in every PR above it. It never writes the bottom PR. A bottom that conflicts with `main` is printed as the one place to resolve, and its stack waits behind it. It also retargets to `main` any PR whose base PR has already merged. Record the lines it prints. A `CONFLICTS` line is the operator's to resolve, by merging `origin/main` into that branch, **never by rebasing or porting it**: a rebase replays the parent's commits and hits the same conflict again in every PR above. Do not dispatch a rebase task for a stacked PR. It is not a `task/*` branch, and step 5a's rebase is the wrong tool for it. The script runs here, on this box, and not in Actions: `main` moves ~100 times a day, and a per-push job billed at its one-minute floor would cost more than the monthly cap. That holds even though the job compiles nothing.
+2c. **Sync stacked PRs.** Run `"$HOME/code/paperclip/agents/coordinator/train-sync.sh"` (needs `PAPERCLIP_PROJECT`). For every open PR whose base is another open PR's branch, it merges the parent's tip into the child, bottom-up, and pushes it as a fast-forward. A conflict with `main` is then resolved once at the bottom and does not reappear in every PR above it. It never writes the bottom PR. A bottom that conflicts with `main` is printed as the one place to resolve, and its stack waits behind it. It also retargets to `main` any PR whose base PR has already merged. Record the lines it prints. A `CONFLICTS` line is the operator's to resolve, by merging `origin/main` into that branch, **never by rebasing or porting it**: a rebase replays the parent's commits and hits the same conflict again in every PR above. Do not dispatch a rebase task for a stacked PR. It is not a `task/*` branch, and step 5a's rebase is the wrong tool for it. **A `train/<n>/{id}` PR is task `{id}`'s PR**: that task gets no rebase, verify or `task/*` PR of its own, and steps 8 and §Landing sweep step 4 find it by the identifier lookup. Every line the script prints other than `CONFLICTS` and `FAILED` is informational. The script runs here, on this box, and not in Actions: `main` moves ~100 times a day, and a per-push job billed at its one-minute floor would cost more than the monthly cap. That holds even though the job compiles nothing.
 3. Advance completed stages (dispatch Architect synchronously — see §Architect dispatch).
    A Worker never pushes, so the server's Layer-2 gate lands a finished Worker stage at
    **`in_review` (assignee = Worker)**, never `done`. The Reviewer carries the paperclip skill and
@@ -165,7 +166,7 @@ minutes.
 5a. **Unblock before you promote — blocked work takes Worker slots first.** *(Dispatcher, for an `in_review` parent whose Verify or Review is `blocked` on a conflict: it dispatches the rebase into free Worker slots, oldest parent first, and a `modify/delete` where `main` split `x.rs` into `x/` goes out as a port rather than a re-file. Every fire skipped this step when it was prose, and the conflicts outlived their fixes.)* What is left is yours: before promoting any backlog task, take every `blocked` parent or Verify whose branch fails the clean-merge gate (§Landing sweep step 3, re-run it — a `needs operator merge (conflict class)` hold and an Architect escalation naming a conflict both qualify) and whose parent carries no `Worker rebase: N`, oldest first, and dispatch a rebase task for it (§Landing sweep step 3) while `free` lasts. **An open PR that has gone conflicting counts too**: an `in_review` parent whose `task/*` PR reads `CONFLICTING` (`gh pr view <n> --json mergeable`; `UNKNOWN` is GitHub recomputing, so re-read it next fire rather than acting on it) gets the same rebase task. Its result reaches the PR through §Landing sweep step 3b's open-PR publish, which merges the rebased tip without a force-push. Nothing else ever revisits an open PR once `main` moves past it: one day left 23 of them conflicting, every one waiting on a hand merge. Each one is already-reviewed work one rebase away from landing; a new backlog task is a future blocker on the same fast-moving files. Only what is left of `free` goes to promotion. A rebase is not new supply, so `promote_slots` does not bound it. → [why unblocking outranks promotion](rationale/conflict-classification.md#why-unblocking-outranks-promotion)
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
-8. **Merge sweep**: for each PR opened by Architect, check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged. Any parent you close here, or anywhere else, needs a §Branch disposition on close record first.
+8. **Merge sweep**: for each `in_review` parent, find its PR with §PR-evidence audit step 2's lookup (head, then identifier — a `train/<n>/{id}` head counts; never `--head task/{id}` alone), and check status. `mergedAt != null` → **now** mark the parent `done`, then tear down worktree + branch (see §Worktree teardown). This is the only step that closes a parent: §decoupled-land deliberately leaves it `in_review` when it opens the PR, and this is where that hand-off completes. A PR that is `CLOSED` without merging is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged. Any parent you close here, or anywhere else, needs a §Branch disposition on close record first.
 9. **Backlog low → wake the Planner.** The backlog is the Planner's (Planner step 8a): it turns roadmap fronts into `backlog` tasks, and step 5 dispatches them. **Never promote a roadmap front yourself** — two writers to one backlog each read the other as the reason to wait. → [why one writer](rationale/drain-to-worker-slots.md#why-the-planner-keeps-the-backlog)
    - `target = worker_slots` from `$PACE`; `ready = count(status == backlog)`, literally — step 5 has already moved everything undispatchable to `blocked`. → [why only dispatchable work counts](rationale/ready-counts-dispatchable-only.md)
    - `ready < target` and no Planner-assigned task titled `Backlog low` is open → create one, assigned to the Planner: title `Backlog low — <ready> of <target>`, body listing this fire's step-5 holds one per line as `<task id> → <holding task id>`, so the Planner does not file fronts that would only be held.
@@ -501,7 +502,13 @@ For each parent `{task-id}`:
    ```sh
    gh pr list --head "task/{task-id}" --state all --limit 5 \
      --json number,state,mergedAt,url
+   # empty? the task may be on a train (step 2c) — its PR is that one:
+   gh pr list --search "{task-id}" --state all --limit 10 --json number,state,mergedAt,url,headRefName \
+     --jq '[.[] | select(.headRefName | test("^train/[0-9]+/{task-id}$"))]'
    ```
+
+   A train hit is handled exactly as the cases below, except **Open** → stop: never push
+   `task/{task-id}` or open a second PR. Record the train PR on the task and leave it `in_review`.
 
    **`--state all` is load-bearing**: the default is open-only, so a closed PR returns an empty
    list, indistinguishable from "never PR'd" — and those need opposite actions.
@@ -718,8 +725,24 @@ if ! git merge-base --is-ancestor task/{task-id} origin/main; then
   # Bare `gh`, run from the project checkout, same as every other gh call here.
   SQUASH=$(gh pr list --head "task/{task-id}" --state merged \
              --json mergeCommit -q '.[0].mergeCommit.oid' 2>/dev/null)
+  # A train PR cherry-picks the branch onto a stack, so its tip is never an
+  # ancestor either. Accept it only when every task commit is on main: patch-
+  # equivalent (`git cherry` prints `+` for one that is not), or — a cherry-pick
+  # that resolved a conflict changes the patch — the same subject arrived
+  # through that train PR's own merge.
+  TRAIN=$(gh pr list --search "{task-id}" --state merged --limit 10 --json headRefName,mergeCommit \
+            -q '[.[] | select(.headRefName | test("^train/[0-9]+/{task-id}$"))][0].mergeCommit.oid // empty' 2>/dev/null)
+  unlanded() {
+    local picked; picked=$(git log --format=%s "$TRAIN^1..$TRAIN^2")
+    git cherry origin/main task/{task-id} | sed -n 's/^+ //p' | while read -r c; do
+      grep -qxF "$(git log -1 --format=%s "$c")" <<<"$picked" || echo "$c"
+    done
+  }
   if [ -n "$SQUASH" ] && git merge-base --is-ancestor "$SQUASH" origin/main; then
     echo "task/{task-id}: squash-merged as ${SQUASH:0:9}; teardown proceeds"
+  elif [ -n "$TRAIN" ] && git merge-base --is-ancestor "$TRAIN" origin/main \
+       && [ -z "$(unlanded)" ]; then
+    echo "task/{task-id}: landed via train PR ${TRAIN:0:9}; every commit has an equivalent on main"
   else
     echo "REFUSING teardown: task/{task-id} has commits not on origin/main"
     git log --oneline origin/main..task/{task-id}

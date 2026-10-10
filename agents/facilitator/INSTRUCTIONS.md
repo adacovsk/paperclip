@@ -145,7 +145,10 @@ wanted, it needs a query-side mechanism (a date bound on the scan) — not a wri
 
 ### 7. Stale branch sweep
 
-`git fetch origin --prune`, then `gh api -X GET /repos/<owner>/<repo>/branches --paginate`. For
+This sweeps the project repo, not paperclip, which is your working directory: run every git
+command as `git -C "$PAPERCLIP_PROJECT"`. `git -C "$PAPERCLIP_PROJECT" fetch origin --prune`, then
+`(cd "$PAPERCLIP_PROJECT" && gh api -X GET 'repos/{owner}/{repo}/branches' --paginate)` — `gh`
+fills `{owner}/{repo}` from the directory's remote. For
 **every remote branch other than `main`** — not just `task/AA-*`: `planner/*`, `op/*`, `claude/*`
 and `economy/*` all strand the same way, and the `task/AA-*` glob made 12 of 23 unmerged remote
 branches invisible to this sweep. Two of them (`planner/restock-0807d`, `planner/restock-0808c`)
@@ -154,7 +157,7 @@ sat stranded 18 days and were found only by walking `git worktree list` by hand.
 | Case | Condition | Action |
 |---|---|---|
 | 1 | Tip is ancestor of `origin/main` | `git push origin --delete` |
-| 2 | Tip not ancestor, but `git diff main...<branch>` empty (squash dup) | `git push origin --delete` |
+| 2 | Tip not ancestor, but `git diff origin/main...<branch>` empty (squash dup) | `git push origin --delete` |
 | 3 | Unique commits + linked task `done`/`cancelled`, **or a PR that is merged/closed** | Leave. **Do not report, file, or comment.** |
 | 4 | Unique commits + linked task `in_progress`/`todo`, **or an open PR** | Leave |
 | 5 | No linked task and no PR | Leave. **Do not report, file, or comment.** |
@@ -169,9 +172,11 @@ The sweep's only jobs on the remote are deleting cases 1–2 and leaving everyth
 **Resolving the "linked task" for a non-`task/` branch.** `planner/*`, `op/*` and `claude/*`
 carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/<task-id>` returns
 nothing and every such branch falls to case 5. Resolve them through the PR instead:
-`gh pr list --head <branch> --state all --limit 1 --json number,state,mergedAt` — a merged PR is
-case 1's evidence even when the tip is not an ancestor (squash merges), an open PR is case 4, and
-only a branch with neither a linked task nor any PR is genuinely case 5.
+`gh pr list --head <branch> --state all --limit 1 --json number,state,mergedAt` — an open PR is
+case 4; a merged or closed PR is case 3 unless the tip is an ancestor (case 1) or the diff is
+empty (case 2) — a merged PR alone is not deletion evidence, since commits pushed after the merge
+are on neither `main` nor any PR; and only a branch with neither a linked task nor any PR is
+genuinely case 5.
 
 Auto-delete only cases 1 & 2. Never force-push. **Case 1 and 2 are safe to widen** because both
 delete only branches whose commits are provably on `origin/main`; the cases that could lose work
@@ -183,11 +188,11 @@ protected.
 §7 sweeps `gh api /branches` — **remote only**, and now across every non-`main` branch — so a commit that was made locally and never pushed is still invisible to it. That is the commit-without-push class, and it recurs. Add a **local** pass:
 
 ```sh
-git -C "$BEVY_RPG" fetch origin --prune
-for b in $(git -C "$BEVY_RPG" for-each-ref --format='%(refname:short)' refs/heads/); do
-  git -C "$BEVY_RPG" merge-base --is-ancestor "$b" origin/main && continue     # merged
-  git -C "$BEVY_RPG" rev-parse --verify -q "origin/$b" >/dev/null && continue  # pushed; §7 covers it
-  echo "STRANDED-CANDIDATE $b ahead=$(git -C "$BEVY_RPG" rev-list --count origin/main..$b)"
+git -C "$PAPERCLIP_PROJECT" fetch origin --prune
+for b in $(git -C "$PAPERCLIP_PROJECT" for-each-ref --format='%(refname:short)' refs/heads/); do
+  git -C "$PAPERCLIP_PROJECT" merge-base --is-ancestor "$b" origin/main && continue     # merged
+  git -C "$PAPERCLIP_PROJECT" rev-parse --verify -q "origin/$b" >/dev/null && continue  # pushed; §7 covers it
+  echo "STRANDED-CANDIDATE $b ahead=$(git -C "$PAPERCLIP_PROJECT" rev-list --count origin/main..$b)"
 done
 ```
 
