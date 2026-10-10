@@ -317,6 +317,45 @@ class SupersededVerify(unittest.TestCase):
         self.assertIsNone(dispatch.superseded_evidence({**self.VERIFY, "status": "done"}, (self.MARKER, self.AFTER)))
 
 
+class BaseRedMainRepair(unittest.TestCase):
+    MAIN = "a" * 40
+
+    def marker(self, task, sha=None, errors=()):
+        return dispatch.parse_base_red(task, "\n".join([sha or self.MAIN, f"V-{task}", *errors]))
+
+    def test_parses_sha_escalator_and_errors(self):
+        m = self.marker("T-1", errors=("src/a.rs:3 E0252 dup import", ""))
+        self.assertEqual((m.sha, m.escalated, m.errors), (self.MAIN, "V-T-1", ("src/a.rs:3 E0252 dup import",)))
+
+    def test_escalator_defaults_to_the_task(self):
+        self.assertEqual(dispatch.parse_base_red("T-1", self.MAIN + "\n").escalated, "T-1")
+
+    def test_a_marker_without_a_sha_is_ignored(self):
+        self.assertIsNone(dispatch.parse_base_red("T-1", "not a sha\nV-1\n"))
+
+    def test_one_verify_is_not_enough(self):
+        self.assertEqual(dispatch.main_repair_due([self.marker("T-1")], self.MAIN), [])
+
+    def test_two_verifies_on_current_main_file_a_repair(self):
+        due = dispatch.main_repair_due([self.marker("T-1"), self.marker("T-2")], self.MAIN)
+        self.assertEqual({m.task for m in due}, {"T-1", "T-2"})
+
+    def test_markers_on_an_old_main_do_not_count(self):
+        old = "b" * 40
+        self.assertEqual(dispatch.main_repair_due([self.marker("T-1", old), self.marker("T-2")], self.MAIN), [])
+
+    def test_body_lists_each_error_once_under_compile_errors(self):
+        e = "src/a.rs:3 E0252 dup import"
+        body = dispatch.main_repair_body(
+            [self.marker("T-1", errors=(e,)), self.marker("T-2", errors=(e, "src/b.rs:9 test failed"))],
+            self.MAIN, ".paperclip/worktrees/AA-9", "task/AA-9",
+        )
+        self.assertIn("Main-repair: origin/main " + self.MAIN, body)
+        self.assertEqual(body.count(e), 1)
+        self.assertIn("## Compile errors\n- " + e, body)
+        self.assertTrue(body.startswith("worktree: .paperclip/worktrees/AA-9\nbranch:   task/AA-9"))
+
+
 class TrainHeads(unittest.TestCase):
     def test_train_head_is_also_the_tasks_pr(self):
         heads = dispatch.by_head([{"headRefName": "train/7/AA-13055", "headRefOid": "o"}], "headRefOid")
