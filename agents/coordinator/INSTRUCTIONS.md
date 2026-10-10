@@ -504,12 +504,14 @@ For each parent `{task-id}`:
    gh pr list --head "task/{task-id}" --state all --limit 5 \
      --json number,state,mergedAt,url
    # empty? the task may be on a train (step 2c) — its PR is that one:
-   gh pr list --search "{task-id}" --state all --limit 10 --json number,state,mergedAt,url,headRefName \
+   gh pr list --search "{task-id}" --state all --limit 10 --json number,state,mergedAt,url,headRefName,baseRefName \
      --jq '[.[] | select(.headRefName | test("^train/[0-9]+/{task-id}$"))]'
    ```
 
    A train hit is handled exactly as the cases below, except **Open** → stop: never push
    `task/{task-id}` or open a second PR. Record the train PR on the task and leave it `in_review`.
+   A train PR **merged into anything but `main`** (`baseRefName`, add it to the `--json`) landed
+   nowhere: its base was another train branch that never merged. Treat it as no PR.
 
    **`--state all` is load-bearing**: the default is open-only, so a closed PR returns an empty
    list, indistinguishable from "never PR'd" — and those need opposite actions.
