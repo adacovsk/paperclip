@@ -93,6 +93,19 @@ class Repo:
         self.g("checkout", "-q", "main")
         self.g("fetch", "-q", "origin")
 
+    def reworked_train(self, n, ident, base="origin/main"):
+        """train/<n>/<ident> cut from a pushed `train-src/<ident>` snapshot, its
+        commits squashed and re-authored as a resolving train session does."""
+        self.g("push", "-q", "origin", f"origin/task/{ident}:refs/heads/train-src/{ident}")
+        self.g("fetch", "-q", "origin")
+        self.g("checkout", "-qb", f"train/{n}/{ident}", base)
+        self.g("merge", "-q", "--squash", f"origin/train-src/{ident}")
+        self.g("commit", "-qm", f"{ident}: reworked onto the stack",
+               env={**ENV, "GIT_AUTHOR_EMAIL": "train@vm", "GIT_AUTHOR_DATE": "2026-02-01T00:00:00Z"})
+        self.g("push", "-q", "origin", f"train/{n}/{ident}")
+        self.g("checkout", "-q", "main")
+        self.g("fetch", "-q", "origin")
+
 
 def parent(ident):
     return {"id": f"id-{ident}", "identifier": ident, "status": "in_review"}
@@ -176,6 +189,56 @@ class MergeSweep(unittest.TestCase):
         self.assertIn("REFUSED", out[0])
         self.assertIn("T-5: late", out[0])
         self.assertEqual(self.api.calls, [])
+
+    def test_reworked_train_closes_on_its_snapshot(self):
+        self.r.task("T-11", [("n.txt", "n"), ("o.txt", "o")])
+        self.r.reworked_train(4, "T-11")
+        pr = self.r.merge_pr("origin/train/4/T-11")
+        out = self.sweep(["T-11"], [pr])
+        self.assertEqual(self.api.calls[-1], ("done", "T-11"))
+        self.assertIn("train-src", self.api.calls[0][2])
+        self.assertIn("closed (PR #1", out[0])
+
+    def test_commit_after_the_snapshot_is_refused(self):
+        self.r.task("T-12", [("p.txt", "p")])
+        self.r.reworked_train(5, "T-12")
+        self.r.g("checkout", "-q", "task/T-12")
+        self.r.commit("q.txt", "q", "T-12: made while the train ran")
+        self.r.g("push", "-q", "origin", "task/T-12")
+        self.r.g("checkout", "-q", "main")
+        pr = self.r.merge_pr("origin/train/5/T-12")
+        out = self.sweep(["T-12"], [pr])
+        self.assertIn("REFUSED", out[0])
+        self.assertIn("made while the train ran", out[0])
+        self.assertNotIn("T-12: p.txt", out[0])  # the snapshot's own commit landed
+        self.assertEqual(self.api.calls, [])
+
+    def test_snapshot_does_not_count_until_the_train_reaches_main(self):
+        self.r.task("T-13", [("r.txt", "r")])
+        self.r.reworked_train(6, "T-13")
+        # Merged into another train's branch, not main: its merge commit is not on main.
+        self.r.g("checkout", "-qb", "train/6/T-0", "origin/main")
+        self.r.g("merge", "-q", "--no-ff", "-m", "Merge pull request #9", "origin/train/6/T-13")
+        oid = self.r.g("rev-parse", "HEAD")
+        self.r.g("checkout", "-q", "main")
+        pr = {"number": 9, "headRefName": "train/6/T-13",
+              "headRefOid": self.r.g("rev-parse", "origin/train/6/T-13"), "mergeCommit": {"oid": oid}}
+        self.assertIn("REFUSED", self.sweep(["T-13"], [pr])[0])
+        self.assertEqual(self.api.calls, [])
+
+    def test_main_merged_into_the_branch_after_the_snapshot_closes(self):
+        self.r.task("T-14", [("s.txt", "s")])
+        self.r.reworked_train(7, "T-14")
+        self.r.g("checkout", "-q", "main")
+        self.r.commit("u.txt", "u", "unrelated main work")
+        self.r.g("push", "-q", "origin", "main")
+        self.r.g("checkout", "-q", "task/T-14")
+        self.r.g("merge", "-q", "--no-ff", "-m", "Merge origin/main into task/T-14", "main")
+        self.r.g("push", "-q", "origin", "task/T-14")
+        self.r.g("checkout", "-q", "main")
+        pr = self.r.merge_pr("origin/train/7/T-14")
+        self.sweep(["T-14"], [pr])
+        self.assertEqual(self.api.calls[-1], ("done", "T-14"))
 
     def test_no_merged_pr_is_silent(self):
         self.r.task("T-6", [("j.txt", "j")])
