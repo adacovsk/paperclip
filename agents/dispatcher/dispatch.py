@@ -814,11 +814,21 @@ def retire_superseded(api: Api, agents: dict, stages: list[tuple[str, dict]], re
             continue
         quoted = (latest_body(api, child).splitlines() or ["(no block comment)"])[0]
         if stage == "review" and resume:
+            # The Review is still assigned to the Reviewer, and a wake fires only
+            # on an assignee change: unassign with the release, then reassign.
+            # Writing the same assignee leaves an idle `in_review` stage that
+            # reads as a finished review and holds the parent forever.
             api.set_status(
                 child,
-                {"status": "in_review", "assigneeAgentId": agents["Reviewer"]},
+                {"status": "in_review", "assigneeAgentId": None},
                 f"Released: {rebase['identifier']} rebased the branch and `merge-tree` is clean.\n\n> {quoted}",
                 f"review  {child['identifier']}: resume after {rebase['identifier']}",
+            )
+            api.write(
+                "PATCH",
+                f"/issues/{child['id']}",
+                {"assigneeAgentId": agents["Reviewer"]},
+                f"  reassign {child['identifier']} to the Reviewer",
             )
         else:
             api.set_status(
