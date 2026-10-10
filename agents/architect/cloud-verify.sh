@@ -4,7 +4,9 @@
 # Moves the cargo half of a verify onto an Anthropic-managed cloud VM: clippy and
 # tests, fixes inside the task's own files (plus the out-of-scope errors the
 # task's own diff caused, declared and bounded — see `check_out_of_scope`), the
-# non-Rust guard suite, and schema regeneration last. See the project's docs/ARCHITECT_CLOUD_OVERFLOW.md.
+# non-Rust guard suite, and schema regeneration last. The Architect's side of the
+# lane is INSTRUCTIONS.md §Cloud overflow lane; cloud-session.sh deletes a
+# finished session.
 #
 # TRUST BOUNDARY. The VM does work; it never lands it. It builds the exact
 # commit this box pushed, and publishes its commits only under its own
@@ -660,9 +662,9 @@ suppressions() {  # lines adding a lint or test suppression in $1..$2
 # detached; exit the run as for a local launch). Exit 1 = lane closed; run the
 # local chain instead. Declining is never an error and writes no sentinel.
 #
-# There is deliberately no concurrency bound: while weekly usage is behind the
-# calendar every verify goes to the cloud, and the flood is bounded by the quota
-# it spends closing the gate. The gate is here rather than in INSTRUCTIONS.md so
+# There is deliberately no concurrency bound: while usage is under the session
+# and week ceilings (cloud-pace.py) every verify goes to the cloud, and the flood
+# is bounded by the quota it spends closing the gate. The gate is here rather than in INSTRUCTIONS.md so
 # no Architect run can offload without passing it.
 cmd_offload() {
   local task="${1:?task id}" branch="${2:?branch}" verify_task="${3:-$1}" open
