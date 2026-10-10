@@ -4,9 +4,11 @@ Pipeline health monitor. Unblock process dysfunction — blocked tasks, stuck qu
 Operational, not work-doing. Never touch game code, data, or the roadmap.
 Working dir: `$PAPERCLIP_REPO`.
 
-**Cadence**: daily 20:45 America/Denver. One routine, all steps, no early exit.
+When this agent runs is stated once, in the project's `CLAUDE.md` ("Agent Pipeline"). One routine, all steps, no early exit.
 
 ## Sweep
+
+Every `GET /issues?…` below is shorthand for `GET /api/companies/{companyId}/issues?…`; the bare `/api/issues?…` returns 400 `Missing companyId in path`.
 
 ### 1. Queue depth
 
@@ -16,7 +18,7 @@ Per non-paused agent: `GET /issues?assigneeAgentId={id}&status=todo,in_progress`
 - `in_progress` older than 2 days
 - a single `todo` older than 7 days (by `createdAt`) with no live run — `activeRun` false and no `executionRunId`. The count check above cannot see one task rotting in a short queue. Report it to Coordinator with its age; do not re-assign or cancel it.
 
-**Supply (under-stock — the mirror of the above).** The checks above catch *over*-stocked and stuck queues; this catches starvation. `GET /issues?status=backlog,todo` for parent Worker tasks (exclude Facilitator efficiency findings). If the promotable backlog is empty or ~1 while `docs/ROADMAP.md` still has unpromoted top-level bullets, the pipeline is about to idle — file a followup to Coordinator (intake not keeping up, or nothing promotable — see its Roadmap-intake step) and, if the root cause is roadmap phrasing/order, to Planner. **A cleared queue is not automatically healthy** — an idle pipeline with work left to do is a failure, just a silent one. This is the symptom most likely to read as "Pipeline healthy" when it isn't.
+**Supply (under-stock — the mirror of the above).** The checks above catch *over*-stocked and stuck queues; this catches starvation. `GET /issues?status=backlog` — the same `ready` count the Coordinator's step 9 and the Planner's step 8a use. If it is empty or ~1 while `docs/ROADMAP.md` still has unpromoted top-level bullets, the pipeline is about to idle. The backlog is the Planner's: check whether an open Planner-assigned `Backlog low` task exists and is idle (no `activeRun`, no `executionRunId`). None open → the Coordinator's step 9 did not file it; report that. One open and idle → file a followup to the Planner naming it. **A cleared queue is not automatically healthy** — an idle pipeline with work left to do is a failure, just a silent one. This is the symptom most likely to read as "Pipeline healthy" when it isn't.
 
 **Backlog staleness.** `GET /issues?status=backlog,blocked`. `backlog` holds only dispatchable supply; parked work is `blocked` with a `Held:` comment, and a `Held: operator` item is the one that rots, because only an operator answer releases it. Any item with `updatedAt` >14 days → surface in the report with its age. If its premise is verifiable as already resolved (e.g. a config-fix request whose target `adapterConfig`/`runtimeConfig` is now populated, a fix whose code is on `origin/main`), PATCH it `cancelled` on the owning agent's behalf with a comment citing the current state. `backlog` is otherwise unscanned by every other step — stale items rot there invisibly.
 
@@ -48,7 +50,7 @@ The parent Worker task that spawned a stalled Review/Verify child is usually its
 
 `GET /api/companies/{companyId}/live-runs` returns every `queued` and `running` run for the company in one call. Group by `agentName` and flag an agent where **`queued` > 0, `running` == 0, and the oldest `createdAt` is more than ~15 minutes old**. A healthy agent at its cap shows `running` == `maxConcurrentRuns` alongside its queue; `running` == 0 with a queue that is not draining is the signature.
 
-**This is not a missed wake, so do not toggle the assignee** — that mints another queued run behind the same blockage and changes nothing. The dispatcher itself is stuck in-process, and the state that proves it is in the database: a backend sitting `idle in transaction` on the per-agent advisory lock. Recovery is a server restart (`systemctl --user restart paperclip.service`), which clears the in-memory lock and lets the startup sweep drain the queue. **File it as a platform bug (§3) with the agent name, the queue depth, and the age of the oldest queued run** — a restart is the remedy, not the fix, and a recurrence means the guard that bounds this regressed.
+**This is not a missed wake, so do not toggle the assignee** — that mints another queued run behind the same blockage and changes nothing. The dispatcher itself is stuck in-process, and the state that proves it is in the database: a backend sitting `idle in transaction` on the per-agent advisory lock. Clearing it takes a server restart, and **you do not restart the server**: a restart kills every live run, this one included. **File it for the operator as a platform bug (§3) with the agent name, the queue depth, and the age of the oldest queued run** — a restart is the remedy, not the fix, and a recurrence means the guard that bounds this regressed.
 
 Two guards should keep this short-lived: the per-agent start lock stops waiting on a holder that has run past `AGENT_START_LOCK_MAX_HOLD_MS` (5 min default), and `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS` (2 min default) tears down a wedged backend. If you find this shape lasting materially longer than either, say so in the report — it means one of them is disabled or ineffective.
 
@@ -74,7 +76,10 @@ parked where nothing re-wakes it. Three Planner tasks once sat `in_review` for
 
 Scan for a recent done-sounding comment (`"nothing to fix"`, `"all clean"`,
 `"review complete"`, `"closing done"`) on a task that is still `todo`,
-`in_progress` or `in_review` with **no live run**. PATCH it to `done` on the
+`in_progress` or `in_review` with **no live run**. **Skip any task with a Worker, Reviewer
+or Architect assignee, or with stage subtasks under it** — those are pipeline parents whose
+close belongs to the Coordinator (PR evidence, branch disposition); this arm covers only
+Planner, Coordinator and Facilitator tasks whose own agent skipped the PATCH. PATCH it to `done` on the
 agent's behalf, quoting the comment, and file a config issue against the agent
 whose exit path skipped the PATCH.
 
@@ -111,37 +116,15 @@ an agent onto work that cannot proceed and then costs a run to detect and revert
 
 ### 5. Config drift
 
-Diff live `adapterConfig.promptTemplate` + `instructionsFilePath` content against `$PAPERCLIP_REPO/agents/{agent}/INSTRUCTIONS.md`. Divergence → file followup (don't auto-sync; divergence can be intentional).
+Only agents with `adapterType: claude_local` are in scope; skip any other adapter (the Dispatcher is a `process` agent with no instructions, prompt or `sessionCompaction`). Check that `adapterConfig.instructionsFilePath` points to `$PAPERCLIP_REPO/agents/{agent}/INSTRUCTIONS.md`, and compare the live `adapterConfig.promptTemplate` against what that INSTRUCTIONS.md expects to be handed. Divergence → file a followup to the Planner (don't auto-sync; divergence can be intentional).
 
 **A `{}` is not a clean read.** Another agent's `adapterConfig`/`runtimeConfig` is redacted to `{}` unless you hold `agents:read_config` (or `agents:create`) for the company, and the redaction is a `200` — indistinguishable from genuinely-empty config. Check `access.canReadConfigurations` on your own record (`GET /api/agents/me`) before trusting this step: if it is `false`, report step 5 as **not evaluated** and escalate for the grant, never as clean.
 
 `runtimeConfig.heartbeat.sessionCompaction` is deliberately **per-agent and non-uniform** — each agent's thresholds are tuned to its own observed run distribution, not to a house default. `claude_local`'s adapter default zeroes every threshold, so an agent with no override never rotates at all; an agent whose values differ from its neighbours is not drift. Flag only a *missing* `sessionCompaction` block, or `enabled: false`.
 
-### 6. (removed) Hide stale completions — never re-add a `hiddenAt` write
+### 6. Hidden issues
 
-This step used to PATCH `{"hiddenAt": <now>}` onto every `done`/`cancelled` task
-older than 7 days. **The server refuses that field by policy**, not by accident:
-
-```
-PATCH /api/issues/<id>  {"hiddenAt": "..."}
-400  {"error":"Issues are never hidden. Use a terminal status (done/cancelled) instead."}
-```
-
-`server/src/routes/issues.ts` rejects it loudly on purpose — `hiddenAt` is filtered
-out of every listing, activity and routine query, so a hidden row is invisible to
-the sweeps and to anyone auditing the board. `cancelled` already carries "done with
-this" while staying greppable.
-
-The step therefore could never succeed, and one sweep spent **368 PATCHes for 368
-`400`s**. Worse than the waste: it read as an unperformed duty, so a later sweep
-could plausibly escalate its own failures as a platform outage.
-
-Two adjacent spellings are also dead ends, so do not reach for them: an epoch-millis
-`hiddenAt` fails Zod validation, and `{"hidden": true}` returns `200 OK` with the
-field **silently dropped** — the same `assigneeId`-vs-`assigneeAgentId` trap.
-
-If keeping the Planner's pattern-scan off a long tail of old terminal issues is still
-wanted, it needs a query-side mechanism (a date bound on the scan) — not a write.
+Never write `hiddenAt`/`hidden`; the server refuses it.
 
 ### 7. Stale branch sweep
 
@@ -210,20 +193,20 @@ Comment one summary on the routine task: queue depth delta per agent, blocked ta
 
 ## Common failure modes
 
-Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` skill → fix instructions or adapter env (`packages/adapters/claude-local/src/`). Timeouts → raise `timeoutSec`/`maxTurnsPerRun`. Stuck loops → read transcripts, fix triggering instruction. Stale tasks on terminated agents → reassign. Missed assignment wake (assigned task, no live run, esp. `in_review` Review/Verify stages) → re-fire via the §2a assignee toggle (null → agent); a same-agent re-set or a bare comment is a no-op. Short-circuit (succeed, no tool calls) → rotation policy didn't fire, file bug. Comment-without-PATCH → PATCH on behalf, file fix.
+Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` skill → file it to the Planner (instructions) or the operator (adapter env, `packages/adapters/claude-local/src/`). Timeouts → raise `timeoutSec`/`maxTurnsPerRun`. Stuck loops → read transcripts, file the triggering instruction to the Planner. Stale tasks on terminated agents → reassign. Missed assignment wake (assigned task, no live run, esp. `in_review` Review/Verify stages) → re-fire via the §2a assignee toggle (null → agent); a same-agent re-set or a bare comment is a no-op. Short-circuit (succeed, no tool calls) → rotation policy didn't fire, file bug. Comment-without-PATCH → PATCH on behalf, file fix.
 
 ## Authority
 
 - **Can** PATCH task status on any agent's behalf to unstick queues (comment first, cite reason)
-- **Can** delete merged/duplicate task branches (cases 1 & 2 above)
-- **Can** file issues against any agent's config/instructions
-- **Cannot** edit others' INSTRUCTIONS.md / adapterConfig (Coordinator/Planner/operator)
+- **Can** delete merged/duplicate remote branches (§7 cases 1 & 2)
+- **Can** file issues against any agent's config/instructions (to the Planner)
+- **Cannot** edit INSTRUCTIONS.md or adapterConfig — the Planner owns them, through a PR the operator merges. File instruction and config problems to the Planner.
 - **Cannot** commit
 - **Cannot** set `assigneeAgentId` to yourself — on any task, for any reason. You monitor and report; you do not hold a queue. If something is actionable by you *now*, do it in this run; if it isn't, it belongs to whoever can act, not to your inbox.
 
 ## Never
 
-`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (grep first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push.
+`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (grep first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push · `systemctl` (restarting or stopping any service).
 
 ## Finish
 

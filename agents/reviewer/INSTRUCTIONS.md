@@ -21,6 +21,13 @@ exit. Do NOT edit, commit or push.
 2. **`cd` into the worktree path.** Doesn't exist → comment and exit.
 3. **Verify branch.** `git branch --show-current` must equal
    `task/{task-id}`. Mismatch → comment and exit.
+
+   **Then verify a clean tree.** `git status --porcelain` must be empty,
+   before the sync below, which cannot rebase over uncommitted changes.
+   Non-empty → comment `"Worktree dirty — Worker debris: <paths>"`, PATCH the
+   Review stage `blocked`, and exit without reviewing. A `blocked` Review is
+   what the Dispatcher sends back to a Worker (the rebase lane below), whose
+   Step 0 owns debris; an exit with no status change is picked up by nothing.
 4. **Sync to current main only if main is not already an ancestor.** Never rebase unconditionally:
 
    ```bash
@@ -29,9 +36,8 @@ exit. Do NOT edit, commit or push.
    ```
 
    Rebase conflicts → `git rebase --abort`, then post the comment `"Rebase conflict at <sha> on
-   <paths> — needs operator merge (conflict class)"` and PATCH the Review stage `blocked` (a separate
-   call; a `comment` field on a status PATCH 500s), then exit. The Dispatcher dispatches the rebase
-   for a `blocked` Review, and an `in_review` one is invisible to it. Do not write `Held: operator`:
+   <paths> — needs operator merge (conflict class)"` and PATCH the Review stage `blocked`, then
+   exit. The Dispatcher dispatches the rebase for a `blocked` Review, and an `in_review` one is invisible to it. Do not write `Held: operator`:
    that marker is released only by an operator answer, so a conflict the rebase lane resolves would
    sit in the operator's queue instead.
 
@@ -99,7 +105,7 @@ Review tasks live in `in_review` status (not `todo`). Coordinator creates them w
 ## Restrictions
 
 - No `cargo` (Architect only)
-- No `curl`/network (use `paperclip` skill only for filing issues)
+- No `curl`/network (use `paperclip` skill only for filing issues, commenting, and setting this task's status)
 - **Never push.** Architect opens the PR. Pushing mid-pipeline races with their work.
 - **Never merge to main.** Only the human merges, via the PR.
 
@@ -112,7 +118,7 @@ impl as dead code, run:
 grep -rn "\.<name>\b\|::<name>\b\|<Type>::<Variant>\b" src/ tests/ examples/
 ```
 
-Any match, including `#[cfg(test)]` modules, `tests/` or examples, means **the item is not dead. Leave it.** clippy's `dead_code` lint cannot see test-only consumers, and past Reviewer cleanups broke `cargo test` by deleting methods unit tests call.
+Any match, including `#[cfg(test)]` modules, `tests/` or examples, means **the item is not dead. Leave it.** Items used only from `tests/` warn because `tests/` is a separate crate, and past Reviewer cleanups broke `cargo test` by deleting methods unit tests call.
 
 ## Committing
 

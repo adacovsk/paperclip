@@ -36,8 +36,8 @@ commit, do NOT push.
    **Exception — recover your own aborted run.** Aborting here deadlocks
    the task when the debris is *your own*: a previous Worker run on this
    same task that died mid-work (turn/time budget) before committing. No
-   other stage can rescue it — Reviewer's Step 0 rebase fails on unstaged
-   changes, Architect is gated behind Reviewer, Coordinator may not commit,
+   other stage can rescue it — Reviewer's Step 0 clean-tree check refuses a
+   dirty tree, Architect is gated behind Reviewer, Coordinator may not commit,
    and `git stash` is forbidden. So when **all three** hold:
 
    - `git status --porcelain` is non-empty, **and**
@@ -64,7 +64,8 @@ commit, do NOT push.
 
 5. **Fetch, then report your distance from main.** `git fetch origin -q`
    then `git rev-list --count HEAD..origin/main`. Do not rebase — that is
-   Reviewer's and Architect's job, and your branch may be ahead. Print the
+   Reviewer's and Architect's job, and your branch may be ahead (a rebase task
+   is the exception — see below). Print the
    count and include it in your task comment. A worktree is allocated at
    promotion time and never refreshed, and live worktrees have been
    measured at a median of ~176 commits behind with the oldest at 322, so
@@ -126,7 +127,7 @@ git rebase --continue
   is what buys another identical run.
 - The exit gate below still binds: finish with a clean tree either way.
 
-Only after all four checks pass **and** you have established which of these the
+Only after all five checks pass **and** you have established which of these the
 task is, proceed to "Before Starting" below.
 
 The hard-gate design is deliberate: a soft fallback ("if no worktree,
@@ -154,9 +155,8 @@ surfaces Coordinator-side bugs immediately instead of hiding them.
 
 Every code change ships with tests:
 - Unit: `#[cfg(test)] mod tests` at bottom of source file
-- Integration: add to existing `tests/<domain>.rs` — do NOT create new test files
-- Ref: `docs/TESTING.md`
-- Existing: `action_economy`, `action_systems`, `active_modifiers`, `character_progression`, `combat_systems`, `core_mechanics`, `damage_systems`, `equipment_systems`, `form_transformation`, `healing_systems`, `inventory_systems`, `local_map_generation`, `movement_terrain_systems`, `skill_systems`, `spatial_index`, `spell_systems`, `status_effect_systems`
+- Integration: add to an existing target — do NOT create new top-level test files. List targets with `git ls-tree --name-only origin/main tests/`. A file `tests/<domain>.rs` is a target; a directory `tests/<domain>/` with a `main.rs` is one too, and takes a new module file inside it, not a new top-level file. `tests/common/` is shared helpers, not a target.
+- Smoke tests: `docs/SMOKE_TESTING.md`
 
 ## Comments
 
@@ -176,7 +176,7 @@ Every code change ships with tests:
 - **Don't remove imports and use fully-qualified paths** as a shortcut for resolving name collisions. Keep short `use` imports — readability matters.
 - **Don't split combined `if` conditions into nested `if ... { if ... }`** — this introduces `clippy::collapsible_if` lint regressions.
 - **Don't inline a helper that DRYs two+ call sites.** If a function exists to avoid duplication, keep it. Inlining it into each caller creates copy-paste duplication.
-  - - **This applies when the helper is being *deleted on purpose*, which is where it keeps failing.** Removing a redundant representation legitimately kills the helper that read it — but the logic it encapsulated then gets pasted back into each caller, so the duplication *moves* instead of disappearing, and the copies immediately drift. Replace the deleted helper with a **narrower** one over the representation that survives; don't inline it at N sites. → [why deleting a helper moves duplication rather than removing it](rationale/inlining-a-deleted-helper.md). The corollary: don't hand-unroll repeated calls to a helper you just wrote — loop over them.
+  - **This applies when the helper is being *deleted on purpose*, which is where it keeps failing.** Removing a redundant representation legitimately kills the helper that read it — but the logic it encapsulated then gets pasted back into each caller, so the duplication *moves* instead of disappearing, and the copies immediately drift. Replace the deleted helper with a **narrower** one over the representation that survives; don't inline it at N sites. → [why deleting a helper moves duplication rather than removing it](rationale/inlining-a-deleted-helper.md). The corollary: don't hand-unroll repeated calls to a helper you just wrote — loop over them.
 - **Verify every seeded allowlist line's stated blocker before the guard lands.** When you seed a shrink-only allowlist you write a reason per line — "needs a re-export first", "consumer lands in a follow-up". Check each one against the code *now*, not from memory or from what the ticket claimed. An unverified reason permanently permits something that was actually fixable, and because the ratchet only fails when a line is *removed*, nobody ever revisits it — the wrong reason is invisible forever. This has already happened: three fixable types were about to be permanently allowlisted on an asserted blocker that did not exist. (Reviewer pattern, one task.)
 - **Confirm the function you fixed is actually reached before calling the task done.** Twice in one cycle a fix landed on a code path with no live callers — correct code, zero effect, and a green review. Before you finish: `git grep` the function you changed for a non-test caller, and trace that caller back to something the game actually runs (a registered system, an observer, an event with a producer). If the only callers are tests, say so in your task comment rather than reporting the behaviour as fixed. Related shape: a struct-literal construction that bypasses a `new()` carrying a clamp or normalisation invariant — the invariant lives in the constructor and nothing enforces it against direct field writes, so fixing `new()` fixes nothing for the sites that never call it. (Reviewer pattern, one task.)
 - **When the task is "apply this invariant everywhere", check that the invariant holds of your applier.** The shared helper you write to enforce a rule is itself code the rule applies to, and it is the one place nobody thinks to check. This has already happened: a pass adding empty-scan detection to a family of guards reproduced the exact bug it was fixing *inside the fix* — a scanned-file count that included an input never examined, and a message overstating what had been detected. Before you finish a sweep like this, run the new rule against the code you just wrote. (Reviewer pattern, one task.)
@@ -234,7 +234,7 @@ git commit -m "<conventional message>"
 - One commit, or a small number for natural sub-units within the task
 - Conventional commit format: `feat:` / `fix:` / `refactor:` / `chore:` / `docs:` / `test:`
 - Add a `Stage: worker` trailer so post-hoc audit can attribute commits to pipeline stage
-- **Never push.** Reviewer/Architect commit on top of yours; Architect opens the PR. Pushing mid-pipeline races with their work.
+- **Never push.** Reviewer/Architect commit on top of yours; a later stage opens the PR. Pushing mid-pipeline races with their work.
 - **Never merge to main.** Only the human merges, via the PR.
 
 If your run produced no changes (task was a no-op or research-only),
@@ -268,7 +268,7 @@ elsewhere mid-run), comment on the task and exit without committing.
 
 Before you stop, run `git status --porcelain`. The result must be empty.
 A non-empty tree at exit means you edited files but didn't commit them —
-the next stage's Reviewer will hard-gate on that and the task stalls
+Reviewer Step 0's clean-tree check refuses to review it and the task stalls
 (observed concretely where a dirty source file blocked the
 Reviewer subtask until the operator manually committed).
 
@@ -294,12 +294,16 @@ section. Do not weaken check 4 on the theory that this gate prevents debris.
 ## Art Tasks
 
 ```sh
-pixi run process-sprites | optimize-images | generate-atlas | process-all-assets
+pixi run build-assets
 ```
+
+Commit its output with your change. It is the deterministic asset DAG; the
+standalone `optimize-images` task runs outside it and does not produce the
+committed bytes.
 
 ## Completion
 
-The server reflects your run lifecycle into the task: `todo` → `in_progress` when your run starts, `in_progress` → `done` when it succeeds. You never PATCH status.
+The server reflects your run lifecycle into the task: `todo` → `in_progress` when your run starts, `in_review` when it exits, and `done` only after the task branch's PR merges. You never PATCH status.
 
 ### How you "comment on the task" — read this before you look for an API
 
@@ -333,8 +337,8 @@ the Step 0 abort text. Silence is indistinguishable from a run that never
 happened.
 
 A run that committed work needs no verdict line — the commits are the record.
-If stuck, leave code in a clear state and stop; the task stays `in_progress`
-and Coordinator's stale-scan detects it.
+If stuck, leave code in a clear state and stop; the task lands at `in_review`
+like any other exit, and Coordinator reads its branch and tree state from there.
 
 Then stop. (This section used to end "Do the work and stop." directly under the
 instruction to leave a comment, and the Worker follows the last thing it read —
