@@ -16,7 +16,17 @@ local and remote, is on `origin/main`. A commit counts as landed when it is:
   - patch-equivalent to a commit on `main` (`git cherry`); or
   - for a train PR, a cherry-pick of it that the train PR's merge brought in:
     same author, author time and subject. A cherry-pick that resolved a
-    conflict changes the patch, but keeps all three.
+    conflict changes the patch, but keeps all three; or
+  - for a train PR, in the snapshot the train was cut from (`train-src/<id>`):
+    an ancestor of it, patch-equivalent to it, or the same pick key. A train
+    stacks onto other trains and may rework a commit while resolving, so its
+    merge range need not hold a pick of every task commit; the snapshot is
+    what the merged train PR was built from, which is the same claim.
+    A commit made on the task branch after the snapshot was cut is in none
+    of these and is refused: the train never saw it.
+Whatever the per-commit tests say, a branch whose merge into `origin/main`
+produces main's own tree has nothing main lacks, and passes: that is what
+covers a `Merge origin/main into task/...` commit, whose content is main's.
 A branch that fails is reported with its unlanded commits and left alone:
 status, worktree and both branches untouched. An accumulating unmerged branch
 is a visible, cheap problem; a deleted one is invisible and permanent.
@@ -92,10 +102,21 @@ def find_pr(prs: list[dict], identifier: str) -> Pr | None:
     return Pr(p["number"], p["headRefName"], p["headRefOid"], p["mergeCommit"]["oid"])
 
 
+def snapshot_ref(project: Path, pr: Pr) -> str | None:
+    """`origin/train-src/<id>` for a train PR, if that branch still exists."""
+    if not pr.is_train:
+        return None
+    ref = "origin/train-src/" + pr.head.rsplit("/", 1)[-1]
+    return ref if git_ok(project, "rev-parse", "-q", "--verify", ref) else None
+
+
 def unlanded(project: Path, ref: str, pr: Pr) -> list[str]:
-    """Commits on `ref` that are not on origin/main by any of the gate's four tests."""
+    """Commits on `ref` that are not on origin/main by any of the gate's five tests."""
     commits = git(project, "rev-list", f"origin/main..{ref}").split()
     if not commits:
+        return []
+    merged = run(project, "git", "merge-tree", "--write-tree", "origin/main", ref)
+    if merged.returncode == 0 and merged.stdout.split()[0] == git(project, "rev-parse", "origin/main^{tree}"):
         return []
     pr_landed = git_ok(project, "merge-base", "--is-ancestor", pr.merge_oid, "origin/main")
     have_head = git_ok(project, "cat-file", "-e", f"{pr.head_oid}^{{commit}}")
@@ -104,11 +125,18 @@ def unlanded(project: Path, ref: str, pr: Pr) -> list[str]:
     picked: set[str] = set()
     if pr.is_train and pr_landed:
         picked = set(git(project, "log", f"--format={PICK_KEY}", f"{pr.merge_oid}^1..{pr.merge_oid}^2").splitlines())
+    snap = snapshot_ref(project, pr) if pr_landed else None
+    if snap:
+        equivalent |= {line[2:] for line in git(project, "cherry", snap, ref).splitlines()
+                       if line.startswith("- ")}
+        picked |= set(git(project, "log", f"--format={PICK_KEY}", snap, "--not", "origin/main").splitlines())
     bad = []
     for c in commits:
         if c in equivalent:
             continue
         if pr_landed and have_head and git_ok(project, "merge-base", "--is-ancestor", c, pr.head_oid):
+            continue
+        if snap and git_ok(project, "merge-base", "--is-ancestor", c, snap):
             continue
         if picked and git(project, "log", "-1", f"--format={PICK_KEY}", c) in picked:
             continue
@@ -133,9 +161,12 @@ class Api:
             return json.loads(raw) if raw else None
 
     def in_review_parents(self) -> list[dict]:
+        # Not only top-level tasks: a follow-up filed as another task's child has its
+        # own `task/<id>` branch and PR, and filtering on parentId left those in_review
+        # forever after merging. Stage children (Verify, Review, Rebase) have no PR
+        # headed by their own identifier, so `find_pr` skips them.
         d = self.call("GET", f"/companies/{self.company}/issues?status=in_review")
-        d = d if isinstance(d, list) else d.get("issues", [])
-        return [i for i in d if not i.get("parentId")]
+        return d if isinstance(d, list) else d.get("issues", [])
 
     def close(self, issue: dict, comment: str) -> None:
         # Comment first: a status flipped with no reason is the unrecoverable half.
@@ -166,7 +197,8 @@ def sweep(project: Path, parents: list[dict], prs: list[dict], api, reap, dry: b
         how = "the train PR's own merge" if pr.is_train else "the PR's merge"
         api.close(parent, f"Merged: PR #{pr.number} (`{pr.head}`).\n\n"
                           f"Disposition: **Landed** — #{pr.number}. Every commit on `{branch}` "
-                          f"(local and origin) is on `origin/main` by ancestry, patch, or a cherry-pick in {how}. "
+                          f"(local and origin) is on `origin/main` by ancestry, patch, or a cherry-pick in {how}"
+                          f"{' or its `train-src` snapshot' if pr.is_train else ''}. "
                           f"Closed by `merge-sweep.py`.")
         done = [f"{ident}: closed (PR #{pr.number}, {pr.head})"]
 
