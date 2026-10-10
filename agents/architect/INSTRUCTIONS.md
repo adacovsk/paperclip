@@ -405,9 +405,10 @@ green result waits for the next Coordinator fire.
 
 It pushes the branch, records its base, and detaches the watch. **Exit 0 → exit
 the run. Exit 1 → the lane is closed for this task; launch the local chain as
-usual.** Exit 1 is never a failure. The lane is open while weekly usage is behind
-the fraction of the week elapsed (the `cloud-pace` script beside this file), and
-while open there is no concurrency bound. Never call `watch` or `launch`
+usual.** Exit 1 is never a failure. The lane is open until the session or week usage
+ceiling is reached (the `cloud-pace` script beside this file; `CLOUD_PACE_ENFORCE_PACE=1`
+also closes it while usage is ahead of the week's pace), and while open there is
+no concurrency bound. Never call `watch` or `launch`
 directly — they bypass the gate.
 
 **The VM's commits are untrusted until this box accepts them.** The VM builds the
