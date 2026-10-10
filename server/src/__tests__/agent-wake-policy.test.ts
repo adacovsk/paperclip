@@ -10,6 +10,16 @@ describe("agentMayWake", () => {
     expect(agentMayWake({ agentId: "d", role: "dispatcher" }, { id: "c", role: "coordinator" })).toBe(true);
   });
 
+  it("routes verify sentinels: the Architect wakes the Dispatcher, the Dispatcher wakes the Architect", () => {
+    expect(agentMayWake({ agentId: "x", role: "architect" }, { id: "d", role: "dispatcher" })).toBe(true);
+    expect(agentMayWake({ agentId: "d", role: "dispatcher" }, { id: "x", role: "architect" })).toBe(true);
+  });
+
+  it("does not let the Architect wake anyone but the Dispatcher", () => {
+    expect(agentMayWake({ agentId: "x", role: "architect" }, { id: "c", role: "coordinator" })).toBe(false);
+    expect(agentMayWake({ agentId: "x", role: "architect" }, { id: "w", role: "engineer" })).toBe(false);
+  });
+
   it("does not let the Dispatcher wake anyone else", () => {
     expect(agentMayWake({ agentId: "d", role: "dispatcher" }, { id: "w", role: "engineer" })).toBe(false);
   });

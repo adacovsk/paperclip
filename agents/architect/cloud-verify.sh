@@ -731,7 +731,7 @@ detach() {
   local task="$1"; shift
   if systemd-run --user --scope --collect --quiet true >/dev/null 2>&1; then
     systemd-run --user --scope --collect --quiet --unit="cloudwatch-$task-$(date +%s)" \
-      --setenv=PAPERCLIP_API_URL --setenv=PAPERCLIP_API_KEY --setenv=PAPERCLIP_AGENT_ID \
+      --setenv=PAPERCLIP_API_URL --setenv=PAPERCLIP_API_KEY --setenv=PAPERCLIP_AGENT_ID --setenv=PAPERCLIP_COMPANY_ID \
       setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
   else
     setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
@@ -762,17 +762,11 @@ cmd_rewatch() {
 }
 
 # Mirrors the local wrapper's callback so a verdict does not wait for the next
-# scheduled wake. The payload names the Verify task: a wake without one is bound
-# by the server to whatever task this agent's resumed session last touched, so
-# the run lands on a finished task, reports nothing to do, and the green result
-# sits unlanded until the next Coordinator fire.
+# scheduled wake. Both go through sentinel-callback.sh, which wakes the
+# Dispatcher's sentinel step; it wakes the Architect, naming the Verify task,
+# only when the result needs a model.
 wake() {
-  [ -n "${PAPERCLIP_API_URL:-}" ] && [ -n "${PAPERCLIP_AGENT_ID:-}" ] || return 0
-  curl -fsS -X POST "$PAPERCLIP_API_URL/api/agents/$PAPERCLIP_AGENT_ID/wakeup" \
-    ${PAPERCLIP_API_KEY:+-H "Authorization: Bearer $PAPERCLIP_API_KEY"} \
-    -H 'Content-Type: application/json' \
-    -d "{\"source\":\"automation\",\"triggerDetail\":\"callback\",\"reason\":\"verify-sentinel-ready\",\"payload\":{\"issueIdentifier\":\"${WAKE_ISSUE}\"}}" \
-    >/dev/null 2>&1 || true
+  "$(dirname "$0")/sentinel-callback.sh" "${WAKE_ISSUE}" || true
 }
 
 case "${1:-}" in
