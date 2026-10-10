@@ -154,6 +154,26 @@ class SupersededStages(unittest.TestCase):
     def test_a_cancelled_parent_is_left_alone(self):
         self.assertEqual(decide(parent(status="cancelled"), [VERIFY_BLOCKED, REBASE_DONE], CLEAN).kind, "skip")
 
+    def test_a_resumed_review_changes_its_assignee_so_the_reviewer_wakes(self):
+        class Recorder:
+            def __init__(self):
+                self.writes = []
+
+            def get(self, path):
+                return []
+
+            def write(self, method, path, body, what):
+                self.writes.append(body)
+
+            set_status = dispatch.Api.set_status
+
+        api = Recorder()
+        review = child("Review: T-1", "blocked", "1", "review")
+        stages = dispatch.ordered_stages([review, REBASE_DONE])
+        dispatch.retire_superseded(api, {"Reviewer": "rev"}, stages, REBASE_DONE, resume=True)
+        assignees = [w["assigneeAgentId"] for w in api.writes if "assigneeAgentId" in w]
+        self.assertEqual(assignees, [None, "rev"])
+
 
 class RebaseDispatch(unittest.TestCase):
     def test_a_verify_blocked_on_a_conflict_gets_a_rebase(self):
