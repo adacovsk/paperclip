@@ -115,9 +115,12 @@ the same six checks; only *Verify there's something to do* differs in what it ex
 6. **Sync to current main.** `git fetch origin main && git rebase
    origin/main`. A stale branch makes cargo flag already-fixed errors
    or pass on state that conflicts with main on push. Rebase conflicts
-   → comment `"Branch conflicts with current main; rebase failed at
-   <commit>. Operator must resolve before verify can proceed."` and
-   `git rebase --abort` then exit. (`ci-failure` flavor: skip — the
+   → `git rebase --abort`, then try `git merge --no-edit origin/main` (a
+   replay conflict on an intermediate commit often merges clean). If that
+   conflicts too, `git merge --abort` and **offload in resolve mode**
+   (§Cloud overflow lane): the VM rebases and resolves it. Escalate a
+   conflict to the operator only when the lane refuses (exit 1) or a
+   resolve-mode verify of this head already came back red or rejected. (`ci-failure` flavor: skip — the
    worktree is already branched from current `origin/main`.) A verdict of
    "X does not exist" or "the premise is false" cites `origin/main`
    (`git show origin/main:<path>`, `git grep <pattern> origin/main -- <path>`),
@@ -294,7 +297,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
    - **absent + no build** → **first try `cloud-verify.sh offload` (§Cloud overflow lane)**; exit 0 → exit the run. Otherwise launch the detached `&&` chain (which orphan-guards first: an already-merged-PR task cleans its sentinels and exits without launching), then exit the run. Both write the same `{task-id}.exit` sentinel; the cloud lane adds `95` and gives `0`/`1` the meanings listed in its section — read those when `{task-id}.cloud.verdict` exists.
    - **present, `0`** → cargo passed → go to *Identify your task's changed files* then §Landing.
    - **present, `96`, `97` or `98`** → **environment/base failure, NOT a build failure** (96 = cargo/sccache off PATH; 97 = worktree missing; 98 = could not put the branch on current `origin/main` by **either** rebase or merge, so this really is a content conflict). The code is very likely fine — cargo never ran. Do **not** enter the fix loop, do **not** edit Rust. Comment the sentinel value + the tail of `$LOG` and escalate to operator (§Final message). See Cargo discipline §Environment and base bootstrap.
-     - **`98` specifically**: the launch tried to put the branch on current `origin/main` and either the fetch failed or the rebase conflicted. A conflict is genuine work for the operator — do not try to force it. This sentinel exists because a build on a stale base produces **false reds against already-fixed code**, and a red that isn't yours is the most expensive kind: you cannot fix it, so every cycle spent on it is wasted.
+     - **`98` specifically**: the launch tried to put the branch on current `origin/main` and either the fetch failed or the rebase conflicted. A fetch failure is environment: escalate. **A conflict goes to the cloud lane in resolve mode** (`rm -f "$EXIT"`, then `CLOUD_VERIFY_RESOLVE=1 "$CV" offload ...` from the worktree at the un-rebased head) — do not resolve it locally and do not escalate it first. Escalate only when the lane refuses, or when `{task-id}.cloud.resolve` exists and that resolve verify came back `1` or `95` twice. This sentinel exists because a build on a stale base produces **false reds against already-fixed code**, and a red that isn't yours is the most expensive kind: you cannot fix it, so every cycle spent on it is wasted.
    - **present, `99`** → **the wrapper was signalled before cargo reported — INCONCLUSIVE, not a build failure.** Written by the wrapper's own signal trap, so the result is "we never found out", not "it failed". The usual cause is the server being restarted under it. Do **not** enter the fix loop and do **not** edit Rust: `rm -f "$EXIT"` and relaunch, exactly as for `137`. Twice running → escalate rather than relaunching a third time. → [why the trap exists](rationale/sentinel-99-trap.md)
 
    - **present, `137`** → **the build was OOM-killed, NOT a build failure.** 137 is 128+9: the launch found `signal: 9` in *this run's* log, meaning the OOM killer SIGKILLed rustc mid-compile. cargo reports that as exit **101 — the same code a genuine test failure produces** — so read as 101 it sends you hunting a bug that is not in your diff. Your code is very likely fine. Do **not** enter the fix loop and do **not** edit Rust. `rm -f "$EXIT"` and relaunch; a retry on a quieter box usually just passes. → [why an OOM kill is indistinguishable from a test failure](rationale/sentinel-137-oom.md) Killed twice running → escalate to operator rather than relaunching a third time. `signal: 15` (SIGTERM) is a *deliberate* reap and a different cause entirely — do not conflate them. A reap performed through `reap-verify.sh` pre-writes **`100`**, so it never reaches this remap at all; a bare `signal: 15` with no `100` sentinel means something killed the build *without* going through the reap path (earlyoom, a stray `systemctl restart`, a hand `kill`) and is genuinely inconclusive.
@@ -315,7 +318,7 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
      That is the cheap test, and it decides the common case: an error naming something the task did not change cannot have been caused by it. **Fall back to the base comparison only when genuinely ambiguous** — a qualifying code whose identifier reaches the file only through a macro, a glob import or a trait bound, so it is not textually in the diff. Then build the base once, in a throwaway worktree under the semaphore (`git worktree add --detach /tmp/base-{task-id} "$(git merge-base HEAD origin/main)"`, clippy `--all-targets` there, `git worktree remove` after): the error present there is not yours.
    - **Everything else outside your list stays an escalation**, exactly as before: any other error code, every lint and warning, any error also present at the base, and anything you cannot tie to your diff. Do not edit it; comment it and `escalate to operator` — unless this is a main-repair task (next bullet).
 
-     **When every error left is one already on `main`, record that before you escalate**, so the escalation clears itself once `main` moves:
+     **When every error left is one already on `main`, record that before you escalate**, so the escalation clears itself once `main` moves. **This holds whether or not you built.** Declining to relaunch because a source read shows `main` still broken is the same escalation and needs the same marker: the requeue script deletes the marker when it re-dispatches you, so an escalation that skips writing a fresh one leaves the task `blocked` with nothing left to wake it when `main` is fixed:
      ```sh
      printf '%s\n%s\n' "$(git rev-parse origin/main)" "{verify-task-id}" > "$VERIFY_DIR/{task-id}.base-red"
      ```
@@ -370,8 +373,27 @@ CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
 "$CV" offload "{task-id}" "task/{task-id}" "{verify-task-id}"
 ```
 
-For a main-repair task (§Procedure step 4) prefix the call with
-`CLOUD_VERIFY_MAIN_REPAIR=1`. The VM is then told that breakage already on
+Three prefixes change what the VM is asked to do; each is recorded for the
+detached watcher and cleared by the next offload that omits it:
+
+- **`CLOUD_VERIFY_RESOLVE=1`** — the branch conflicts with `origin/main`
+  (§Step 0 sync, or sentinel `98`). Offload the un-rebased head; the VM rebases
+  it onto current main, resolves the conflicts by porting the task onto main's
+  current structure, and verifies the result. Acceptance checks the work
+  descends from the main commit the VM names in `rebased-onto:`, that this
+  commit is on `origin/main`, and that relative to it the VM changed only the
+  task's original files, schemas or declared out-of-scope fixes. On acceptance
+  the script itself publishes the rewritten branch (force-with-lease on the
+  head you launched) and writes the new base to `{task-id}.base`, so Landing
+  proceeds as for any green verify.
+- **`CLOUD_VERIFY_WIDE=1`** — a cloud verify came back `1` and every remaining
+  error is outside the task's files but **not** present at the base (a test or
+  lint elsewhere that the task's change broke). Re-offload once with this
+  prefix instead of escalating; the VM may then fix any declared error in an
+  existing Rust file. Errors also present at the base are `main`'s: write the
+  `.base-red` marker and escalate as before — one main-repair fixes them for
+  every task, where wide scope would fix them once per task.
+- **`CLOUD_VERIFY_MAIN_REPAIR=1`** — for a main-repair task (§Procedure step 4). The VM is then told that breakage already on
 `main` is in scope, and acceptance admits its declared fixes to existing Rust
 files outside the task's own — without it a second break on `main` is reported
 as not the task's, and the fix strands.
@@ -411,12 +433,17 @@ above, with these cloud-specific meanings (you can tell a cloud result by
   `regenerated` and `not-relevant` need nothing.
 - **`1`** → accepted but still red: the VM already spent its fix rounds, and its
   in-scope fixes are now in your worktree. That *is* your 3-cycle hard stop —
-  do not fix locally. Comment the `--- errors ---` block from the verdict and
-  escalate to operator (§Final message).
+  do not fix locally. If every remaining error is outside the task's files,
+  not present at the base, and `{task-id}.cloud.wide` does not already exist,
+  `rm -f "$EXIT"` and re-offload with `CLOUD_VERIFY_WIDE=1` (above). Otherwise
+  comment the `--- errors ---` block from the verdict and escalate to operator
+  (§Final message).
 - **`95`** → rejected; the reason is in `{task-id}.cloud.rejected` and the tail
-  of `{task-id}.cloud.log`. Your worktree was left at the head you pushed, and
-  `offload` now refuses this task *at that head*. Comment the reason,
-  `rm -f "$EXIT"`, and launch the **local** chain. A later head (a rebase or a
+  of `{task-id}.cloud.log`. Your worktree was left at the head you pushed.
+  Comment the reason, `rm -f "$EXIT"`, and **offload again with the same
+  prefixes**: the first rejection at a head earns one retry, and the VM is told
+  why its first attempt was discarded. Only when `offload` refuses (a second
+  rejection at that head) launch the **local** chain. A later head (a rebase or a
   fix commit) offloads normally — the refusal does not outlive the head it judged.
 - **No sentinel, a `{task-id}.cloud.launched`, and no live watcher** (`{task-id}.pid` empty, or not a `cloud-verify` process) → the watcher died, not the VM: its session is still building or has already published. From the worktree run `"$CV" resume "{task-id}" "{verify-task-id}"` and exit the run. Never `offload` again in this state — that starts a second VM for a verdict the first one may already have written.
 - **`99`** → no verdict ref by the deadline. That is usually a slow session, not
@@ -440,9 +467,9 @@ lane is open; the gate, not your read of the queue, decides.
 > stranded — the next Coordinator fire lands it. Still run this block when you
 > reach a green sentinel (it saves a cadence of latency), but a missed push is
 > now a latency hit, not a lost PR needing an operator drain. (A genuine rebase
-> conflict is the one case the sweep cannot land — Coordinator routes that
-> straight to `blocked` for an operator merge, so do not loop trying to resolve
-> it here either.)
+> conflict is the one case the sweep cannot land; resolve it through the cloud
+> lane's resolve mode before Landing, never by hand-editing conflict markers
+> in this block.)
 
 On the wake where the sentinel reads `0` (cargo passed), land the work.
 **Commit, push, and PR are a SINGLE self-contained Bash block — never
