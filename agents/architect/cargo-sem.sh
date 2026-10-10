@@ -434,7 +434,7 @@ MEMPCT="${CARGO_SEM_MEM_PCT:-70}"
 # single rustc has been observed at ~20 GiB on a cloud-overflow VM, which runs
 # the same crate with no semaphore and no CGU override on more cores: more LLVM
 # modules resident at once inside one process. Nothing here bounds that (the VM
-# lane does not call this script at all — see docs/ARCHITECT_CLOUD_OVERFLOW.md),
+# lane does not call this script at all — see cloud-verify.sh),
 # but it is the reason not to read the local record as "big builds cost 8 GiB".
 # Given cores, the same compile will take four times that.
 #
