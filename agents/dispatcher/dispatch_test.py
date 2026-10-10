@@ -1,6 +1,9 @@
 """Signal-table tests for dispatch.py.  Run: python3 -m unittest agents/dispatcher/dispatch_test.py"""
 
 import importlib.util
+import os
+import tempfile
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -385,8 +388,8 @@ class SentinelRouting(unittest.TestCase):
     def verdict(self, base, errors):
         return f"CLOUD-VERIFY-V2\nbase: {base}\nresult: FAIL\n--- errors ---\n{errors}\n"
 
-    def route(self, code, base_red=None, verdict="", known=(), landed=False):
-        return dispatch.route_sentinel(code, base_red, verdict, self.MAIN, list(known), landed)[0]
+    def route(self, code, base_red=None, verdict="", known=(), landed=False, base="", struck=False):
+        return dispatch.route_sentinel(code, base_red, verdict, self.MAIN, list(known), landed, base, struck)[0]
 
     def test_superseded_and_reaped_settle(self):
         self.assertEqual(self.route("94"), "settle")
@@ -422,13 +425,128 @@ class SentinelRouting(unittest.TestCase):
     def test_a_red_no_other_verify_blamed_wakes(self):
         self.assertEqual(self.route("1", verdict=self.verdict(self.MAIN, "src/m.rs:285:9")), "wake")
 
-    def test_conflict_and_inconclusive_still_wake(self):
-        for code in ("98", "99", "137", "75", "95", "96"):
+    def test_conflict_and_environment_failures_still_wake(self):
+        for code in ("98", "137", "95", "96"):
             self.assertEqual(self.route(code), "wake", code)
+
+    def test_a_first_inconclusive_build_is_relaunched_without_a_model(self):
+        for code in ("99", "75"):
+            self.assertEqual(self.route(code), "retry", code)
+
+    def test_a_second_inconclusive_in_a_row_wakes(self):
+        for code in ("99", "75"):
+            self.assertEqual(self.route(code, struck=True), "wake", code)
+
+    def test_green_on_a_moved_main_re_verifies_without_a_model(self):
+        self.assertEqual(self.route("0", base="b" * 40), "fresh")
+
+    def test_green_on_the_current_main_wakes_to_land(self):
+        self.assertEqual(self.route("0", base=self.MAIN), "wake")
+
+    def test_green_already_landed_settles_even_on_a_moved_main(self):
+        self.assertEqual(self.route("0", base="b" * 40, landed=True), "settle")
 
     def test_rebased_onto_wins_over_base(self):
         v = f"base: {'c' * 40}\nrebased-onto: {self.MAIN}\n--- errors ---\nsrc/m.rs:1\n"
         self.assertEqual(dispatch.verdict_base(v), self.MAIN)
+
+
+class SentinelSweep(unittest.TestCase):
+    """route_sentinels: what reaches the Architect when a relaunch is tried."""
+
+    MAIN = "a" * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch)
+        dispatch.VERIFY_DIR, dispatch.STATE_DIR = root / "verify", root / "state"
+        dispatch.VERIFY_DIR.mkdir()
+        dispatch.STATE_DIR.mkdir()
+        (dispatch.STATE_DIR / "sentinels.json").write_text('{"_seeded": "1"}')
+        dispatch.git = lambda project, *args: self.MAIN
+        self.relaunched = []
+        self.relaunch_ok = True
+
+        def fake_relaunch(api, verify, parent, mode, why):
+            self.relaunched.append((parent, mode))
+            return self.relaunch_ok
+        dispatch.relaunch = fake_relaunch
+
+    def tearDown(self):
+        dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch = self.saved
+        self.tmp.cleanup()
+
+    def sentinel(self, code, base=None):
+        path = dispatch.VERIFY_DIR / "T-1.exit"
+        path.write_text(code + "\n")
+        os.utime(path, (time.time() + len(self.relaunched) + 1,) * 2)  # a new mtime per sentinel
+        if base:
+            (dispatch.VERIFY_DIR / "T-1.base").write_text(base + "\n")
+
+    def sweep(self):
+        api = SweepApi()
+        dispatch.route_sentinels(api, {"Architect": "arch"}, Path(self.tmp.name))
+        return [w for w in api.writes if w[0] == "POST" and w[1].endswith("/wakeup")]
+
+    def test_a_relaunch_wakes_no_one(self):
+        self.sentinel("99")
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual(self.relaunched, [("T-1", "retry")])
+
+    def test_a_relaunch_handed_back_wakes_the_architect(self):
+        self.relaunch_ok = False
+        self.sentinel("0", base="b" * 40)
+        self.assertEqual(len(self.sweep()), 1)
+        self.assertEqual(self.relaunched, [("T-1", "fresh")])
+
+    def test_the_same_inconclusive_code_twice_wakes_the_second_time(self):
+        self.sentinel("99")
+        self.assertEqual(self.sweep(), [])
+        self.sentinel("99")
+        self.assertEqual(len(self.sweep()), 1)
+        self.assertEqual(len(self.relaunched), 1)
+
+    def test_a_relaunch_past_the_time_budget_waits_for_the_next_sweep(self):
+        saved = dispatch.LAUNCH_BUDGET_S
+        dispatch.LAUNCH_BUDGET_S = 0
+        try:
+            self.sentinel("99")
+            self.assertEqual(self.sweep(), [])
+            self.assertEqual(self.relaunched, [])
+        finally:
+            dispatch.LAUNCH_BUDGET_S = saved
+        self.sweep()
+        self.assertEqual(self.relaunched, [("T-1", "retry")])
+
+    def test_a_real_result_between_clears_the_strike(self):
+        self.sentinel("99")
+        self.sweep()
+        self.sentinel("1")
+        self.sweep()
+        self.sentinel("99")
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual([m for _, m in self.relaunched], ["retry", "retry"])
+
+
+class SweepApi:
+    dry_run = False
+
+    def __init__(self):
+        self.writes = []
+
+    def issues(self, **query):
+        return [{"id": "v1", "identifier": "V-1", "parentId": "p1", "title": "Verify: T-1 x",
+                 "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": "arch"}]
+
+    def get(self, path):
+        return {"identifier": "T-1"}
+
+    def write(self, method, path, body, what):
+        self.writes.append((method, path, body))
+
+    def set_status(self, issue, body, comment, what):
+        self.writes.append(("PATCH", issue["id"], body))
 
 
 class TrainHeads(unittest.TestCase):

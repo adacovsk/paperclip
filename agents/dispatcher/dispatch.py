@@ -24,6 +24,9 @@ whole instruction set. This script runs those rows directly:
                                              needing judgment go to the Coordinator
   verify sentinel not yet routed            -> settle it without a model, or wake the
                                              Architect on that Verify once
+  sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
+  sentinel 0, main moved past its base      -> freshness re-verify (relaunch-verify.sh);
+                                             a docs-only move or the cap wakes it to land
   its own routine fire, sweep finished      -> close the routine's issue
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
@@ -425,14 +428,36 @@ def verdict_base(verdict: str) -> str:
     return fields.get("rebased-onto") or fields.get("base") or ""
 
 
+INCONCLUSIVE = ("99", "75")
+# A relaunch pushes the branch and starts a cloud session, a minute or more
+# each, inside a run the server kills at its 600 s timeout. Past this many
+# seconds of run time no new build is started, and the relaunch waits for the
+# next sweep.
+LAUNCH_BUDGET_S = int(os.environ.get("DISPATCH_LAUNCH_BUDGET_S", "240"))
+RUN_START = time.monotonic()
+
+
+def launch_budget_left() -> bool:
+    return time.monotonic() - RUN_START < LAUNCH_BUDGET_S
+
+
 def route_sentinel(exit_code: str, base_red: BaseRed | None, verdict: str, main_sha: str,
-                   known: list[BaseRed], landed_after: bool = False) -> tuple[str, str]:
-    """What a readable verify sentinel needs: ("settle" | "base-red" | "wake", why).
+                   known: list[BaseRed], landed_after: bool = False, verified_base: str = "",
+                   struck: bool = False) -> tuple[str, str]:
+    """What a readable verify sentinel needs: ("settle" | "base-red" | "retry" | "fresh" | "wake", why).
 
     settle    nothing for a model to do; record it and move on
     base-red  red only on errors another verify already blamed on this `main`:
               record the marker, park the Verify, no model
+    retry     the build never reported (`99`, `75`) and this is the first time
+              in a row: relaunch the same head, no model
+    fresh     green, but `main` moved past the verified base: run §Landing's
+              freshness re-verify, no model; its landing outcomes still wake
     wake      the Architect's state machine has work here
+
+    `struck` is whether the previous sentinel for this verify was the same
+    inconclusive code: the Architect escalates the second one in a row, so
+    that one wakes it.
     """
     if exit_code == "94":
         return "settle", "superseded; the Dispatcher closes it"
@@ -440,6 +465,12 @@ def route_sentinel(exit_code: str, base_red: BaseRed | None, verdict: str, main_
         return "settle", "deliberately reaped"
     if exit_code == "0" and landed_after:
         return "settle", "already landed; the PR carries it"
+    if exit_code in INCONCLUSIVE:
+        if struck:
+            return "wake", f"sentinel {exit_code} twice in a row"
+        return "retry", f"inconclusive {exit_code}; relaunching the same head"
+    if exit_code == "0" and verified_base and verified_base != main_sha:
+        return "fresh", f"green on {verified_base[:9]}, main is {main_sha[:9]}"
     if base_red and base_red.sha == main_sha and exit_code != "0":
         return "settle", f"already recorded as red on main {main_sha[:9]}; the requeue re-dispatches it"
     if exit_code == "1" and verdict and not base_red:
@@ -1076,9 +1107,28 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         except OSError:
             verdict = ""
         landed = landed_marker(parent)
+        try:
+            verified_base = (VERIFY_DIR / f"{parent}.base").read_text().strip()
+        except OSError:
+            verified_base = ""
+        strike_key = f"{verify['identifier']}#strike"
         action, why = route_sentinel(code, by_task.get(parent), verdict, main_sha,
                                      [m for m in markers if m.task != parent],
-                                     bool(landed and landed[1] >= mtime))
+                                     bool(landed and landed[1] >= mtime),
+                                     verified_base, state.get(strike_key) == code)
+        if action in ("retry", "fresh"):
+            if not launch_budget_left():
+                print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
+                continue  # not recorded, so the next sweep routes it again
+            relaunched = relaunch(api, verify, parent, action, why)
+            if relaunched:
+                state[verify["identifier"]] = key
+                if action == "retry":
+                    state[strike_key] = code
+                continue
+            action, why = "wake", f"{why}; relaunch-verify.sh handed it back"
+        if code not in INCONCLUSIVE:
+            state.pop(strike_key, None)
         if action == "base-red":
             errors = sorted(error_locations(verdict_errors(verdict)))
             if not api.dry_run:
@@ -1112,6 +1162,41 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         state[verify["identifier"]] = key
     state.setdefault("_seeded", "1")
     save_state("sentinels.json", state, api.dry_run)
+
+
+def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
+    """Run `relaunch-verify.sh`; True when the verify went back out with no model.
+
+    Anything else (it lands, it conflicts, the lane refused) returns False and
+    the caller wakes the Architect, so a failure here costs what it always did.
+    """
+    mode = "retry" if mode == "retry" else "fresh"
+    if api.dry_run:
+        print(f"sentinel {verify['identifier']}: would relaunch ({mode}: {why})", flush=True)
+        return True
+    try:
+        out = subprocess.run(
+            ["bash", str(HERE.parent / "architect" / "relaunch-verify.sh"), parent, verify["identifier"], mode],
+            capture_output=True, text=True, timeout=900,
+        )
+    except subprocess.SubprocessError as exc:
+        print(f"sentinel {verify['identifier']}: relaunch failed to run ({exc})", flush=True)
+        return False
+    said = (out.stdout.strip().splitlines() or [""])[-1]
+    print(f"sentinel {verify['identifier']}: {said or f'relaunch exit {out.returncode}'}", flush=True)
+    if out.returncode != 0:
+        return False
+    # The Verify is in_review, so this comment wakes no one; it is the record a
+    # later reader needs of why a new build is out with no Architect run.
+    try:
+        api.write(
+            "POST", f"/issues/{verify['id']}/comments",
+            {"body": f"Relaunched by the Dispatcher, no model run: {why}.\n\n`{said}`"},
+            f"sentinel {verify['identifier']}: relaunch comment",
+        )
+    except urllib.error.HTTPError as exc:
+        print(f"sentinel {verify['identifier']}: relaunch comment refused ({exc.code})", flush=True)
+    return True  # the build is out either way; waking now would launch a second one
 
 
 def requeue_base_red(dry_run: bool) -> None:
