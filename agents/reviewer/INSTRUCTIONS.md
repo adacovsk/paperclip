@@ -28,10 +28,12 @@ exit. Do NOT edit, commit or push.
    git merge-base --is-ancestor origin/main HEAD || git rebase origin/main
    ```
 
-   Rebase conflicts → `git rebase --abort`, then post the comment `"Held: operator — rebase conflict at
-   <sha> on <paths>"` and PATCH the Review stage `blocked` (a separate call; a `comment` field on a
-   status PATCH 500s), then exit. An `in_review` stage whose comment names a blocker is invisible to
-   the Coordinator's hold release, which reads `blocked` + `Held:`.
+   Rebase conflicts → `git rebase --abort`, then post the comment `"Rebase conflict at <sha> on
+   <paths> — needs operator merge (conflict class)"` and PATCH the Review stage `blocked` (a separate
+   call; a `comment` field on a status PATCH 500s), then exit. The Dispatcher dispatches the rebase
+   for a `blocked` Review, and an `in_review` one is invisible to it. Do not write `Held: operator`:
+   that marker is released only by an operator answer, so a conflict the rebase lane resolves would
+   sit in the operator's queue instead.
 
    **A verdict of "X does not exist" / "the premise is false" must cite
    `origin/main`, never your working tree** — `git show origin/main:<path>`
