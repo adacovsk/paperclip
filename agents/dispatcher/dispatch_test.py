@@ -291,6 +291,32 @@ class VerifyLanded(unittest.TestCase):
         self.assertIsNone(dispatch.verify_landed({**self.VERIFY, "status": "blocked"}, None, 7, None))
 
 
+class SupersededVerify(unittest.TestCase):
+    VERIFY = {"status": "blocked", "createdAt": "2026-01-01T00:00:00Z"}
+    BEFORE = dispatch.iso_ts("2025-12-31T00:00:00Z")
+    AFTER = dispatch.iso_ts("2026-01-02T00:00:00Z")
+    MARKER = "superseded-by: abc123 Merge pull request #7\noverlap: src/a.rs\nsrc/a.rs:2 does it\n"
+
+    def test_a_confirmed_marker_closes_a_blocked_verify(self):
+        evidence = dispatch.superseded_evidence(self.VERIFY, (self.MARKER, self.AFTER))
+        self.assertTrue(evidence.startswith("superseded-by: abc123"))
+
+    def test_an_in_review_verify_closes_too(self):
+        self.assertTrue(dispatch.superseded_evidence({**self.VERIFY, "status": "in_review"}, (self.MARKER, self.AFTER)))
+
+    def test_no_marker_keeps_it(self):
+        self.assertIsNone(dispatch.superseded_evidence(self.VERIFY, None))
+
+    def test_a_marker_older_than_the_verify_keeps_it(self):
+        self.assertIsNone(dispatch.superseded_evidence(self.VERIFY, (self.MARKER, self.BEFORE)))
+
+    def test_a_malformed_marker_keeps_it(self):
+        self.assertIsNone(dispatch.superseded_evidence(self.VERIFY, ("overlap: src/a.rs\n", self.AFTER)))
+
+    def test_a_closed_verify_is_left_alone(self):
+        self.assertIsNone(dispatch.superseded_evidence({**self.VERIFY, "status": "done"}, (self.MARKER, self.AFTER)))
+
+
 class TrainHeads(unittest.TestCase):
     def test_train_head_is_also_the_tasks_pr(self):
         heads = dispatch.by_head([{"headRefName": "train/7/AA-13055", "headRefOid": "o"}], "headRefOid")

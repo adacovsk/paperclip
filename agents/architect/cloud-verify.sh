@@ -65,6 +65,8 @@
 # Exit codes deliberately match the Architect's existing verify sentinel:
 #   0   verified green
 #   1   verified red (compile/test failures; body carries file:line)
+#   94  superseded: main already does what the task did, and this box confirmed
+#       the cited commit (see `accept_superseded`) — close, do not land
 #   75  still running (no verdict yet, inside the deadline) — poll again
 #   96  environment broken (claude/script missing, no launch state) — NOT a build failure
 #   98  stale base (branch not pushed, or base moved) — operator resolves
@@ -128,8 +130,13 @@ verify_prompt() {
    intents — main's current code plus what the task set out to do. When main has
    restructured the code (split a file, renamed a type, moved a table), port the
    task's change onto the new structure rather than restoring the old one. If
-   main already does everything the task did, stop: result FAIL with
-   'superseded by main: <commit>' as the error.
+   main already does everything the task did, stop without committing
+   anything: result SUPERSEDED, a 'superseded-by: <sha>' line naming the main
+   commit that implements it (the PR's merge commit when it came in by PR),
+   and under '--- errors ---' the path:line on main that does the task's work.
+   This box closes the task on that verdict, so name the commit only when its
+   change covers the task's — a commit that merely touches the same file is a
+   conflict to resolve, not a supersession.
    Edit only files the task's own diff touched (plus the out-of-scope rules in
    step 3); a resolution that needs any other file is a FAIL, not a widening.
    TASKHEAD=\$(git rev-parse HEAD)    (the resolved task commits on \$BASE)
@@ -216,7 +223,8 @@ CLOUD-VERIFY-V2
 task: ${task}
 launched: ${head}
 base: <\$BASE>${rebased_line}
-result: PASS | FAIL
+result: PASS | FAIL | SUPERSEDED
+superseded-by: <sha>                  (SUPERSEDED only)
 fixes: <rounds used in step 3>
 schemas: not-relevant | regenerated | proved-empty
 guards: <exit status of step 4>
@@ -305,6 +313,7 @@ cmd_poll() {
   case "$(field "$body" result)" in
     PASS)  exit 0  ;;
     FAIL)  exit 1  ;;
+    SUPERSEDED) exit 94 ;;
     STALE) exit 98 ;;
     *)     exit 99 ;;
   esac
@@ -372,6 +381,8 @@ await_verdict() {
   # until this box has accepted them.
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
     ( accept_cloud_work "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1 || rc=95
+  elif [ "$rc" -eq 94 ]; then
+    ( accept_superseded "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1 || rc=95
   fi
   printf '%s\n' "$rc" > "$exit_file"
   wake
@@ -599,6 +610,48 @@ accept_cloud_work() {
   echo "accepted: worktree at $work ($(git rev-list --count "$from..$work") commit(s) over $from)"
 }
 
+# SUPERSEDED. A resolve verify that finds main already doing the task's work
+# stops with no commits and names the main commit. Do not fold this into FAIL:
+# `accept_cloud_work` rejects a commit-less resolve result (its parent is the
+# launched head, not rebased-onto), so the task would sit `blocked` as stuck
+# stock — holding pace-scale's promotion gate shut — until an operator
+# cancelled it by hand.
+#
+# The claim closes a task, so it is checked rather than trusted: the VM published
+# no work, the commit is on origin/main, and it changed at least one of the
+# task's own non-schema files. The overlap is the floor the operator's rule for
+# closing unmerged work sets (a supersede claim over a disjoint file set once
+# closed finished work), not proof; the VM's path:line citation is carried into
+# the marker so the closing comment shows the reader what to check. The marker
+# is what the Dispatcher closes on — the Architect has no API.
+accept_superseded() {
+  TASK="$1"
+  local ref lease base work body sha task_files overlap
+  ref="$(cat "$STATE_DIR/$TASK.cloud.ref")"
+  lease="$(cat "$STATE_DIR/$TASK.cloud.launched-head" 2>/dev/null)"
+  base="$(cat "$STATE_DIR/$TASK.base" 2>/dev/null)"
+  [ -n "$lease" ] && [ -n "$base" ] || reject "launch state missing (launched-head/base)"
+  work="$(git rev-parse --verify -q "$ref^")" || reject "verdict commit has no parent"
+  [ "$work" = "$lease" ] || reject "a superseded verdict must carry no commits"
+  body="$(cat "$STATE_DIR/$TASK.cloud.verdict" 2>/dev/null)"
+  sha="$(field "$body" superseded-by)"
+  [ -n "$sha" ] || reject "superseded verdict names no superseded-by commit"
+  git fetch -q origin main 2>/dev/null || true
+  sha="$(git rev-parse --verify -q "$sha^{commit}")" || reject "superseded-by commit is unknown here"
+  git merge-base --is-ancestor "$sha" origin/main 2>/dev/null || reject "superseded-by $sha is not on origin/main"
+  task_files="$(git diff --name-only "$base" "$lease" | grep -v '^assets/schemas/')"
+  # First-parent diff: a PR's merge commit stands for the whole PR.
+  overlap="$(comm -12 <(printf '%s\n' "$task_files" | sed '/^$/d' | sort -u) \
+    <(git diff --name-only "$sha^1" "$sha" 2>/dev/null | sort -u))"
+  [ -n "$overlap" ] || reject "superseded-by $sha changes none of the task's files"
+  {
+    printf 'superseded-by: %s %s\n' "$sha" "$(git log -1 --format=%s "$sha")"
+    printf 'overlap: %s\n' $overlap
+    printf '%s\n' "$body" | sed -n '/^--- errors ---$/,$p' | sed 1d
+  } > "$STATE_DIR/$TASK.superseded"
+  echo "superseded: $TASK by $sha (overlap: $(printf '%s ' $overlap))"
+}
+
 suppressions() {  # lines adding a lint or test suppression in $1..$2
   git diff -U0 "$1" "$2" -- '*.rs' | grep -E '^\+.*(#!?\[(allow|expect)\(|#\[ignore)' | grep -v '^+++' | sort -u
 }
@@ -652,7 +705,7 @@ cmd_offload() {
   # baseline that makes the next offload refuse as uncommitted. The push is only
   # the VM's input; the VM runs the suite and acceptance re-runs it on this box.
   git push -q --no-verify --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed — run locally"; exit 1; }
-  rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict" "$STATE_DIR/$task.base-red"
+  rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict" "$STATE_DIR/$task.base-red" "$STATE_DIR/$task.superseded"
   # Recorded as a file, not passed as env: the watcher runs in a transient scope
   # that does not inherit the caller's environment.
   local mode var mark
@@ -728,6 +781,7 @@ case "${1:-}" in
   watch)  shift; cmd_watch  "$@" ;;
   offload) shift; cmd_offload "$@" ;;
   accept)  shift; accept_cloud_work "$@" ;;
+  accept-superseded) shift; accept_superseded "$@" ;;
   resume)  shift; cmd_resume "$@" ;;
   rewatch) shift; cmd_rewatch "$@" ;;
   *) printf 'usage: %s offload <task-id> <branch> [verify-task-id] | launch <task-id> <branch> | poll <task-id> | watch <task-id> <branch> | resume <task-id> [verify-task-id]\n' "${0##*/}" >&2; exit 2 ;;

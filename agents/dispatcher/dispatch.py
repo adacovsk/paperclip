@@ -15,6 +15,7 @@ whole instruction set. This script runs those rows directly:
   stage blocked on a merge conflict       -> Rebase subtask, Worker slots allowing
   held Verify, capacity free              -> dispatch it
   Verify whose landed head the PR carries -> close it (or the PR merged)
+  Verify the cloud lane found superseded  -> close it and its parent
   `Held: until <id> merges|opens its PR`  -> back to backlog once it has
   `Held: waiting on <id>`, <id> closed     -> back to backlog
   its own routine fire, sweep finished      -> close the routine's issue
@@ -336,6 +337,23 @@ def verify_landed(verify: dict, open_head: str | None, merged_pr: int | None,
     return None
 
 
+def superseded_evidence(verify: dict, marker: tuple[str, float] | None) -> str | None:
+    """The parent's closing evidence when the cloud lane found it superseded, or None.
+
+    `marker` is `cloud-verify.sh`'s `{parent}.superseded` (text, mtime), written
+    only after this box confirmed the VM's claim: no cloud commits, the named
+    commit on origin/main, and an overlap with the task's own files. It must
+    postdate the Verify, so a marker left by an earlier verify of the same
+    parent cannot close a fresh one.
+    """
+    if verify["status"] not in ("in_review", "blocked") or not marker:
+        return None
+    text, mtime = marker
+    if mtime <= iso_ts(verify["createdAt"]) or not text.startswith("superseded-by: "):
+        return None
+    return text.strip()
+
+
 def iso_ts(stamp: str) -> float:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
 
@@ -510,6 +528,14 @@ def landed_marker(identifier: str) -> tuple[str, float] | None:
     path = VERIFY_DIR / f"{identifier}.landed"
     try:
         return path.read_text().strip(), path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def superseded_marker(identifier: str) -> tuple[str, float] | None:
+    path = VERIFY_DIR / f"{identifier}.superseded"
+    try:
+        return path.read_text(), path.stat().st_mtime
     except OSError:
         return None
 
@@ -818,6 +844,7 @@ def sweep(api: Api, project: Path) -> None:
             hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
 
     close_landed_verifies(api, project, pr_heads)
+    close_superseded(api)
     released = release_holds(api, pr_heads)
 
     # Promotion needs the Coordinator's contention rules; ask only when it could promote.
@@ -880,6 +907,59 @@ def close_landed_verifies(api: Api, project: Path, pr_heads: dict[str, str]) -> 
                 f"Verify complete: {why} (`{branch}`).",
                 f"verify  {verify['identifier']}: close ({why})",
             )
+
+
+def close_superseded(api: Api) -> None:
+    """Close each Verify, and its parent, whose branch the cloud lane found superseded.
+
+    The Architect has no API, so without this a confirmed supersession sat
+    `blocked` as stuck stock and held pace-scale's promotion gate shut until an
+    operator cancelled it. The parent closes `done` with a
+    `PR-EVIDENCE: superseded-on-main` line, the form the Coordinator's PR-evidence
+    audit accepts. The branch is kept: the comment records its disposition as
+    Abandoned with the tip, and deleting it stays with §Worktree teardown.
+    """
+    verifies = [
+        v for status in ("in_review", "blocked") for v in api.issues(status=status)
+        if stage_of(v) == "verify" and v.get("parentId")
+    ]
+    for verify in verifies:
+        parent = api.get(f"/issues/{verify['parentId']}")
+        evidence = superseded_evidence(verify, superseded_marker(parent["identifier"]))
+        if not evidence or parent["status"] not in OPEN:
+            continue
+        lines = evidence.splitlines()
+        sha_line = lines[0].removeprefix("superseded-by: ")
+        branch = f"task/{parent['identifier']}"
+        tip = subprocess.run(
+            ["git", "ls-remote", "origin", f"refs/heads/{branch}"],
+            cwd=project_root(), capture_output=True, text=True, timeout=60,
+        ).stdout.split("\t")[0][:12] or "not on origin"
+        detail = "\n".join(lines[1:])
+        api.set_status(
+            verify,
+            {"status": "done"},
+            f"Verify complete: superseded by main ({sha_line}). Closing the parent.",
+            f"verify  {verify['identifier']}: close (superseded by {sha_line[:9]})",
+        )
+        for sibling in api.issues(parentId=parent["id"]):
+            if sibling["id"] != verify["id"] and stage_of(sibling) and sibling["status"] in OPEN:
+                api.set_status(
+                    sibling,
+                    {"status": "cancelled"},
+                    f"Cancelled: {parent['identifier']} is superseded by main ({sha_line}).",
+                    f"cancel  {sibling['identifier']}: parent superseded",
+                )
+        api.set_status(
+            parent,
+            {"status": "done"},
+            f"PR-EVIDENCE: superseded-on-main {sha_line}\n\n"
+            f"The cloud resolve verify found `origin/main` already doing this task's work, and "
+            f"`cloud-verify.sh` confirmed the commit is on main and changes the task's own files.\n\n"
+            f"{detail}\n\n"
+            f"Branch disposition: **Abandoned** — superseded. `{branch}` tip `{tip}` is kept on origin.",
+            f"close   {parent['identifier']}: superseded by {sha_line[:9]}",
+        )
 
 
 def release_holds(api: Api, pr_heads: dict[str, str]) -> int:

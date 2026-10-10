@@ -66,6 +66,7 @@ make_git "$REF"
 verdict PASS;  "$CV" poll AA-1 >/dev/null 2>&1; check "PASS  -> 0"  "$?" 0
 verdict FAIL;  "$CV" poll AA-1 >/dev/null 2>&1; check "FAIL  -> 1"  "$?" 1
 verdict STALE; "$CV" poll AA-1 >/dev/null 2>&1; check "STALE -> 98" "$?" 98
+verdict SUPERSEDED; "$CV" poll AA-1 >/dev/null 2>&1; check "SUPERSEDED -> 94" "$?" 94
 # A truncated or malformed body must never read as green.
 printf 'CLOUD-VERIFY-V1\ntask: AA-1\n' > "$DIR/body.txt"
 "$CV" poll AA-1 >/dev/null 2>&1;               check "garbage -> 99" "$?" 99
@@ -554,6 +555,45 @@ setup_resolve AA-87; resolved; publish AA-87; rm -f "$CLOUD_VERIFY_DIR/AA-87.clo
 accept AA-87;                                   check "rebased work without the resolve mark -> rejected" "$?" 1
 check "  ...for that reason (AA-87)" "$(why AA-87 'do not descend from the launched head')" 1
 rm -f "$CLOUD_VERIFY_DIR"/AA-8?.cloud.resolve
+
+echo "superseded: main already does the task's work:"
+# The VM publishes no commits, only a verdict naming the main commit. A claim
+# that closes a task is checked here, not trusted.
+supersede() {  # task, sha: a commit-less SUPERSEDED verdict naming sha
+  g checkout -q --detach "$LEASE"; publish "$1"
+  printf 'CLOUD-VERIFY-V2\nresult: SUPERSEDED\nsuperseded-by: %s\n--- errors ---\nsrc/a.rs:2 already does it\n' "$2" \
+    > "$CLOUD_VERIFY_DIR/$1.cloud.verdict"
+  rm -f "$CLOUD_VERIFY_DIR/$1.superseded"
+}
+superseded() { ( cd "$R" && PATH="$REALPATH" "$CV" accept-superseded "$1" >/dev/null 2>&1 ); }
+
+setup_resolve AA-90; supersede AA-90 "$ONTO"
+superseded AA-90;                               check "main commit touching the task's file -> accepted" "$?" 0
+check "  ...marker names the commit"            "$(grep -c "^superseded-by: $ONTO" "$CLOUD_VERIFY_DIR/AA-90.superseded")" 1
+check "  ...marker names the overlap"           "$(grep -c '^overlap: src/a.rs$' "$CLOUD_VERIFY_DIR/AA-90.superseded")" 1
+check "  ...marker carries the VM's citation"   "$(grep -c '^src/a.rs:2 already does it$' "$CLOUD_VERIFY_DIR/AA-90.superseded")" 1
+check "  ...worktree untouched"                 "$(g rev-parse HEAD)" "$LEASE"
+
+setup_resolve AA-91; g checkout -q main; commit src/b.rs "fn elsewhere() {}" disjoint; g push -q origin main
+DISJOINT="$(g rev-parse HEAD)"; supersede AA-91 "$DISJOINT"
+superseded AA-91;                               check "main commit over a disjoint file set -> rejected" "$?" 1
+check "  ...for that reason (AA-91)" "$(why AA-91 "changes none of the task's files")" 1
+check "  ...no marker written"                  "$([ -f "$CLOUD_VERIFY_DIR/AA-91.superseded" ] && echo yes || echo no)" no
+
+setup_resolve AA-92; resolved; publish AA-92
+printf 'CLOUD-VERIFY-V2\nresult: SUPERSEDED\nsuperseded-by: %s\n' "$ONTO" > "$CLOUD_VERIFY_DIR/AA-92.cloud.verdict"
+superseded AA-92;                               check "superseded verdict carrying commits -> rejected" "$?" 1
+check "  ...for that reason (AA-92)" "$(why AA-92 'must carry no commits')" 1
+
+setup_resolve AA-93; g checkout -q --detach "$ONTO"; commit src/a.rs "fn off_main() {}" side
+SIDE="$(g rev-parse HEAD)"; supersede AA-93 "$SIDE"
+superseded AA-93;                               check "superseded-by not on origin/main -> rejected" "$?" 1
+check "  ...for that reason (AA-93)" "$(why AA-93 'is not on origin/main')" 1
+
+setup_resolve AA-94; supersede AA-94 ""
+sed -i '/^superseded-by:/d' "$CLOUD_VERIFY_DIR/AA-94.cloud.verdict"
+superseded AA-94;                               check "no superseded-by line -> rejected" "$?" 1
+rm -f "$CLOUD_VERIFY_DIR"/AA-9?.cloud.resolve
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

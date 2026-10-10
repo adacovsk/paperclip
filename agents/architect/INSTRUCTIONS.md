@@ -123,7 +123,12 @@ the same six checks; only *Verify there's something to do* differs in what it ex
    conflicts too, `git merge --abort` and **offload in resolve mode**
    (§Cloud overflow lane): the VM rebases and resolves it. Escalate a
    conflict to the operator only when the lane refuses (exit 1) or a
-   resolve-mode verify of this head already came back red or rejected. (`ci-failure` flavor: skip — the
+   resolve-mode verify of this head already came back red or rejected.
+   **A conflict you suspect is superseded by `main` is still a resolve-mode
+   offload, not an escalation**: the VM decides, and its confirmed `94` closes the
+   task with no operator in the loop. An escalation that says "appears
+   superseded" leaves the task `blocked` as stuck stock, which holds the pace
+   script's promotion gate shut for the whole pipeline. (`ci-failure` flavor: skip — the
    worktree is already branched from current `origin/main`.) A verdict of
    "X does not exist" or "the premise is false" cites `origin/main`
    (`git show origin/main:<path>`, `git grep <pattern> origin/main -- <path>`),
@@ -431,6 +436,11 @@ above, with these cloud-specific meanings (you can tell a cloud result by
   `rm -f "$EXIT"` and re-offload with `CLOUD_VERIFY_WIDE=1` (above). Otherwise
   comment the `--- errors ---` block from the verdict and escalate to operator
   (§Final message).
+- **`94`** → superseded: `origin/main` already does the task's work, and the
+  watch confirmed the commit the VM named is on main and changes the task's own
+  files (`{task-id}.superseded` holds the evidence). Do not land, relaunch or
+  escalate. Comment the first two lines of `{task-id}.superseded` and exit; the
+  Dispatcher closes this Verify and its parent from that marker.
 - **`95`** → rejected; the reason is in `{task-id}.cloud.rejected` and the tail
   of `{task-id}.cloud.log`. Your worktree was left at the head you pushed.
   Comment the reason, `rm -f "$EXIT"`, and **offload again with the same
