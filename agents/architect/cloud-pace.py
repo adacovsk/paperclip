@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Whether the weekly usage limit has quota to spare on cloud verifies.
 
-Prints 1 (lane open) or 0 (lane closed). Open means weekly utilization is
-behind the fraction of the week that has elapsed — quota an even spend would
-already have used is going unused — and while it is, every verify goes to the
-cloud with no concurrency bound. The deficit self-corrects: cloud sessions
-spend the same account quota, so a flood closes the lane once usage catches up
-with the calendar, and the local build box carries the queue again.
+Prints 1 (lane open) or 0 (lane closed). The lane is open until a ceiling is
+reached: the five-hour session ceiling (CLOUD_PACE_SESSION_CEILING, default 80)
+or the week ceiling (CLOUD_PACE_WEEK_CEILING, default 90). While it is open every
+verify goes to the cloud with no concurrency bound; once it closes, the local
+build box (the Architect's local chain) carries the queue. The week ceiling sits
+below 100 because an exhausted weekly limit stalls every local agent too, not
+just the verifies.
+
+The operator's standing choice is the cloud for everything a ceiling allows, so
+pace is not compared by default. CLOUD_PACE_ENFORCE_PACE=1 restores the pacing
+gate: the lane is then open only while weekly utilization is behind the
+fraction of the week elapsed, so spend tracks the calendar.
 
 The window is read from the usage response's own `resets_at`, never from a
 hardcoded weekday, so a moved reset cannot desynchronise the gate.
@@ -17,13 +23,7 @@ stalls until the reset. The endpoint is the one Claude Code's own usage display
 reads; it is not a published API, so a changed shape is expected eventually and
 must degrade to "lane off", not to a crash a caller might read as permission.
 
-CLOUD_PACE_IGNORE_PACE=1 is the operator's "everything to the cloud" switch: it
-drops the pace comparison so the lane stays open regardless of how the week's
-spend compares with the calendar. It does not drop the ceilings —
-the session ceiling still applies, and CLOUD_PACE_WEEK_CEILING (default 90)
-closes the lane before the week is spent, because an exhausted weekly limit
-stalls every local agent too, not just the verifies. Unreadable usage still
-fails closed.
+Unreadable usage fails closed whether or not pace is enforced.
 
 The session (five-hour) limit is a separate ceiling for the same reason: a
 week with plenty of headroom can still hit the session limit, and that blocks
@@ -128,14 +128,14 @@ def is_open(usage: dict, now: float) -> tuple[bool, str]:
     why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed, session {session:.0f}%"
     if session >= session_ceiling:
         return False, f"{why}: session ceiling {session_ceiling:.0f}% reached"
-    if os.environ.get("CLOUD_PACE_IGNORE_PACE") == "1":
-        week_ceiling = env_float("CLOUD_PACE_WEEK_CEILING", 90)
-        if used >= week_ceiling:
-            return False, f"{why}: week ceiling {week_ceiling:.0f}% reached"
-        return True, f"{why}: pace ignored (operator override)"
-    if used >= elapsed:
-        return False, f"{why}: on or ahead of pace"
-    return True, f"{why}: behind pace"
+    if os.environ.get("CLOUD_PACE_ENFORCE_PACE") == "1":
+        if used >= elapsed:
+            return False, f"{why}: on or ahead of pace"
+        return True, f"{why}: behind pace"
+    week_ceiling = env_float("CLOUD_PACE_WEEK_CEILING", 90)
+    if used >= week_ceiling:
+        return False, f"{why}: week ceiling {week_ceiling:.0f}% reached"
+    return True, f"{why}: under the ceilings"
 
 
 def main() -> int:
