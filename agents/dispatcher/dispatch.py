@@ -287,7 +287,9 @@ def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | Non
             return Decision("handoff", "chain task")
         return Decision("review", "Worker committed on a clean tree")
 
-    stage, last = stages[-1]
+    # A finished rebase past this point was consumed, and a resumed review is
+    # older than the rebase that released it: judge by the newest real stage.
+    stage, last = next(((s, c) for s, c in reversed(stages) if s != "rebase"), stages[-1])
     if stage == "review" and last["status"] == "done":
         # Decide by the diff as much as the label: the label was guessed at
         # intake, and most tasks carry none at all.

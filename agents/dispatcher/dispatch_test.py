@@ -155,6 +155,11 @@ class SupersededStages(unittest.TestCase):
         closed = child("Rebase task/T-1 onto origin/main", "done", "2")
         self.assertNotEqual(decide(parent(), [verify, closed], CLEAN).kind, "reverify")
 
+    def test_a_resumed_review_that_finished_gets_a_verify(self):
+        review = child("Review: T-1", "done", "1", "review")
+        closed = child("Rebase task/T-1 onto origin/main", "done", "2")
+        self.assertEqual(decide(parent(), [review, closed], CLEAN).kind, "verify")
+
     def test_a_cancelled_parent_is_left_alone(self):
         self.assertEqual(decide(parent(status="cancelled"), [VERIFY_BLOCKED, REBASE_DONE], CLEAN).kind, "skip")
 
