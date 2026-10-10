@@ -553,6 +553,8 @@ For each parent `{task-id}`:
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
    *opened*, now met). Comment the PR link on the parent; leave the parent
    `in_review` until the human merges (§Merge sweep tears down on merge).
+   A PR the Architect opened never reaches this step; the Dispatcher closes that Verify once the
+   open PR carries the head in the Architect's `{task-id}.landed` marker, or the PR has merged.
 
 **Vocabulary, and it is load-bearing: "landed" means merged into `origin/main` — never merely "a
 PR exists".** The test before writing `done` on a parent is `git merge-base --is-ancestor <sha>
