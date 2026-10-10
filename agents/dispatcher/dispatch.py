@@ -25,7 +25,7 @@ whole instruction set. This script runs those rows directly:
   verify sentinel not yet routed            -> settle it without a model, or wake the
                                              Architect on that Verify once
   Verify dispatched, cloud lane open        -> launch it here, the Verify assigned to the
-    (DISPATCH_LAUNCHES_VERIFY=1)                Dispatcher until a model is needed
+                                             Dispatcher until a model is needed
   Dispatcher's Verify, watcher dead         -> resume it (cloud-verify.sh resume)
   sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
   sentinel 0, main moved past its base      -> freshness re-verify (relaunch-verify.sh);
@@ -98,10 +98,6 @@ SCHEMA_PATH = re.compile(r"^assets/schemas/")
 #: Worker to win the race and the merge is the operator's.
 MAX_REBASES = int(os.environ.get("DISPATCHER_MAX_REBASES", 3))
 HELD_VERIFY = "Intended assignee: Architect (held"
-# Opt-in: the Dispatcher launches a Verify's first build itself while the cloud
-# lane is open, instead of assigning the Architect only for it to run Step 0 and
-# `offload`. Off, every Verify goes to the Architect as before.
-LAUNCHES_VERIFY = os.environ.get("DISPATCH_LAUNCHES_VERIFY") == "1"
 # Step 0's scope check, read conservatively: any of these words sends the
 # Verify to the Architect, which refuses review work in its own words.
 REVIEW_WORDS = re.compile(r"\b(review|audit)", re.I)
@@ -945,7 +941,7 @@ def sweep(api: Api, project: Path) -> None:
         which is the Architect's to run. Assigning the Dispatcher wakes no one,
         since an agent's own assignment is not a wake.
         """
-        if not (LAUNCHES_VERIFY and capacity is None and parent_id and agents.get("Dispatcher")
+        if not (capacity is None and parent_id and agents.get("Dispatcher")
                 and launch_budget_left()):
             return None
         parent = api.get(f"/issues/{parent_id}")
