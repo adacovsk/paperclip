@@ -306,6 +306,13 @@ class TrainHeads(unittest.TestCase):
                                   {"headRefName": "op/train/7/AA-1", "number": 4}], "number")
         self.assertNotIn("task/AA-1", heads)
 
+    def test_train_merged_into_a_stacked_base_is_no_alias(self):
+        prs = [{"headRefName": "train/1/AA-2", "number": 5, "state": "MERGED", "baseRefName": "train/1/AA-1"},
+               {"headRefName": "train/1/AA-1", "number": 4, "state": "MERGED", "baseRefName": "main"}]
+        merged = dispatch.by_head(prs, "number")
+        self.assertNotIn("task/AA-2", merged)
+        self.assertEqual(merged["task/AA-1"], 4)
+
     def test_a_train_prd_task_is_skipped_as_pr_open(self):
         heads = dispatch.by_head([{"headRefName": "train/2/T-1", "headRefOid": "o"}], "headRefOid")
         stages = [child("Review: Thing", "done", "t3")]

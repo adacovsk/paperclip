@@ -476,12 +476,14 @@ def by_head(prs: list[dict], field: str) -> dict[str, object]:
     task's PR: every lookup here is keyed `task/<id>`, and without the alias a
     train-PR'd task reads as having no PR at all — its holds never release and
     it gets dispatched for work that is already in review. A real `task/<id>`
-    head wins over the alias.
+    head wins over the alias. A train PR merged into anything but `main` (its
+    stacked base, before that base landed) put the work nowhere, so it is no
+    alias: the task is still unlanded.
     """
     out: dict[str, object] = {pr["headRefName"]: pr[field] for pr in prs}
     for pr in prs:
         m = TRAIN_HEAD.match(pr["headRefName"])
-        if m:
+        if m and (pr.get("state") != "MERGED" or pr.get("baseRefName") == "main"):
             out.setdefault(f"task/{m.group(1)}", pr[field])
     return out
 
@@ -498,7 +500,7 @@ def open_pr_heads(project: Path) -> dict[str, str]:
 def merged_pr_numbers(project: Path) -> dict[str, int]:
     """Recently merged PRs as {head branch: number}."""
     out = subprocess.run(
-        ["gh", "pr", "list", "--state", "merged", "--limit", "300", "--json", "headRefName,number"],
+        ["gh", "pr", "list", "--state", "merged", "--limit", "300", "--json", "headRefName,number,state,baseRefName"],
         cwd=project, capture_output=True, text=True, timeout=60, check=True,
     ).stdout
     return by_head(json.loads(out), "number")
