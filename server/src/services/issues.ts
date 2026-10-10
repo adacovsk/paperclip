@@ -935,7 +935,12 @@ export function issueService(db: Db) {
      */
     openChildren: async (parentId: string, excludeIssueId?: string) => {
       return db
-        .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+        .select({
+          assigneeAgentId: issues.assigneeAgentId,
+          status: issues.status,
+          dedupeKey: issues.dedupeKey,
+          title: issues.title,
+        })
         .from(issues)
         .where(
           and(

@@ -166,7 +166,7 @@ describe("issue comment self-wake guard", () => {
 
   it("still wakes an in_review assignee that owns an open child", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("in_review"));
-    mockIssueService.openChildren.mockResolvedValue([{ assigneeAgentId: ASSIGNEE_ID, status: "todo" }]);
+    mockIssueService.openChildren.mockResolvedValue([{ assigneeAgentId: ASSIGNEE_ID, status: "todo", dedupeKey: "rebase" }]);
 
     await postComment(createApp());
     await flush();
@@ -178,7 +178,7 @@ describe("issue comment self-wake guard", () => {
     // The assignee's follow-up subtask finished and parked: it is not live work
     // for that assignee, so the parent is as parked as if it had no child.
     mockIssueService.getById.mockResolvedValue(makeIssue("in_review"));
-    mockIssueService.openChildren.mockResolvedValue([{ assigneeAgentId: ASSIGNEE_ID, status: "in_review" }]);
+    mockIssueService.openChildren.mockResolvedValue([{ assigneeAgentId: ASSIGNEE_ID, status: "in_review", dedupeKey: "rebase" }]);
 
     await postComment(createApp());
     await flush();
