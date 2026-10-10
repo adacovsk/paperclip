@@ -20,6 +20,8 @@ whole instruction set. This script runs those rows directly:
   `Held: waiting on <id>`, <id> closed     -> back to backlog
   base-red marker, main moved past it      -> requeue the verify (requeue-base-red.sh)
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task
+  free Worker slots, promotion open         -> promote backlog (promote.py); candidates
+                                             needing judgment go to the Coordinator
   its own routine fire, sweep finished      -> close the routine's issue
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
@@ -57,6 +59,8 @@ from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import promote as promotion  # noqa: E402
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 HANDOFF_FILE = STATE_DIR / "handoff.json"
 #: Hold release reads every held task's comments; once per window is plenty.
@@ -907,9 +911,12 @@ def sweep(api: Api, project: Path) -> None:
     requeue_base_red(api.dry_run)
     file_main_repair(api, agents, project)
     released = release_holds(api, pr_heads)
+    promoted, judged = promotion.promote(api, agents, project, pr_heads)
+    in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
 
-    # Promotion needs the Coordinator's contention rules; ask only when it could promote.
-    backlog = len(api.issues(status="backlog"))
+    # What promote.py could not decide needs the Coordinator's judgment; ask only
+    # when it left such candidates and a slot is still free for them.
+    backlog = len(api.issues(status="backlog")) if (judged or promoted == 0) else 0
     refill_state = load_state("refill.json")
     refill = (
         slots > in_flight
