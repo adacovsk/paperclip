@@ -103,6 +103,19 @@ export function commentWakesAssignee(input: {
   return !(input.status === "in_review" && !input.assigneeOwnsOpenChild);
 }
 
+/**
+ * Whether a comment is a hold: a line telling the assignee it cannot act yet.
+ *
+ * Holds are written by the Coordinator, the Dispatcher and operator merge-train
+ * sessions, often on a task still assigned to the agent it holds. Waking that
+ * agent bought a full context read whose only possible outcome was "held, exit":
+ * merge-train holds alone cost ~90 Architect runs in a day. The release of a
+ * hold is a status or assignee change, which wakes the agent through its own path.
+ */
+export function commentIsHold(body: string): boolean {
+  return /^\s*Held:/.test(body);
+}
+
 /** One sibling or child row, as the wake gates need to read it. */
 export interface OpenChild {
   assigneeAgentId: string | null;

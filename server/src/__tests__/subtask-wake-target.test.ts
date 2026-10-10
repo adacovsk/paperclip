@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  commentIsHold,
   commentWakesAssignee,
   resolveSubtaskWakeTarget,
   summarizeOpenChildren,
@@ -93,6 +94,18 @@ describe("commentWakesAssignee", () => {
     for (const status of ["todo", "in_progress", "backlog", "blocked"]) {
       expect(commentWakesAssignee({ status, assigneeOwnsOpenChild: false })).toBe(true);
     }
+  });
+});
+
+describe("commentIsHold", () => {
+  it("recognises a hold line, leading whitespace allowed", () => {
+    expect(commentIsHold("Held: operator — in cloud merge train 6")).toBe(true);
+    expect(commentIsHold("\n  Held: until AA-1 merges — why")).toBe(true);
+  });
+
+  it("does not treat a comment that merely mentions a hold as one", () => {
+    expect(commentIsHold("Released: AA-1 is done.\n\n> Held: until AA-1 merges")).toBe(false);
+    expect(commentIsHold("Please re-verify; this was Held: earlier")).toBe(false);
   });
 });
 

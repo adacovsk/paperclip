@@ -35,6 +35,7 @@ import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js"
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import {
+  commentIsHold,
   commentWakesAssignee,
   resolveSubtaskWakeTarget,
   summarizeOpenChildren,
@@ -1626,7 +1627,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
           assigneeOwnsOpenChild: summarizeOpenChildren(await svc.openChildren(currentIssue.id), assigneeId)
             .assigneeOwnsOtherOpenChild,
         });
-      const skipWake = selfComment || isClosed || parkedOnAnotherStage;
+      const skipWake = selfComment || isClosed || parkedOnAnotherStage || commentIsHold(req.body.body ?? "");
       if (assigneeId && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
