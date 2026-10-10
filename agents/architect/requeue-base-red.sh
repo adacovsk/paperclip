@@ -107,9 +107,12 @@ for marker in "$S"/*.base-red; do
   # The comment says what resolved the block, as the Coordinator's unblock rule
   # requires of any cleared `blocked`. It goes in its own POST: a comment field
   # beside a status PATCH fails the whole write.
+  # The comment goes in while the task is unassigned: posted after the
+  # reassignment it wakes the assignee a second time, and that run only reads
+  # the comment and exits (half of all requeue-driven Architect runs were that).
   if api PATCH "/issues/$id" '{"status":"todo","assigneeAgentId":null}' >/dev/null \
+     && { api POST "/issues/$id/comments" "{\"body\":\"Requeued by requeue-base-red.sh: this was blocked on breakage already on main (origin/main $sha). origin/main is now $MAIN, so the stale result was deleted and the verify re-dispatched; the relaunch rebases onto it.\"}" >/dev/null || true; } \
      && api PATCH "/issues/$id" "{\"assigneeAgentId\":\"$assignee\"}" >/dev/null; then
-    api POST "/issues/$id/comments" "{\"body\":\"Requeued by requeue-base-red.sh: this was blocked on breakage already on main (origin/main $sha). origin/main is now $MAIN, so the stale result was deleted and the verify re-dispatched; the relaunch rebases onto it.\"}" >/dev/null || true
     echo "$task: requeued $esc (base-red $sha, main now $MAIN)"
   else
     echo "$task: cleared; re-dispatch of $esc FAILED — re-check its status and assignee"
