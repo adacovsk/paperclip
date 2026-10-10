@@ -34,7 +34,11 @@ import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
-import { commentWakesAssignee, resolveSubtaskWakeTarget } from "../services/subtask-wake-target.js";
+import {
+  commentWakesAssignee,
+  resolveSubtaskWakeTarget,
+  summarizeOpenChildren,
+} from "../services/subtask-wake-target.js";
 import { stageDispatcherIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
@@ -1198,12 +1202,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       if (statusChangedToDone) {
         try {
           const parent = await svc.getById(issue.parentId!);
-          const otherOpenAssignees = parent ? await svc.openChildAssignees(parent.id, issue.id) : [];
+          const otherOpenChildren = parent ? await svc.openChildren(parent.id, issue.id) : [];
           const target = resolveSubtaskWakeTarget({
             parentStatus: parent?.status ?? null,
-            hasOtherOpenChild: otherOpenAssignees.length > 0,
-            assigneeOwnsOtherOpenChild:
-              Boolean(parent?.assigneeAgentId) && otherOpenAssignees.includes(parent!.assigneeAgentId),
+            ...summarizeOpenChildren(otherOpenChildren, parent?.assigneeAgentId ?? null),
           });
           const wakeTargetAgentId =
             target.kind === "none"
@@ -1621,7 +1623,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
         currentIssue.status === "in_review" &&
         !commentWakesAssignee({
           status: currentIssue.status,
-          assigneeOwnsOpenChild: (await svc.openChildAssignees(currentIssue.id)).includes(assigneeId),
+          assigneeOwnsOpenChild: summarizeOpenChildren(await svc.openChildren(currentIssue.id), assigneeId)
+            .assigneeOwnsOtherOpenChild,
         });
       const skipWake = selfComment || isClosed || parkedOnAnotherStage;
       if (assigneeId && (reopened || !skipWake)) {

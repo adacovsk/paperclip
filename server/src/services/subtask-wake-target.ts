@@ -32,12 +32,13 @@ export function resolveSubtaskWakeTarget(input: {
   /** The parent task's status, or `null` when the parent row is missing. */
   parentStatus: string | null;
   /**
-   * Whether the parent still has a child that is neither `done` nor `cancelled`,
-   * *excluding* the subtask that just completed. "Is anyone still working?"
+   * Whether the parent still has a live child, *excluding* the subtask that just
+   * completed. "Is anyone still working?" Compute it with `summarizeOpenChildren`,
+   * which also decides what "live" means.
    */
   hasOtherOpenChild: boolean;
   /**
-   * Whether one of those other open children is assigned to the parent's own
+   * Whether one of those other live children is assigned to the parent's own
    * assignee. Only meaningful when `hasOtherOpenChild` is true.
    */
   assigneeOwnsOtherOpenChild: boolean;
@@ -100,4 +101,46 @@ export function commentWakesAssignee(input: {
   assigneeOwnsOpenChild: boolean;
 }): boolean {
   return !(input.status === "in_review" && !input.assigneeOwnsOpenChild);
+}
+
+/** One sibling or child row, as the wake gates need to read it. */
+export interface OpenChild {
+  assigneeAgentId: string | null;
+  status: string;
+}
+
+/**
+ * Reduce a parent's non-terminal children to the two facts the wake gates ask:
+ * is anyone still working under this parent, and is that someone the parent's
+ * own assignee?
+ *
+ * A child owned by the parent's assignee and parked `in_review` counts as
+ * neither. It is the same shape as the parent itself: that agent's stage on it
+ * is finished, and the next move belongs to whoever owns the next stage or the
+ * merge, never to its owner. Counting it as "the assignee owns another open
+ * child" sent every stage completion under such a parent to the Worker — a
+ * follow-up or rebase sibling sitting parked beside a Verify was enough —
+ * where it re-read a branch whose work was already committed and exited.
+ * Counting it as "someone is still working" would suppress the Coordinator
+ * wake the parked pair is waiting on.
+ *
+ * `in_review` on a child owned by *another* agent is left counted: an
+ * Architect's Verify sits `in_review` while its build is in flight, and its
+ * own completion is the wake that moves the parent.
+ */
+export function summarizeOpenChildren(
+  children: readonly OpenChild[],
+  parentAssigneeId: string | null,
+): { hasOtherOpenChild: boolean; assigneeOwnsOtherOpenChild: boolean } {
+  const live = children.filter(
+    (child) =>
+      child.status !== "done" &&
+      child.status !== "cancelled" &&
+      !(parentAssigneeId !== null && child.assigneeAgentId === parentAssigneeId && child.status === "in_review"),
+  );
+  return {
+    hasOtherOpenChild: live.length > 0,
+    assigneeOwnsOtherOpenChild:
+      parentAssigneeId !== null && live.some((child) => child.assigneeAgentId === parentAssigneeId),
+  };
 }

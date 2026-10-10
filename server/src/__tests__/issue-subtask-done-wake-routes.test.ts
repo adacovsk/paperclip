@@ -24,7 +24,7 @@ const ARCHITECT_ID = "55555555-5555-4555-8555-555555555555";
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   update: vi.fn(),
-  openChildAssignees: vi.fn(),
+  openChildren: vi.fn(),
   findMentionedAgents: vi.fn(),
 }));
 
@@ -113,13 +113,13 @@ async function flushWakes() {
 
 async function markChildDone(
   parentStatus: "todo" | "in_review" | "done",
-  otherOpenChildAssignees: Array<string | null>,
+  otherOpenChildren: Array<{ assigneeAgentId: string | null; status: string }>,
 ) {
   mockIssueService.getById.mockImplementation(async (id: string) =>
     id === PARENT_ID ? parent(parentStatus) : child("todo"),
   );
   mockIssueService.update.mockImplementation(async () => child("done"));
-  mockIssueService.openChildAssignees.mockResolvedValue(otherOpenChildAssignees);
+  mockIssueService.openChildren.mockResolvedValue(otherOpenChildren);
 
   const res = await request(createApp()).patch(`/api/issues/${CHILD_ID}`).send({ status: "done" });
   expect(res.status).toBe(200);
@@ -147,7 +147,7 @@ describe("subtask-completion wake on the REST path", () => {
   });
 
   it("still wakes the parent assignee when it owns another open child", async () => {
-    const calls = await markChildDone("in_review", [WORKER_ID]);
+    const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status: "todo" }]);
     expect(calls.map(([agentId]) => agentId)).toEqual([WORKER_ID]);
   });
 
@@ -155,8 +155,16 @@ describe("subtask-completion wake on the REST path", () => {
     // A Reviewer finishing while the Architect's Verify is still open: the Worker
     // assigned to the parent has nothing to do, and the Verify's own completion is
     // the wake that moves the parent.
-    const calls = await markChildDone("in_review", [ARCHITECT_ID]);
+    const calls = await markChildDone("in_review", [{ assigneeAgentId: ARCHITECT_ID, status: "in_review" }]);
     expect(calls).toHaveLength(0);
+  });
+
+  it("redirects to the Coordinator when the assignee's only other child is parked in_review", async () => {
+    // A Verify finishing beside the Worker's own follow-up subtask, which is
+    // finished and parked. That sibling is not live work for the Worker, so it
+    // neither routes the wake to the Worker nor holds it as "someone is working".
+    const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status: "in_review" }]);
+    expect(calls.map(([agentId]) => agentId)).toEqual([COORDINATOR_ID]);
   });
 
   it("wakes nobody when the parent is already done", async () => {
