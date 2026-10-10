@@ -922,22 +922,20 @@ export function issueService(db: Db) {
     },
 
     /**
-     * "Is anyone still working on this parent?" — whether the parent has a child
-     * that is neither `done` nor `cancelled`, excluding the one that just
-     * finished (its own status may not be committed yet on the caller's path).
+     * The parent's children that are neither `done` nor `cancelled`, optionally
+     * excluding one child (the one that just completed — its own status may not
+     * be committed yet on the caller's path). One row per open child; an
+     * unassigned child carries `assigneeAgentId: null`.
      *
-     * Feeds `resolveSubtaskWakeTarget`. Exists as a service method because the
-     * REST mutation path has no table access of its own, and the wake decision
-     * must not differ between that path and the run executor's.
+     * Feeds `summarizeOpenChildren` → `resolveSubtaskWakeTarget`. Exists as a
+     * service method because the REST mutation path has no table access of its
+     * own, and the wake decision must not differ between that path and the run
+     * executor's. Status is returned, not just the assignee, because whether a
+     * child is live depends on it.
      */
-    /**
-     * Assignees of the parent's children that are neither done nor cancelled,
-     * optionally excluding one child (the one that just completed). One entry per
-     * open child; an unassigned child contributes `null`.
-     */
-    openChildAssignees: async (parentId: string, excludeIssueId?: string) => {
-      const rows = await db
-        .select({ assigneeAgentId: issues.assigneeAgentId })
+    openChildren: async (parentId: string, excludeIssueId?: string) => {
+      return db
+        .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
         .from(issues)
         .where(
           and(
@@ -946,7 +944,6 @@ export function issueService(db: Db) {
             notInArray(issues.status, ["done", "cancelled"]),
           ),
         );
-      return rows.map((row) => row.assigneeAgentId);
     },
 
     getByIdentifier: async (identifier: string) => {

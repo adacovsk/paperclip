@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { commentWakesAssignee, resolveSubtaskWakeTarget } from "../services/subtask-wake-target.js";
+import {
+  commentWakesAssignee,
+  resolveSubtaskWakeTarget,
+  summarizeOpenChildren,
+} from "../services/subtask-wake-target.js";
 
 describe("resolveSubtaskWakeTarget", () => {
   it("suppresses the wake when the parent is already terminal", () => {
@@ -89,5 +93,57 @@ describe("commentWakesAssignee", () => {
     for (const status of ["todo", "in_progress", "backlog", "blocked"]) {
       expect(commentWakesAssignee({ status, assigneeOwnsOpenChild: false })).toBe(true);
     }
+  });
+});
+
+describe("summarizeOpenChildren", () => {
+  const WORKER = "worker";
+  const ARCHITECT = "architect";
+
+  it("does not count the parent assignee's own child parked in_review", () => {
+    // The Worker's follow-up sibling is finished and parked beside the Verify
+    // that just completed. Counting it routed the wake to the Worker.
+    expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "in_review" }], WORKER)).toEqual({
+      hasOtherOpenChild: false,
+      assigneeOwnsOtherOpenChild: false,
+    });
+  });
+
+  it("routes a Verify completion beside a parked own sibling to the Coordinator", () => {
+    const summary = summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "in_review" }], WORKER);
+    expect(resolveSubtaskWakeTarget({ parentStatus: "in_review", ...summary }).kind).toBe("coordinator");
+  });
+
+  it("counts the parent assignee's own child while it is live", () => {
+    for (const status of ["todo", "in_progress", "blocked", "backlog"]) {
+      expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status }], WORKER)).toEqual({
+        hasOtherOpenChild: true,
+        assigneeOwnsOtherOpenChild: true,
+      });
+    }
+  });
+
+  it("keeps another agent's in_review child counted as someone still working", () => {
+    // An Architect's Verify sits in_review while its build is in flight.
+    expect(summarizeOpenChildren([{ assigneeAgentId: ARCHITECT, status: "in_review" }], WORKER)).toEqual({
+      hasOtherOpenChild: true,
+      assigneeOwnsOtherOpenChild: false,
+    });
+  });
+
+  it("ignores terminal children and handles an unassigned parent", () => {
+    expect(
+      summarizeOpenChildren(
+        [
+          { assigneeAgentId: WORKER, status: "done" },
+          { assigneeAgentId: null, status: "cancelled" },
+        ],
+        WORKER,
+      ),
+    ).toEqual({ hasOtherOpenChild: false, assigneeOwnsOtherOpenChild: false });
+    expect(summarizeOpenChildren([{ assigneeAgentId: null, status: "in_review" }], null)).toEqual({
+      hasOtherOpenChild: true,
+      assigneeOwnsOtherOpenChild: false,
+    });
   });
 });

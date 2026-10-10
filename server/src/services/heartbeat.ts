@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, gte, inArray, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, type BillingType } from "@paperclipai/shared";
 import {
@@ -32,10 +32,10 @@ import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
-import { shouldWakeNextMover } from "./stage-completion-wake.js";
+import { branchAdvancedDuringRun, parseLsRemoteHead, shouldWakeNextMover } from "./stage-completion-wake.js";
 import { extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
 import { logActivity } from "./activity-log.js";
-import { resolveSubtaskWakeTarget } from "./subtask-wake-target.js";
+import { resolveSubtaskWakeTarget, summarizeOpenChildren } from "./subtask-wake-target.js";
 import { stageDispatcherIdFor } from "./coordinator-lookup.js";
 import { usageLimitFromResult } from "./usage-limit.js";
 import { isSweepWakeReason, wakeCoalesceScope } from "./sweep-wake-scope.js";
@@ -142,6 +142,33 @@ const STALE_QUEUED_EXECUTION_LOCK_MS = Math.max(
 );
 
 /**
+ * Read the head of `branch` on origin from `repo`.
+ *
+ * `{ sha }` on a successful listing (`sha: null` when the branch is absent,
+ * which `--exit-code` reports as exit 2), `null` when git could not answer.
+ * Callers that need to fail closed treat both `null` and `sha: null` as "not on
+ * origin"; the stage-completion wake treats `null` as "unknown".
+ */
+async function readOriginBranchHead(
+  repo: string,
+  branch: string,
+  onMiss?: (exitCode: number | undefined) => void,
+): Promise<{ sha: string | null } | null> {
+  try {
+    const { stdout } = await execFile("git", ["-C", repo, "ls-remote", "--exit-code", "--heads", "origin", branch], {
+      timeout: 30_000,
+    });
+    const sha = parseLsRemoteHead(stdout, branch);
+    if (sha === null) onMiss?.(2);
+    return { sha };
+  } catch (err: unknown) {
+    const exitCode = (err as { code?: number }).code;
+    onMiss?.(exitCode);
+    return exitCode === 2 ? { sha: null } : null;
+  }
+}
+
+/**
  * Chain-wake candidate guard: an `in_review` task is selectable only while a
  * non-terminal child stage of it is assigned to *this* agent.
  *
@@ -177,6 +204,14 @@ const STALE_QUEUED_EXECUTION_LOCK_MS = Math.max(
  * `num_turns <= 1`, while a Worker no-op checks out the branch and runs git
  * before reporting, so it always clears that bar. A child's own
  * `subtask.completed` callback is what legitimately re-wakes these parents.
+ *
+ * An own child that is itself parked `in_review` is not a live stage either:
+ * it is the same finished-and-waiting shape as the parent, one level down. A
+ * Worker's follow-up or rebase subtask parks that way under its in_review
+ * parent, and counting it kept the parent selectable — one such parent was
+ * chain-woken five times in an hour, each run reporting the task already did
+ * everything it asked. `summarizeOpenChildren` applies the same rule to the
+ * subtask-completion wake.
  */
 
 export function inReviewOnlyWhenOwnStageIsLive(agentId: string) {
@@ -192,7 +227,7 @@ export function inReviewOnlyWhenOwnStageIsLive(agentId: string) {
       OR NOT EXISTS (
         SELECT 1 FROM ${issues} AS own_child
         WHERE own_child.parent_id = ${issues.id}
-          AND own_child.status NOT IN ('done', 'cancelled')
+          AND own_child.status NOT IN ('done', 'cancelled', 'in_review')
           AND own_child.assignee_agent_id = ${agentId}
       )
     )
@@ -2988,6 +3023,13 @@ export function heartbeatService(db: Db) {
       // in_progress → done on run success (see auto-done block below).
       // Only transitions from `todo` — leaves `in_review` (Architect verify) alone,
       // since in_review already means "review in progress".
+      //
+      // A task already parked `in_review` is a re-dispatched stage. Its exit
+      // cannot change the status, so the stage-completion wake below decides
+      // whether it advanced by comparing the task branch on origin before and
+      // after the run; take the "before" reading here. Other statuses skip the
+      // git call: their exit is judged by the status transition.
+      let preRunOriginHead: { sha: string | null } | null = null;
       if (!agentHasPaperclipSkill && issueId) {
         const runningIssue = await issuesSvc.getById(issueId);
         if (runningIssue && runningIssue.status === "todo") {
@@ -2995,6 +3037,12 @@ export function heartbeatService(db: Db) {
           logger.info(
             { issueId, agentId: agent.id, runId: run.id },
             "auto-advanced task to in_progress for agent without paperclip skill",
+          );
+        }
+        if (runningIssue && runningIssue.status === "in_review") {
+          preRunOriginHead = await readOriginBranchHead(
+            executionWorkspace.worktreePath ?? executionWorkspace.cwd,
+            executionWorkspace.branchName ?? `task/${runningIssue.identifier}`,
           );
         }
       }
@@ -3383,23 +3431,15 @@ export function heartbeatService(db: Db) {
               const branchToCheck =
                 executionWorkspace.branchName ?? `task/${existingIssue.identifier}`;
               const repoForLsRemote = executionWorkspace.worktreePath ?? executionWorkspace.cwd;
-              let branchOnOrigin = false;
-              try {
-                await execFile(
-                  "git",
-                  ["-C", repoForLsRemote, "ls-remote", "--exit-code", "--heads", "origin", branchToCheck],
-                  { timeout: 30_000 },
-                );
-                branchOnOrigin = true;
-              } catch (err: unknown) {
-                const exitCode = (err as { code?: number }).code;
+              const postRunOriginHead = await readOriginBranchHead(repoForLsRemote, branchToCheck, (exitCode) =>
                 logger.warn(
                   { issueId, agentId: agent.id, role: agent.role, runId: run.id, branch: branchToCheck, exitCode },
                   exitCode === 2
                     ? "Layer-2 masquerade guard: task branch is not on origin — holding in_review for re-dispatch"
                     : "Layer-2 masquerade guard: could not confirm task branch on origin (git error) — failing closed, holding in_review",
-                );
-              }
+                ),
+              );
+              const branchOnOrigin = postRunOriginHead !== null && postRunOriginHead.sha !== null;
 
               // Pushed is not landed. A Worker pushes on every successful run
               // without merging anything, so `branchOnOrigin` alone marked tasks
@@ -3491,6 +3531,7 @@ export function heartbeatService(db: Db) {
               // instead of the next scheduled sweep. No second wake is added: the
               // comment goes through the service, not the comment route, so it
               // fires no mention or assignee wakes of its own either.
+              let escalatedToBlocked = false;
               const runReport = planNoSkillRunReport({
                 role: agent.role,
                 currentStatus: existingIssue.status,
@@ -3519,6 +3560,7 @@ export function heartbeatService(db: Db) {
                   });
                   if (runReport.block) {
                     await issuesSvc.update(issueId, { status: "blocked" });
+                    escalatedToBlocked = true;
                     await logActivity(db, {
                       companyId: agent.companyId,
                       actorType: "agent",
@@ -3558,9 +3600,12 @@ export function heartbeatService(db: Db) {
               // Coordinator — it fires on the same exits the branch above has just
               // finished logging as having advanced nothing.
               let wakeTargetAgentId: string | null = null;
+              const branchAdvanced = branchAdvancedDuringRun(preRunOriginHead, postRunOriginHead);
               const wakeNextMover = shouldWakeNextMover({
                 currentStatus: existingIssue.status,
                 nextStatus,
+                branchAdvanced,
+                escalated: escalatedToBlocked,
               });
               if (!wakeNextMover) {
                 logger.info(
@@ -3569,32 +3614,23 @@ export function heartbeatService(db: Db) {
                     agentId: agent.id,
                     runId: run.id,
                     heldStatus: existingIssue.status,
+                    branchAdvanced,
                   },
-                  "suppressed stage-completion wake (nothing advanced and the status is outside the promotion allowlist)",
+                  existingIssue.status === "in_review"
+                    ? "suppressed stage-completion wake (the task stayed in_review and its branch on origin did not move — the stage is still in flight)"
+                    : "suppressed stage-completion wake (nothing advanced and the status is outside the promotion allowlist)",
                 );
               } else if (existingIssue.parentId) {
                 const parentIssue = await issuesSvc.getById(existingIssue.parentId);
                 // "Is anyone still working on this parent?" — every sibling that
                 // is neither done nor cancelled, excluding the child that just
                 // finished (its status may not be committed yet, and it is the
-                // one thing we know is complete).
-                const otherOpenChildren = await db
-                  .select({ assigneeAgentId: issues.assigneeAgentId })
-                  .from(issues)
-                  .where(
-                    and(
-                      eq(issues.parentId, existingIssue.parentId),
-                      ne(issues.id, issueId),
-                      notInArray(issues.status, ["done", "cancelled"]),
-                    ),
-                  );
-                const parentAssigneeId = parentIssue?.assigneeAgentId ?? null;
+                // one thing we know is complete). Same read and same reduction
+                // as the REST path, so the two cannot disagree.
+                const otherOpenChildren = await issuesSvc.openChildren(existingIssue.parentId, issueId);
                 const target = resolveSubtaskWakeTarget({
                   parentStatus: parentIssue?.status ?? null,
-                  hasOtherOpenChild: otherOpenChildren.length > 0,
-                  assigneeOwnsOtherOpenChild:
-                    parentAssigneeId !== null &&
-                    otherOpenChildren.some((child) => child.assigneeAgentId === parentAssigneeId),
+                  ...summarizeOpenChildren(otherOpenChildren, parentIssue?.assigneeAgentId ?? null),
                 });
                 if (target.kind === "none") {
                   logger.info(

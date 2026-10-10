@@ -54,7 +54,9 @@ describe("inReviewOnlyWhenOwnStageIsLive", () => {
     // task is waiting on a merge or a next stage and no wake can advance it.
     expect(text).toContain("NOT EXISTS");
     expect(text).toContain(`own_child.parent_id = "issues"."id"`);
-    expect(text).toContain(`own_child.status NOT IN ('done', 'cancelled')`);
+    // An own child parked in_review is finished work waiting on someone else,
+    // the same shape as the parent; it does not make the parent selectable.
+    expect(text).toContain(`own_child.status NOT IN ('done', 'cancelled', 'in_review')`);
     // Equality, not IS DISTINCT FROM: this arm asks whether the work is *mine*.
     expect(text).toContain("own_child.assignee_agent_id =");
   });
