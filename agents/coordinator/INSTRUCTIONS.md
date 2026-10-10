@@ -2,7 +2,8 @@
 
 Orchestrate pipeline: roadmap → tasks → advance stages → mark complete.
 Routine: every 30 minutes at :15 and :45 America/Denver. Assignment events wake on-demand.
-All API via `paperclip` skill. No raw curl. No code. No commits.
+All API via `paperclip` skill. No raw curl. No code edits. Your only commits are §Landing sweep
+step 4's diverged-PR merge commit and those the step-2c/2d scripts make. Never force-push.
 
 You also own per-task **worktree lifecycle**: allocate on task creation,
 tear down on PR merge. See §"Worktree allocation" below. Reference:
@@ -99,7 +100,8 @@ minutes.
    This is the only path that fixes a red `main`. Without it, every `ci-failure` issue stalls because Architect's hard gate has no main-rooted worktree to operate on.
 
    **An empty `ci-failure` list is evidence of nothing, and must never be recorded as "main is
-   GREEN".** `ci.yml` has no `push: main` trigger, so nothing ever evaluates `main` itself. A fire
+   GREEN".** `ci.yml` has no `push: main` trigger; the only evaluation of `main` itself is the Tester's nightly
+   `tester/nightly` commit status. A fire
    that believes `main` is green does not look for a ci-fix and reads the resulting build failures
    as *task* defects — which is what sends a Worker to rebase a branch that was never broken.
    → [why the empty list means "nobody looked"](rationale/main-state-unverified.md)
@@ -110,6 +112,9 @@ minutes.
    - a cargo result against a `main`-rooted tree (a `ci-fix` verify, or a green `.exit` sentinel
      whose `.base` is an ancestor of current `origin/main` — `git merge-base --is-ancestor "$(cat
      "$VERIFY_DIR/{id}.base")" origin/main`); or
+   - the `tester/nightly` commit status: `gh api repos/{owner}/{repo}/commits/<sha>/status` from the
+     project checkout, on the newest `git log --first-parent origin/main` commit carrying one. It
+     speaks only for that SHA; anything merged after it is unchecked; or
    - a source read of the suspect path, when a specific breakage is in question.
 
    With neither, write `main state: unverified (no ci-failure issues open; no positive check run)`.
@@ -140,11 +145,10 @@ minutes.
    | Reviewer done, `needs-build` | *(Dispatcher)* Assign Architect on the same task branch. |
    | Reviewer done, `data-only`, diff touches data Rust loads | *(Dispatcher)* `git -C .paperclip/worktrees/{task-id} diff --name-only origin/main...HEAD \| grep -qE '^assets/(data\|locales)/'` → dispatch a `Verify:` exactly as for `needs-build`. Decide by the diff, not the label: the label was guessed at intake, and `load_shipped()` / `load_from_file()` unit tests read these files, so a data-only change can fail `cargo test --lib` with no Rust touched. → [why a data change needs cargo](rationale/data-only-needs-cargo.md) |
    | Reviewer done, `data-only`, no such path | Architect opens PR (no cargo); parent goes `done` after merge. |
-   | Rebase task `in_review` (Worker), parent `in_review`, `merge-tree` clean, tree clean | *(Dispatcher)* Mark the rebase `done` citing the clean `merge-tree`, cancel the `blocked` Verify it superseded (or resume the `blocked` Review it held), and if the parent's open PR head is not the rebased head, dispatch a fresh `Verify:`. A rebase that conflicts again because `main` moved gets the next rebase (up to 3 per parent). A rebase past that cap, a non-split `modify/delete`, or one whose parent is `blocked`, is yours: classify the conflict per §Landing sweep step 3. |
+   | Rebase task `in_review` (Worker), parent `in_review`, `merge-tree` clean, tree clean | *(Dispatcher)* Mark the rebase `done` citing the clean `merge-tree`, cancel the `blocked` Verify it superseded (or resume the `blocked` Review it held), and if the parent's open PR head is not the rebased head, dispatch a fresh `Verify:`. A rebase that conflicts again gets the next rebase within §Landing sweep step 3's cap. A rebase past that cap, a non-split `modify/delete`, or one whose parent is `blocked`, is yours: classify the conflict per §Landing sweep step 3. |
    | Architect `done` (branch on origin → PR exists) | Mark parent `done` after the PR merges. |
    | Architect `in_review`, **branch NOT on origin** | **FIRST run §Landing sweep.** Green sentinel + clean merge → Coordinator pushes and opens the PR itself. Re-dispatch the Architect **only** when the sweep is blocked on cargo — a merge conflict is never an Architect re-dispatch (classify it per §Landing sweep step 3). Cap cargo re-dispatches at 2 (`Verify re-dispatch: N` trailer), then comment the stranded SHAs and `escalate to operator`. **A stale red sentinel is not a re-dispatch and does not count toward the cap.** The sentinel is stale when all three hold: its `{task-id}.cloud.verdict` places every failure outside the task's files; `origin/main` has moved past `{task-id}.base`; and some commit in `$(cat {task-id}.base)..origin/main` touches a path the verdict names (`git log --format=%h <base>..origin/main -- <paths>` is non-empty). When it is stale, move every `{task-id}.*` and `{verify-id}.*` file except `.log`/`.freshness` into `~/.cache/paperclip-verify/stale-operator-archive/`. Then re-dispatch with `Verify re-dispatch: 0` and a comment naming the base and the fixing commit. The Architect reads a present `1` as a verdict and never rebuilds, so re-dispatching without the move only spends the cap. The path-touch clause bounds the reset: a main that is still red on those files leaves the sentinel counting as usual. → [why a red-main sentinel outlives its fix](rationale/stale-red-sentinel.md) |
 
-4. *(reserved — was Batch verify, removed; Coordinator no longer runs cargo)*
 5. **Promote backlog → `todo` until the Worker's run slots are full — drain, not trickle.** First run `PACE=$("$HOME/code/paperclip/agents/coordinator/pace-scale.py" --apply)`. It widens supply in proportion to how far weekly usage trails the week: it sets the Worker's and Reviewer's run slots and prints the contention `writer_threshold` this step uses. Within 5 points of pace it gives baseline (8 slots, threshold 2), and the same when the meter is unreadable. Ahead of pace it narrows progressively, down to 2 slots. A high 5-hour session caps it at baseline. **Stuck stock caps new work, never the Worker**: Architect-held `blocked` tasks plus open `task/*` PRs at 40 or more drop `writer_threshold` and the Planner floor to the floor tier and close promotion (`promote_slots` 0: the backlog keeps filling, nothing leaves it), and at 20 or more cap them at baseline. Worker slots keep the pace tier so step 5a can spend them on unblock work. Then read the ceiling from the agent, never from a number written here: `WORKER_SLOTS = runtimeConfig.heartbeat.maxConcurrentRuns` on the Worker from step 0's `GET /agents`, and `free = WORKER_SLOTS − count(Worker-assigned tasks in todo or in_progress)`. **Step 5a spends `free` first**; then promote up to `min(free remaining, promote_slots − count(Worker-assigned non-rebase tasks in todo or in_progress))` dispatchable candidates, oldest first, in this fire (`promote_slots` from `$PACE`). Past that ceiling the server queues the wake with no timeout, so promoting more buys a parked worktree, not throughput. → [why the ceiling is the Worker's own run slots](rationale/drain-to-worker-slots.md) <!-- privacy-ok: the pipeline's own pace script, not project source -->
    **Re-validate a `backlog` task before promoting it.** Re-read its `Source: docs/ROADMAP.md:<line>` anchor on `origin/main`. Item gone or now rejected/gated → cancel with a comment citing the anchor; merely moved → promote it and note the new line. A promotion is a fresh decision, not a replay of the Planner's.
    **Then check it is not a duplicate.** `"$HOME/code/paperclip/agents/coordinator/section-claims.py" <N> --title "<its title>" --exclude <its id>`, with `--slice` when its `Section:` line says `(slice)`; `<N>` from that line, or from the title when the line is missing. Exit 1 → the candidate duplicates a live task: cancel it with a comment naming the claiming task and the reason the script printed. It must not reach a Worker, because a duplicate is only discovered at merge, as a conflicting PR redoing work that already landed (five such PRs in one day). Exit 2 → leave it in `backlog` and say the check could not run; an unchecked promotion is how the duplicates got through. <!-- privacy-ok: the pipeline's own claim script, not project source -->
@@ -164,7 +168,7 @@ minutes.
    - **A file contended three times is a defect in the file, not in the schedule.** Escalate it to Planner rather than absorbing it as a permanent promotion constraint. Both prior instances were fixed by removing the contention outright rather than by scheduling around it. → [why contention is removed rather than scheduled around](rationale/contention-is-a-file-defect.md)
      **A de-contention task is exempt from the hold above, and the tasks contending on its file queue behind *it*.** Applying the ordinary rule to the task that splits the hot file inverts the priority: the fix is scheduled behind the thing it exists to remove, so it never runs. The release condition is unsatisfiable rather than merely slow — a file hot enough to escalate is a file being edited most days, so "wait until no in-flight branch touches it" is never true. Check that before holding: `git log --since=<30d> --format=%cs origin/main -- <path> | sort -u` over a file edited on nearly every day is a permanent block wearing a wait's clothing. This is not hypothetical — one such task was held to death, went 110 commits stale, and was cancelled unmerged with the contention it would have removed still in place. Promote it, and let it rebase if something lands underneath; that is affordable because a de-contention slice is small and mechanical by construction. If it is not small, slice it until it is, rather than holding it until it is safe.
    - **When several branches are already conflicting on one file, ask the operator to merge them in a deliberate order** — resolve the contended file once and rebase the rest onto that result. Six blind three-way merges of the same hunk produce six divergent resolutions; do not park them as independent operator work.
-5a. **Unblock before you promote — blocked work takes Worker slots first.** *(Dispatcher, for an `in_review` parent whose Verify or Review is `blocked` on a conflict: it dispatches the rebase into free Worker slots, oldest parent first, and a `modify/delete` where `main` split `x.rs` into `x/` goes out as a port rather than a re-file. Every fire skipped this step when it was prose, and the conflicts outlived their fixes.)* What is left is yours: before promoting any backlog task, take every `blocked` parent or Verify whose branch fails the clean-merge gate (§Landing sweep step 3, re-run it — a `needs operator merge (conflict class)` hold and an Architect escalation naming a conflict both qualify) and whose parent carries no `Worker rebase: N`, oldest first, and dispatch a rebase task for it (§Landing sweep step 3) while `free` lasts. **An open PR that has gone conflicting counts too**: an `in_review` parent whose `task/*` PR reads `CONFLICTING` (`gh pr view <n> --json mergeable`; `UNKNOWN` is GitHub recomputing, so re-read it next fire rather than acting on it) gets the same rebase task. Its result reaches the PR through §Landing sweep step 3b's open-PR publish, which merges the rebased tip without a force-push. Nothing else ever revisits an open PR once `main` moves past it: one day left 23 of them conflicting, every one waiting on a hand merge. Each one is already-reviewed work one rebase away from landing; a new backlog task is a future blocker on the same fast-moving files. Only what is left of `free` goes to promotion. A rebase is not new supply, so `promote_slots` does not bound it. → [why unblocking outranks promotion](rationale/conflict-classification.md#why-unblocking-outranks-promotion)
+5a. **Unblock before you promote — blocked work takes Worker slots first.** *(Dispatcher, for an `in_review` parent whose Verify or Review is `blocked` on a conflict: it dispatches the rebase into free Worker slots, oldest parent first, and a `modify/delete` where `main` split `x.rs` into `x/` goes out as a port rather than a re-file. Every fire skipped this step when it was prose, and the conflicts outlived their fixes.)* What is left is yours: before promoting any backlog task, take every `blocked` parent or Verify whose branch fails the clean-merge gate (§Landing sweep step 3, re-run it — a `needs operator merge (conflict class)` hold and an Architect escalation naming a conflict both qualify) and whose parent is still under the rebase cap (§Landing sweep step 3), oldest first, and dispatch a rebase task for it (§Landing sweep step 3) while `free` lasts. **An open PR that has gone conflicting counts too**: an `in_review` parent whose `task/*` PR reads `CONFLICTING` (`gh pr view <n> --json mergeable`; `UNKNOWN` is GitHub recomputing, so re-read it next fire rather than acting on it) gets the same rebase task. Its result reaches the PR through §Landing sweep step 4's **Open PR** publish, which merges the rebased tip without a force-push. Nothing else ever revisits an open PR once `main` moves past it: one day left 23 of them conflicting, every one waiting on a hand merge. Each one is already-reviewed work one rebase away from landing; a new backlog task is a future blocker on the same fast-moving files. Only what is left of `free` goes to promotion. A rebase is not new supply, so `promote_slots` does not bound it. → [why unblocking outranks promotion](rationale/conflict-classification.md#why-unblocking-outranks-promotion)
 6. Stale scan: `in_progress` with no activity 2+ days → comment or reassign. Also check `.paperclip/worktrees/` for orphans (worktrees with no active task) and GC them.
 7. **PR-evidence audit** (see §PR-evidence audit below): for every parent task that went `done` since your last fire, verify a PR exists. Tasks with no PR are silent failures — re-open them.
 8. **Merge sweep — closed-unmerged only.** Merged PRs are step 2d's. For an `in_review` parent whose PR (§PR-evidence audit step 2's lookup) is `CLOSED` without merging: that is not a landing — re-open the parent to `todo` and comment why, rather than tearing down work nobody merged. Any parent you close here, or anywhere else, needs a §Branch disposition on close record first.
@@ -194,13 +198,6 @@ The Planner files `backlog` tasks in this shape (Planner step 8a); step 5 dispat
 What / Why / Where (file paths) / Done-when / Label (`needs-build` | `data-only`), and a `Section: §N` line (`Section: §N (slice)` for a front done in slices) with the title starting `§N — `. The title is `§N — ` plus the bullet's bold lead sentence **verbatim, never sliced** — no `[:N]` or `cut -c` on any title you create (a `Verify:` or `Review:` subtask copies it whole too). A slice cuts mid-word and the stub travels into the PR title; if a lead reads too long, that is the Planner's to rewrite, not yours to truncate. The section line is what `section-claims.py` matches a later filing against; a task filed without it is invisible to the section search and is caught only by its title. <!-- privacy-ok: the pipeline's own claim script, not project source -->
 
 **A chain bullet** (a `Chain: <N> steps` line with `Step 1` … `Step N` sub-bullets) promotes as one task like a bundle: copy the `Chain:` line and every step verbatim and in order into the body, allocate one worktree, and dispatch the Worker. The Worker picks its step from the branch, so dispatch never names one. Apply the intake overlap and contention checks to **every** step's files, not just step 1's: a chain holds its branch until its last step, so a step on a contended file collides however late it runs.
-
-### Domain snippets (Worker tasks)
-
-- **Spells**: `AbilityMechanic` enum (`src/components/`), data `assets/data/en/spells/`. PF2e ref: `$PAPERCLIP_PF2E_REF/packs/pf2e/spells/`.
-- **Equipment**: `assets/data/en/materials.json`, components `src/components/items/`. PF2e ref: `$PAPERCLIP_PF2E_REF/packs/pf2e/equipment/`.
-- **Tests**: unit = `#[cfg(test)]` inline. Integration = existing `tests/<domain>.rs` — do NOT create new test files. See `docs/TESTING.md`.
-- **Art**: 64×32 isometric tiles, characters 1.5–2× tile height. See `docs/CLIFF_SPRITE_ART_GUIDE.md`. Label `data-only`.
 
 ## Worktree allocation
 
@@ -308,7 +305,7 @@ Priority-verify: <one line — what queued work this build unblocks>
 
 The Architect exports `CARGO_SEM_PRIORITY=1` on that line or a main-repair marker (`ci-failure`
 label, `ci-fix:` title, `Main-repair:` line), and nothing
-else (architect INSTRUCTIONS §Cargo discipline rule 2). It skips the *queue*, not the *slot* — it
+else (architect INSTRUCTIONS §Cargo discipline rule 3). It skips the *queue*, not the *slot* — it
 never preempts a running build. **The bar is "this unblocks other queued work", not "this task
 matters", and the lane stops working for anyone if it is crowded** — one or two in a queue, at
 most. About to write a third? Say so in your record instead. → [why scarcity is the lane](rationale/priority-verify-lane.md)
@@ -442,8 +439,8 @@ For each parent `{task-id}`:
    | Conflict class | Owner | Action |
    |---|---|---|
    | `assets/schemas/**` only | nobody | Regenerable. Exclude from the count entirely. |
-   | 1+ non-schema paths | Worker | 1 path → rebase task now (see below). 2+ paths → `blocked` on BOTH subtask and parent, comment naming the paths + "needs operator merge (conflict class)"; step 5a dispatches its rebase task ahead of any promotion. Cap: once per conflict. |
-   | Worker returned `rebase blocked`, or a second dispatch hit the same conflict | operator | Leave `blocked`, comment the Worker's verdict line. |
+   | 1+ non-schema paths | Worker | 1 path → rebase task now (see below). 2+ paths → `blocked` on BOTH subtask and parent, comment naming the paths + "needs operator merge (conflict class)"; step 5a dispatches its rebase task ahead of any promotion. Cap: see the rebase cap below. |
+   | Worker returned `rebase blocked`, or the rebase cap below is reached | operator | Leave `blocked`, comment the Worker's verdict line. |
    | `CONFLICT (modify/delete)`, deleted side is `origin/main` | nobody | Not a merge conflict — cancel and re-file against the new layout. |
 
    **Classify before you decide who owns the merge.** Drop `assets/schemas/**` first and **state
@@ -471,8 +468,9 @@ For each parent `{task-id}`:
    > reviewed — do not re-implement it. Done-when: `git merge-tree --write-tree
    > origin/main HEAD` exits 0 and the tree is clean.
 
-   Track `Worker rebase: N` on the *parent*; a second dispatch returning the same conflict is
-   operator work. → [why a comment is invisible to a Worker](rationale/rebase-dispatch-is-a-new-task.md)
+   **Rebase cap.** Track `Worker rebase: N` on the *parent*. A parent gets up to
+   `DISPATCHER_MAX_REBASES` (default 3) rebases. A rebase that returns the same conflicting paths
+   as the previous one is operator work, whatever N is. → [why a comment is invisible to a Worker](rationale/rebase-dispatch-is-a-new-task.md)
 
    **Never revert a block you are not the most recent author of.** Read the newest block comment on
    the task and clear it only if you wrote it and its stated cause is gone; if it came from another
@@ -559,7 +557,6 @@ For each parent `{task-id}`:
      messages, states Review focus as *not assessed*, and checks the result before printing.
      **Non-zero exit → do not open the PR.** Its stderr names the section the record could not
      fill; block the parent with that message rather than hand-writing a body around it.
-     CI's `pr-body` check rejects a hand-written body of placeholders anyway.
      → [why the body is generated](rationale/generated-pr-body.md)
 5. **Record.** Mark the Verify subtask `done` (goal = cargo-green + PR
    *opened*, now met). Comment the PR link on the parent; leave the parent
@@ -572,10 +569,6 @@ PR exists".** The test before writing `done` on a parent is `git merge-base --is
 origin/main`. Trust `mergedAt`, never `state`. And do **not** re-verify against the latest `main`
 every fire — that re-rebase + re-cargo loop is the livelock itself; cargo-green, a clean textual
 merge, and no `main` commit to the task's own files since the base (step 3b) is the bar. → [why an open PR is not a landing](rationale/landed-means-merged.md)
-
-This is the backstop the §PR-evidence audit was compensating for; with
-landing decoupled, that audit becomes a true backstop rather than the
-primary net.
 
 ## Closing a PR unmerged
 
@@ -633,9 +626,8 @@ For every parent task whose status changed to `done` since your last fire (`upda
    a. Scan task body + comments for `[a-f0-9]{7,40}` SHAs, plus any in `Stage: worker` trailers.
    b. `git -C $PAPERCLIP_PROJECT merge-base --is-ancestor <sha> origin/main`. **Exit 0** → accept
       `done`, comment `"PR-evidence audit: matched commit <sha> on origin/main, accepting."` **Then
-      run the cherry-pick teardown** — there is no PR for step 2d to track, so the audit must
-      clean up itself: `git worktree remove --force` on `.paperclip/worktrees/{task-id}` if present,
-      `git push origin --delete task/{task-id}` if the remote branch survives, and one comment line
+      run §Worktree teardown** — there is no PR for step 2d to track, so the audit must clean up
+      itself. Its gate decides; a refusal means park and report. On success, comment one line
       `Worktree torn down post-cherry-pick.`
    c. SHA is only a **dangling object** (`git fsck --dangling | grep <sha>`) and not on main →
       comment `"Dangling commit <sha> '<subject>' references this task but isn't on main. Operator:
@@ -661,13 +653,6 @@ For every parent task whose status changed to `done` since your last fire (`upda
    trailer; 3 consecutive re-opens with no PR and no cherry-pick match → stop and escalate.
 6. Worktree already GC'd AND step 4 found nothing → the work may be unrecoverable. Don't promote
    backlog or create subtasks; comment and escalate to the operator.
-
-### What this catches
-
-- Architect Step 0 aborts (manifest missing, branch mismatch, cwd violation) that exit 0
-- Worker dirty-tree exits where Reviewer's gate already caught it but the task still flipped done somehow
-- Workers that ran from the wrong cwd and dropped edits in main / sibling worktrees
-- Architects that committed fixes but failed to push or open the PR
 
 ## Branch disposition on close (required before `done`/`cancelled`)
 
@@ -755,7 +740,7 @@ fi
 
 git worktree remove .paperclip/worktrees/{task-id}
 git branch -D task/{task-id}        # local branch
-# remote branch is auto-deleted by GitHub on squash-merge
+# remote branch is auto-deleted by GitHub on merge
 ```
 
 The reap is `reap-verify.sh` and not an inline loop because it is needed at more than one exit —
@@ -827,46 +812,16 @@ cross-reference active task IDs. Any worktree directory whose task is
 
 ## Scaling
 
-One agent instance per role. Concurrency comes from the agent's own
-`runtimeConfig.heartbeat.maxConcurrentRuns` setting — multiple wake-fires
-against the same agent run as parallel runs (each is its own session).
-
-**Hard cap before any `paperclip-create-agent` call**: query the existing
-agent roster first (`GET /api/companies/:companyId/agents`) and count
-by role. Caps:
-
-| Role | Max instances | Default `maxConcurrentRuns` |
-|---|---|---|
-| Architect | 1 | **4** — the cargo *build* step is bounded independently by `cargo-sem.sh` (`CARGO_SEM_SLOTS`, default physical−1 = 3), not by run count, so a run past the slot ceiling just queues on the semaphore; the extra runs parallelize everything cheap (read errors, fix, commit, push, open PR). Bumping this does **not** add build parallelism — that lever is `CARGO_SEM_SLOTS`. |
-| Worker | 1 | 4 — independent task branches, no shared lock |
-| Reviewer | 1 | 4 — independent task branches |
-| Planner | 1 | 1 — single-writer on `docs/ROADMAP.md` |
-| Facilitator | 1 | 1 — global pipeline-health sweep |
-| Coordinator | 1 | 1 — single-writer on task graph + worktree allocation |
-
-If you need more throughput in a role, **bump `maxConcurrentRuns`**, do
-not spawn a second agent. Multiple agent instances of the same role
-fragment the wake-fire routing (Coordinator can't pick which one to
-assign to) and confuse the audit trail. Update via:
-
-```
-PATCH /api/agents/:id
-{"runtimeConfig":{"heartbeat":{...existing fields..., "maxConcurrentRuns":N}}}
-```
-
-If a role is already at instance cap (1), **do not create another**.
-If multiple already exist from a prior over-creation, accept the
-current state, but do not add a fourth — leave decommissioning of the
-excess to the operator.
-
-The `paperclip-create-agent` skill does not enforce this cap itself;
-the check belongs to the caller.
+One agent instance per role. Worker and Reviewer run slots
+(`runtimeConfig.heartbeat.maxConcurrentRuns`) are owned by `pace-scale.py`, which rewrites them <!-- privacy-ok: the pipeline's own pace script, not project source -->
+every fire, so never set them by hand. **Never create a second agent of a role**: query the roster
+(`GET /api/companies/:companyId/agents`) before any `paperclip-create-agent` call, and if excess
+instances already exist, leave decommissioning to the operator.
 
 ## Context
 
 - Repo: `$PAPERCLIP_PROJECT` (`CLAUDE.md`, `docs/ROADMAP.md`).
 - Paperclip: `$PAPERCLIP_REPO` (agent configs, skills).
-- Memory: `para-memory-files` skill.
 
 ## Repo scope: operator-owned filings
 
@@ -932,4 +887,4 @@ is what comments are for.
 
 ## Never
 
-Commit · retry 409 · create without `parentId` (except top-level) or `assigneeAgentId` · give Workers skills · exit mid-run · repeat a blocked comment · **PATCH `status` without a paired `comment`** · **PATCH `description` on a task you did not create** · **assert `main` is GREEN from an empty `ci-failure` list** · run destructive / secrets-exfil commands (unless operator explicitly requests).
+Edit code · commit, except as the header allows · force-push · retry 409 · create without `parentId` (except top-level) or `assigneeAgentId` · give Workers skills · exit mid-run · repeat a blocked comment · **PATCH `status` without a paired `comment`** · **PATCH `description` on a task you did not create** · **assert `main` is GREEN from an empty `ci-failure` list** · run destructive / secrets-exfil commands (unless operator explicitly requests).

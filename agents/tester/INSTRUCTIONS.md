@@ -19,7 +19,7 @@ any verify. Do not run `cargo` directly, and do not build task branches.
 
 Per task, the Architect gates on clippy and `cargo test --lib` for *that branch*,
 in the default feature set only: your `clippy-no-default-features` stage is the
-only check of the shipped configuration anywhere. Nothing else checks `main`
+only clippy of the shipped configuration. Nothing else checks `main`
 itself: two branches each verified green can land into a
 red `main`, an operator PR is not verified by the Architect at all, and the
 suites under `tests/` are compiled per task but never run. GitHub Actions used
@@ -58,9 +58,10 @@ Read `~/.cache/paperclip-tester/result.json`:
 | `sha` | the `origin/main` commit checked |
 | `exit` | `0` every stage ran · `96`–`99` environment failure, no verdict (`log_tail` says why) |
 | `last_green` | the newest earlier commit on which every stage passed, or `null` |
-| `stages.<name>.ran` / `.exit` | whether the stage ran, and cargo's status: `0` clean · `101` red · `137` killed (OOM or signal) |
+| `stages.<name>.ran` / `.exit` | whether the stage ran, and cargo's status: `0` clean · `101` red · `137` killed (OOM or signal) · any other non-zero: no verdict; such a stage carries its own `log_tail` |
 | `stages.clippy-default.diagnostics`, `stages.clippy-no-default-features.diagnostics` | each distinct error `{code, message, location}`; under `-D warnings` every lint is one |
 | `stages.test.failed` | `{target, test, output}` per failing test; `output` is the panic message |
+| `stages.test.results` | each target's `test result:` line, as `<target>: <line>` |
 | `stages.test.compile_errors` | errors that stopped a test target from building |
 | `stages.test.complete` | `true` only when every test target built and ran; `false` means absence from `failed` proves nothing |
 
@@ -72,13 +73,17 @@ Create the label once: `gh label create test-failure --color B60205 --descriptio
 List what is already open: `gh issue list --label test-failure --state open --json number,title,body --limit 200`.
 
 **1. Top-level `exit` 96–99: file nothing, close nothing.** No stage produced a
-verdict. Give `log_tail` in your final message and end with
-`PAPERCLIP-ESCALATE: <reason>`.
+verdict. Post `log_tail` as a comment on the routine's issue, then `PATCH` the
+issue `blocked`.
 
 **2. A stage that exited 137: no verdict for that stage.** Say so; do not file
-or close anything from it. Tomorrow's run retries. Escalate only on a second
-137 in a row for the same stage, which you can tell from the previous run's
-issue in this routine.
+or close anything from it. Tomorrow's run retries. On a second 137 in a row for
+the same stage — read the stage exits from the step-6 summary comment on the
+previous routine issue — post that stage's `log_tail` as a comment, then `PATCH`
+the routine's issue `blocked`.
+
+Any other non-zero stage exit besides `101` is not cargo's verdict either:
+handle it like 137, and give its `log_tail`.
 
 **3. Clippy: one issue per configuration.** For each clippy stage that exited
 `101`, ensure exactly one open issue titled:
@@ -133,14 +138,13 @@ that it is gone:
 - a test issue, when `stages.test.complete` is `true` and the test is not in
   `failed` (it passes, or no longer exists).
 
-A stage that did not run, or exited 137, closes nothing. Closing an issue the
+A stage that did not run, or exited anything but `0` or `101`, closes nothing. Closing an issue the
 Planner has labelled `roadmapped` is still correct: its roadmap bullet goes
 stale, and the Planner prunes it on its next fire.
 
 **6. Finish the routine's issue.** Comment a summary: the `sha`, each stage's
 exit, each test target's `results` line that is not `ok`, and the issue numbers
-filed and closed. Then `PATCH` the issue to `done` as a separate call (a
-`comment` field on a status `PATCH` 500s).
+filed and closed. Then `PATCH` the issue to `done`.
 
 ## What not to do
 
