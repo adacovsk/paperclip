@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   commentIsHold,
   commentWakesAssignee,
+  isStageChild,
   resolveSubtaskWakeTarget,
   summarizeOpenChildren,
 } from "../services/subtask-wake-target.js";
@@ -116,29 +117,61 @@ describe("summarizeOpenChildren", () => {
   it("does not count the parent assignee's own child parked in_review", () => {
     // The Worker's follow-up sibling is finished and parked beside the Verify
     // that just completed. Counting it routed the wake to the Worker.
-    expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "in_review" }], WORKER)).toEqual({
+    expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "in_review", dedupeKey: "verify" }], WORKER)).toEqual({
       hasOtherOpenChild: false,
       assigneeOwnsOtherOpenChild: false,
     });
   });
 
   it("routes a Verify completion beside a parked own sibling to the Coordinator", () => {
-    const summary = summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "in_review" }], WORKER);
+    const summary = summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "in_review", dedupeKey: "verify" }], WORKER);
     expect(resolveSubtaskWakeTarget({ parentStatus: "in_review", ...summary }).kind).toBe("coordinator");
   });
 
   it("counts the parent assignee's own child while it is live", () => {
     for (const status of ["todo", "in_progress", "blocked", "backlog"]) {
-      expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status }], WORKER)).toEqual({
+      expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status, dedupeKey: "verify" }], WORKER)).toEqual({
         hasOtherOpenChild: true,
         assigneeOwnsOtherOpenChild: true,
       });
     }
   });
 
+  it("does not count a follow-up work task filed under the parent", () => {
+    // The 253-of-265 shape: a Worker-owned follow-up in todo or blocked read as
+    // the Worker owning a live stage, so every stage completion woke the Worker
+    // on the parent. A follow-up is its own task with its own wakes.
+    for (const status of ["todo", "in_progress", "blocked", "backlog", "in_review"]) {
+      expect(summarizeOpenChildren([{ assigneeAgentId: WORKER, status, dedupeKey: null, title: "Split copies pay full HP" }], WORKER)).toEqual({
+        hasOtherOpenChild: false,
+        assigneeOwnsOtherOpenChild: false,
+      });
+    }
+  });
+
+  it("routes a stage completion beside a live follow-up to the Dispatcher, not the Worker", () => {
+    const summary = summarizeOpenChildren([{ assigneeAgentId: WORKER, status: "todo", dedupeKey: null, title: "AI area aim ignores burst" }], WORKER);
+    expect(resolveSubtaskWakeTarget({ parentStatus: "in_review", ...summary }).kind).toBe("coordinator");
+  });
+
+  it("still counts a follow-up's sibling stages", () => {
+    const children = [
+      { assigneeAgentId: WORKER, status: "todo", dedupeKey: null, title: "A follow-up" },
+      { assigneeAgentId: ARCHITECT, status: "in_review", dedupeKey: "verify", title: "Verify: T-1" },
+    ];
+    expect(summarizeOpenChildren(children, WORKER)).toEqual({ hasOtherOpenChild: true, assigneeOwnsOtherOpenChild: false });
+  });
+
+  it("knows a stage filed without a dedupeKey by its title", () => {
+    for (const title of ["Review: T-1", "Verify: T-1 x", "ci-fix: abc", "Rebase task/T-1 onto origin/main"]) {
+      expect(isStageChild({ assigneeAgentId: WORKER, status: "todo", dedupeKey: null, title })).toBe(true);
+    }
+    expect(isStageChild({ assigneeAgentId: WORKER, status: "todo", dedupeKey: null, title: "Reviewer finds X" })).toBe(false);
+  });
+
   it("keeps another agent's in_review child counted as someone still working", () => {
     // An Architect's Verify sits in_review while its build is in flight.
-    expect(summarizeOpenChildren([{ assigneeAgentId: ARCHITECT, status: "in_review" }], WORKER)).toEqual({
+    expect(summarizeOpenChildren([{ assigneeAgentId: ARCHITECT, status: "in_review", dedupeKey: "verify" }], WORKER)).toEqual({
       hasOtherOpenChild: true,
       assigneeOwnsOtherOpenChild: false,
     });
@@ -148,13 +181,13 @@ describe("summarizeOpenChildren", () => {
     expect(
       summarizeOpenChildren(
         [
-          { assigneeAgentId: WORKER, status: "done" },
-          { assigneeAgentId: null, status: "cancelled" },
+          { assigneeAgentId: WORKER, status: "done", dedupeKey: "verify" },
+          { assigneeAgentId: null, status: "cancelled", dedupeKey: "verify" },
         ],
         WORKER,
       ),
     ).toEqual({ hasOtherOpenChild: false, assigneeOwnsOtherOpenChild: false });
-    expect(summarizeOpenChildren([{ assigneeAgentId: null, status: "in_review" }], null)).toEqual({
+    expect(summarizeOpenChildren([{ assigneeAgentId: null, status: "in_review", dedupeKey: "verify" }], null)).toEqual({
       hasOtherOpenChild: true,
       assigneeOwnsOtherOpenChild: false,
     });

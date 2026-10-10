@@ -113,7 +113,7 @@ async function flushWakes() {
 
 async function markChildDone(
   parentStatus: "todo" | "in_review" | "done",
-  otherOpenChildren: Array<{ assigneeAgentId: string | null; status: string }>,
+  otherOpenChildren: Array<{ assigneeAgentId: string | null; status: string; dedupeKey?: string | null; title?: string }>,
 ) {
   mockIssueService.getById.mockImplementation(async (id: string) =>
     id === PARENT_ID ? parent(parentStatus) : child("todo"),
@@ -147,7 +147,7 @@ describe("subtask-completion wake on the REST path", () => {
   });
 
   it("still wakes the parent assignee when it owns another open child", async () => {
-    const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status: "todo" }]);
+    const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status: "todo", dedupeKey: "rebase" }]);
     expect(calls.map(([agentId]) => agentId)).toEqual([WORKER_ID]);
   });
 
@@ -155,7 +155,7 @@ describe("subtask-completion wake on the REST path", () => {
     // A Reviewer finishing while the Architect's Verify is still open: the Worker
     // assigned to the parent has nothing to do, and the Verify's own completion is
     // the wake that moves the parent.
-    const calls = await markChildDone("in_review", [{ assigneeAgentId: ARCHITECT_ID, status: "in_review" }]);
+    const calls = await markChildDone("in_review", [{ assigneeAgentId: ARCHITECT_ID, status: "in_review", dedupeKey: "verify" }]);
     expect(calls).toHaveLength(0);
   });
 
@@ -163,8 +163,18 @@ describe("subtask-completion wake on the REST path", () => {
     // A Verify finishing beside the Worker's own follow-up subtask, which is
     // finished and parked. That sibling is not live work for the Worker, so it
     // neither routes the wake to the Worker nor holds it as "someone is working".
-    const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status: "in_review" }]);
+    const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status: "in_review", dedupeKey: null, title: "A follow-up" }]);
     expect(calls.map(([agentId]) => agentId)).toEqual([COORDINATOR_ID]);
+  });
+
+  it("redirects to the Coordinator when the assignee's other child is a live follow-up, not a stage", async () => {
+    // A follow-up filed under the parent and still todo or blocked is its own
+    // task with its own wakes; the parent's next stage is the Dispatcher's.
+    for (const status of ["todo", "blocked"]) {
+      mockHeartbeatService.wakeup.mockClear();
+      const calls = await markChildDone("in_review", [{ assigneeAgentId: WORKER_ID, status, dedupeKey: null, title: "A follow-up" }]);
+      expect(calls.map(([agentId]) => agentId)).toEqual([COORDINATOR_ID]);
+    }
   });
 
   it("wakes nobody when the parent is already done", async () => {

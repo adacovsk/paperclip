@@ -120,6 +120,22 @@ export function commentIsHold(body: string): boolean {
 export interface OpenChild {
   assigneeAgentId: string | null;
   status: string;
+  /** The stage key (`review`, `verify`, `rebase`) a pipeline stage is created with. */
+  dedupeKey?: string | null;
+  title?: string | null;
+}
+
+const STAGE_KEYS = new Set(["review", "verify", "rebase"]);
+// Stage tasks filed before stages carried a dedupeKey are known by title alone,
+// the same prefixes the Dispatcher reads.
+const STAGE_TITLE = /^(Review:|Verify:|ci-fix:|Rebase )/;
+
+/**
+ * Whether a child is one of the parent's pipeline stages, rather than a
+ * separate work task filed under it (a follow-up or a split-out bug).
+ */
+export function isStageChild(child: OpenChild): boolean {
+  return (child.dedupeKey != null && STAGE_KEYS.has(child.dedupeKey)) || STAGE_TITLE.test(child.title ?? "");
 }
 
 /**
@@ -140,6 +156,15 @@ export interface OpenChild {
  * `in_review` on a child owned by *another* agent is left counted: an
  * Architect's Verify sits `in_review` while its build is in flight, and its
  * own completion is the wake that moves the parent.
+ *
+ * Only the parent's pipeline stages count at all. A follow-up filed as a child
+ * is its own task, with its own branch and its own assignment wake; the
+ * parent's next stage never waits on it. Counted, a Worker-owned follow-up in
+ * `todo` or `blocked` read as "the assignee still owns a live stage", so every
+ * stage that finished under the parent woke the Worker on the *parent*, where
+ * it found its work committed and exited: 253 of 265 subtask-completion Worker
+ * runs over four days. Counting it as "someone is still working" instead would
+ * suppress the Dispatcher wake the parent's next stage needs.
  */
 export function summarizeOpenChildren(
   children: readonly OpenChild[],
@@ -147,6 +172,7 @@ export function summarizeOpenChildren(
 ): { hasOtherOpenChild: boolean; assigneeOwnsOtherOpenChild: boolean } {
   const live = children.filter(
     (child) =>
+      isStageChild(child) &&
       child.status !== "done" &&
       child.status !== "cancelled" &&
       !(parentAssigneeId !== null && child.assigneeAgentId === parentAssigneeId && child.status === "in_review"),
