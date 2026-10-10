@@ -15,7 +15,11 @@
 # file — see `check_main_repair_edit`), add no lint or test suppression, delete no file, and pass
 # the guard suite locally. Accepted work is
 # fast-forwarded into the worktree and the Architect lands it through its
-# ordinary Landing; rejected work is never used and the task verifies locally.
+# ordinary Landing; rejected work earns one informed retry at the same head, and
+# only a second rejection sends the task to the local chain. A branch that
+# conflicts with main is offloaded in resolve mode: the VM rebases it, descent is
+# checked against the main commit it rebased onto, and this box (never the VM)
+# publishes the rewritten branch.
 # The operator's merge remains the final gate.
 #
 # WHY GITHUB AND NOT THE PAPERCLIP API. A cloud VM cannot reach localhost:3100 —
@@ -91,7 +95,20 @@ die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 ref_for() { printf 'refs/heads/cloud-verify/%s/%s' "$1" "$2"; }
 
 verify_prompt() {
-  local task="$1" head="$2" ref="$3" cap="$4" repair="${5:-0}" repair_text=""
+  local task="$1" head="$2" ref="$3" cap="$4" repair="${5:-0}" resolve="${6:-0}" wide="${7:-0}" prior="${8:-}"
+  local repair_text="" sync_text rebased_line="" prior_text=""
+  if [ "$wide" = "1" ]; then
+    repair_text="
+   WIDE SCOPE. A previous verify of this task finished red on errors outside
+   its files that the identifier rules above could not admit — typically a
+   test or lint elsewhere that the task's behaviour change broke. Any error
+   that remains is in scope, wherever it is: fix it in the existing .rs file
+   it is in and declare that file with an out-of-scope line (code = the error
+   code, lint name or failing test path, identifier = the item you changed).
+   An error ALSO present at \$BASE is not this task's — leave it and say so;
+   restoring main belongs to a main-repair task. The suppression and deletion
+   bans below still apply."
+  fi
   if [ "$repair" = "1" ]; then
     repair_text="
    THIS TASK RESTORES A RED main. An error that is also present at \$BASE is
@@ -101,8 +118,44 @@ verify_prompt() {
    out-of-scope line (code = the error code or lint name, identifier = the item
    you changed). The suppression and deletion bans below still apply."
   fi
+  if [ "$resolve" = "1" ]; then
+    sync_text="1. git fetch origin ${head} main && git checkout --detach ${head}
+   THIS BRANCH CONFLICTS WITH CURRENT main, and resolving that is your first
+   job. BASE=\$(git rev-parse origin/main), then put the task's own commits on
+   it: git rebase \$BASE (if replaying commit by commit keeps conflicting on
+   intermediate states, git reset --soft to the merge-base, commit once, and
+   rebase that single commit instead). Resolve every conflict by keeping BOTH
+   intents — main's current code plus what the task set out to do. When main has
+   restructured the code (split a file, renamed a type, moved a table), port the
+   task's change onto the new structure rather than restoring the old one. If
+   main already does everything the task did, stop: result FAIL with
+   'superseded by main: <commit>' as the error.
+   Edit only files the task's own diff touched (plus the out-of-scope rules in
+   step 3); a resolution that needs any other file is a FAIL, not a widening.
+   TASKHEAD=\$(git rev-parse HEAD)    (the resolved task commits on \$BASE)
+   The task's files are: git diff --name-only \$BASE \$TASKHEAD"
+    rebased_line="
+rebased-onto: <\$BASE>"
+  else
+    sync_text="1. git fetch origin ${head} && git checkout --detach ${head}
+   Do NOT rebase or merge — the other side already put this commit on main and
+   will check that your commits descend from it.
+   git fetch origin main
+   BASE=\$(git merge-base HEAD origin/main)
+   TASKHEAD=${head}
+   The task's files are: git diff --name-only \$BASE HEAD"
+  fi
+  if [ -n "$prior" ]; then
+    prior_text="
+A PREVIOUS ATTEMPT AT THIS EXACT COMMIT WAS DISCARDED by the acceptance check
+on the other side, for this reason: ${prior}
+Produce work that does not trip it again. If the reason is the guard suite,
+run step 4 exactly as written and treat any non-zero exit as unfinished.
+"
+  fi
   cat <<PROMPT
 Verify commit ${head} of task ${task}, fixing what you can within the task's scope.
+${prior_text}
 
 WHATEVER HAPPENS BELOW — stopping early, running out of context, hitting a wall
 — END with step 7. A result that exists only in your transcript was never
@@ -113,12 +166,7 @@ never open, comment on or merge a pull request, never change repository
 settings. Your commits are inspected before anything uses them, and work that
 breaks these rules is discarded.
 
-1. git fetch origin ${head} && git checkout --detach ${head}
-   Do NOT rebase or merge — the other side already put this commit on main and
-   will check that your commits descend from it.
-   git fetch origin main
-   BASE=\$(git merge-base HEAD origin/main)
-   The task's files are: git diff --name-only \$BASE HEAD
+${sync_text}
 
 2. Gate commands. Record each exit status.
      cargo clippy --all-targets -- -D warnings -A dead-code -A unused-imports
@@ -133,7 +181,7 @@ breaks these rules is discarded.
      - its code is one of:${OOS_CODES% }
      - it names an identifier (enum or variant, type, function, method, field,
        trait item) that appears on a + or - line of
-       git diff \$BASE ${head} -- '*.rs'
+       git diff \$BASE \$TASKHEAD -- '*.rs'
      - the file is an existing .rs file
    Typical: match arms for variants the task added (E0004); a call site updated
    to a signature the task changed (E0061/E0308); a field the task added,
@@ -167,7 +215,7 @@ breaks these rules is discarded.
 CLOUD-VERIFY-V2
 task: ${task}
 launched: ${head}
-base: <\$BASE>
+base: <\$BASE>${rebased_line}
 result: PASS | FAIL
 fixes: <rounds used in step 3>
 schemas: not-relevant | regenerated | proved-empty
@@ -205,9 +253,14 @@ cmd_launch() {
 
   # `--effort` must precede `--cloud`: `--cloud` takes an optional description,
   # so `--cloud --effort low "..."` swallows the flag and the prompt never arrives.
-  local repair=0
+  local repair=0 resolve=0 wide=0 prior="" effort="${CLOUD_VERIFY_EFFORT:-low}"
   [ -f "$STATE_DIR/$task.cloud.main-repair" ] && repair=1
-  out="$(script -qec "claude --effort ${CLOUD_VERIFY_EFFORT:-low} --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}" "$repair")")" /dev/null 2>&1)"
+  [ -f "$STATE_DIR/$task.cloud.wide" ] && wide=1
+  prior="$(cat "$STATE_DIR/$task.cloud.prior-rejection" 2>/dev/null)"
+  # Conflict resolution is judgement, not mechanics: at low effort a session
+  # restores the pre-split structure instead of porting onto main's.
+  [ -f "$STATE_DIR/$task.cloud.resolve" ] && { resolve=1; effort="${CLOUD_VERIFY_RESOLVE_EFFORT:-high}"; }
+  out="$(script -qec "claude --effort $effort --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}" "$repair" "$resolve" "$wide" "$prior")")" /dev/null 2>&1)"
   sid="$(printf '%s' "$out" | sed -n 's/.*\(session_[A-Za-z0-9]\{8,\}\).*/\1/p' | head -1)"
   [ -n "$sid" ] || { printf '%s\n' "$out" >&2; die "no session id in launch output"; }
 
@@ -360,10 +413,15 @@ OOS_MAX_REMOVED_PER_HUNK=3
 RUST_KEYWORDS=" as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while "
 
 # Prints why the edit to $1 is not admissible and returns 1, or returns 0.
+#
+# $6 is the commit the VM's edits are measured from: the launched head, or for a
+# resolve-mode verify the main commit it rebased onto (the file's state there is
+# what the VM started from; main's own changes to it are not the VM's edits).
 check_out_of_scope() {
   local f="$1" base="$2" lease="$3" work="$4" body="$5" ids="" path code id rest
+  local from="${6:-$lease}"
   case "$f" in *.rs) ;; *) echo "not a Rust file"; return 1 ;; esac
-  git cat-file -e "$lease:$f" 2>/dev/null || { echo "not present at the launched head"; return 1; }
+  git cat-file -e "$from:$f" 2>/dev/null || { echo "not present at the launched head"; return 1; }
   while read -r path code id rest; do
     [ "$path" = "$f" ] || continue
     case "$OOS_CODES" in *" $code "*) ;; *) echo "code '$code' does not qualify"; return 1 ;; esac
@@ -374,7 +432,7 @@ check_out_of_scope() {
     ids="$ids $id"
   done < <(printf '%s\n' "$body" | sed -n 's/^out-of-scope: *//p')
   [ -n "$ids" ] || { echo "undeclared"; return 1; }
-  git diff -U3 "$lease" "$work" -- "$f" | awk -v ids="$ids" -v max="$OOS_MAX_REMOVED_PER_HUNK" '
+  git diff -U3 "$from" "$work" -- "$f" | awk -v ids="$ids" -v max="$OOS_MAX_REMOVED_PER_HUNK" '
     function hit(s,   i) {
       for (i = 1; i <= n; i++) if (s ~ ("(^|[^A-Za-z0-9_])" w[i] "([^A-Za-z0-9_]|$)")) return 1
       return 0
@@ -422,42 +480,65 @@ reject() {
 }
 
 # Accept the VM's commits into the worktree, or refuse them. Refusal writes
-# `<task>.cloud.rejected`, which closes the lane for that task *at that head* so
-# the Architect verifies it locally rather than re-offloading into the same
-# result. A different head (a rebase, a fix commit) is a different input and
-# goes back to the cloud: a task-wide ban kept in-review verifies on the single
-# local slot indefinitely, long after the rejected head was gone.
+# `<task>.cloud.rejected`, which closes the lane for that task *at that head*
+# once a retry has also been refused (see cmd_offload). A different head (a
+# rebase, a fix commit) is a different input and goes back to the cloud: a
+# task-wide ban kept in-review verifies on the single local slot indefinitely,
+# long after the rejected head was gone.
+#
+# RESOLVE MODE (`<task>.cloud.resolve`). The launched head conflicts with main,
+# so the VM rebases it and its work cannot descend from that head. Descent is
+# then checked against the main commit the VM names in `rebased-onto:`, which
+# must be on origin/main, and every other bound is measured from that commit:
+# what the VM changed relative to main must still be the task's own files,
+# regenerated schemas or declared out-of-scope fixes. The task's original diff
+# (base..launched head) stays the definition of "the task's files", so a
+# resolution cannot widen the task by resolving into files it never touched.
 accept_cloud_work() {
   TASK="$1"
-  local ref lease base work f bad
+  local ref lease base work f bad resolve=0 from onto=""
   ref="$(cat "$STATE_DIR/$TASK.cloud.ref")"
   lease="$(cat "$STATE_DIR/$TASK.cloud.launched-head" 2>/dev/null)"
   base="$(cat "$STATE_DIR/$TASK.base" 2>/dev/null)"
   [ -n "$lease" ] && [ -n "$base" ] || reject "launch state missing (launched-head/base)"
   work="$(git rev-parse --verify -q "$ref^")" || reject "verdict commit has no parent"
+  [ -f "$STATE_DIR/$TASK.cloud.resolve" ] && resolve=1
 
   git diff --quiet "$work" "$ref" || reject "verdict commit carries file changes"
   [ "$(git rev-parse HEAD)" = "$lease" ] || reject "worktree moved since launch"
-  git merge-base --is-ancestor "$lease" "$work" || reject "cloud commits do not descend from the launched head"
+
+  local task_files body why repair=0
+  body="$(cat "$STATE_DIR/$TASK.cloud.verdict" 2>/dev/null)"
+  if [ "$resolve" = 1 ]; then
+    onto="$(field "$body" rebased-onto)"
+    [ -n "$onto" ] && git cat-file -e "$onto^{commit}" 2>/dev/null \
+      || reject "resolve verify names no rebased-onto commit"
+    git fetch -q origin main 2>/dev/null || true
+    git merge-base --is-ancestor "$onto" origin/main 2>/dev/null || reject "rebased-onto $onto is not on origin/main"
+    git merge-base --is-ancestor "$onto" "$work" || reject "cloud commits do not descend from rebased-onto"
+    from="$onto"
+  else
+    git merge-base --is-ancestor "$lease" "$work" || reject "cloud commits do not descend from the launched head"
+    from="$lease"
+  fi
 
   # Scope: every file the VM changed must be one of the task's files, a
   # regenerated schema, or a declared out-of-scope fix the task's own diff
   # forced (`check_out_of_scope`).
-  local task_files body why repair=0
   task_files="$(git diff --name-only "$base" "$lease")"
-  body="$(cat "$STATE_DIR/$TASK.cloud.verdict" 2>/dev/null)"
   [ -f "$STATE_DIR/$TASK.cloud.main-repair" ] && repair=1
+  [ -f "$STATE_DIR/$TASK.cloud.wide" ] && repair=1
   bad=""
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in assets/schemas/*) continue ;; esac
     printf '%s\n' "$task_files" | grep -qxF -- "$f" && continue
     if [ "$repair" = 1 ]; then
-      why="$(check_main_repair_edit "$f" "$lease" "$body")" || bad="$bad $f ($why)"
+      why="$(check_main_repair_edit "$f" "$from" "$body")" || bad="$bad $f ($why)"
       continue
     fi
-    why="$(check_out_of_scope "$f" "$base" "$lease" "$work" "$body")" || bad="$bad $f ($why)"
-  done < <(git diff --name-only "$lease" "$work")
+    why="$(check_out_of_scope "$f" "$base" "$lease" "$work" "$body" "$from")" || bad="$bad $f ($why)"
+  done < <(git diff --name-only "$from" "$work")
   [ -z "$bad" ] || reject "cloud commits touch files outside the task:$bad"
 
   # Uncommitted edits are refused only where the cloud commits land. A guard run
@@ -471,16 +552,27 @@ accept_cloud_work() {
   done < <(git status --porcelain | cut -c4-)
   [ -z "$bad" ] || reject "uncommitted edits to files the cloud commits change:$bad"
 
-  # The prompt forbids these; this is what makes the prohibition hold.
-  if git diff -U0 "$lease" "$work" -- '*.rs' \
-       | grep -qE '^\+.*(#!?\[(allow|expect)\(|#\[ignore)'; then
+  # The prompt forbids these; this is what makes the prohibition hold. In resolve
+  # mode the measured diff also carries the task's own lines, so what the task
+  # itself already added or deleted is subtracted rather than charged to the VM.
+  local added own=""
+  added="$(suppressions "$from" "$work")"
+  [ "$resolve" = 1 ] && own="$(suppressions "$base" "$lease")"
+  if [ -n "$(comm -23 <(printf '%s\n' "$added" | sed '/^$/d') <(printf '%s\n' "$own" | sed '/^$/d'))" ]; then
     reject "cloud commits add a lint or test suppression"
   fi
-  if git diff --diff-filter=D --name-only "$lease" "$work" | grep -q .; then
+  added="$(git diff --diff-filter=D --name-only "$from" "$work" | sort -u)"
+  own=""
+  [ "$resolve" = 1 ] && own="$(git diff --diff-filter=D --name-only "$base" "$lease" | sort -u)"
+  if [ -n "$(comm -23 <(printf '%s\n' "$added" | sed '/^$/d') <(printf '%s\n' "$own" | sed '/^$/d'))" ]; then
     reject "cloud commits delete files"
   fi
 
-  git merge -q --ff-only "$work" || reject "fast-forward to cloud work failed"
+  if [ "$resolve" = 1 ]; then
+    git reset -q --keep "$work" || reject "moving the worktree to the resolved work failed"
+  else
+    git merge -q --ff-only "$work" || reject "fast-forward to cloud work failed"
+  fi
   if [ "$work" != "$lease" ]; then
     export PATH="${CLOUD_VERIFY_PIXI_BIN:-$HOME/.pixi/bin}:$PATH"
     if ! command -v pixi >/dev/null || ! pixi run -e dev verify; then
@@ -489,8 +581,26 @@ accept_cloud_work() {
     fi
   fi
 
+  # A resolved branch is a rewrite of the one on origin, so Landing's plain push
+  # would be refused. Publish it here, leased on the head this box launched, so
+  # a branch someone else moved meanwhile is refused rather than overwritten.
+  if [ "$resolve" = 1 ]; then
+    local branch
+    branch="$(git branch --show-current)"
+    if ! git push -q --no-verify --force-with-lease="$branch:$lease" origin "HEAD:$branch"; then
+      git reset -q --keep "$lease"
+      reject "push of the resolved $branch refused (moved on origin since launch)"
+    fi
+    printf '%s\n' "$onto" > "$STATE_DIR/$TASK.base"
+  fi
+
   printf '%s\n' "$work" > "$STATE_DIR/$TASK.cloud.head"
-  echo "accepted: worktree at $work ($(git rev-list --count "$lease..$work") cloud commit(s))"
+  rm -f "$STATE_DIR/$TASK.cloud.prior-rejection"
+  echo "accepted: worktree at $work ($(git rev-list --count "$from..$work") commit(s) over $from)"
+}
+
+suppressions() {  # lines adding a lint or test suppression in $1..$2
+  git diff -U0 "$1" "$2" -- '*.rs' | grep -E '^\+.*(#!?\[(allow|expect)\(|#\[ignore)' | grep -v '^+++' | sort -u
 }
 
 # The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
@@ -504,11 +614,22 @@ accept_cloud_work() {
 cmd_offload() {
   local task="${1:?task id}" branch="${2:?branch}" verify_task="${3:-$1}" open
   [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
+  # A rejection at this head earns ONE more cloud attempt, told why the first
+  # was discarded: most rejections are a guard the VM skipped or an undeclared
+  # edit, which a session that knows the reason avoids. A second rejection at
+  # the same head means the VM cannot produce admissible work for it, and only
+  # then does the verify fall back to the local chain.
   if [ -f "$STATE_DIR/$task.cloud.rejected" ]; then
     local rejected_head
     rejected_head="$(cat "$STATE_DIR/$task.cloud.rejected-head" 2>/dev/null || cat "$STATE_DIR/$task.cloud.launched-head" 2>/dev/null)"
     if [ -z "$rejected_head" ] || [ "$rejected_head" = "$(git rev-parse HEAD)" ]; then
-      echo "cloud work for $task was rejected at this head ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1
+      if [ "$(cat "$STATE_DIR/$task.cloud.retried-head" 2>/dev/null)" = "$rejected_head" ] || [ -z "$rejected_head" ]; then
+        echo "cloud work for $task was rejected twice at this head ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1
+      fi
+      cp -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.prior-rejection"
+      printf '%s\n' "$rejected_head" > "$STATE_DIR/$task.cloud.retried-head"
+    else
+      rm -f "$STATE_DIR/$task.cloud.prior-rejection" "$STATE_DIR/$task.cloud.retried-head"
     fi
     rm -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.rejected-head"
   fi
@@ -534,11 +655,15 @@ cmd_offload() {
   rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict" "$STATE_DIR/$task.base-red"
   # Recorded as a file, not passed as env: the watcher runs in a transient scope
   # that does not inherit the caller's environment.
-  if [ "${CLOUD_VERIFY_MAIN_REPAIR:-}" = "1" ]; then
-    : > "$STATE_DIR/$task.cloud.main-repair"
-  else
-    rm -f "$STATE_DIR/$task.cloud.main-repair"
-  fi
+  local mode var mark
+  for mode in main-repair:CLOUD_VERIFY_MAIN_REPAIR resolve:CLOUD_VERIFY_RESOLVE wide:CLOUD_VERIFY_WIDE; do
+    var="${mode#*:}"; mark="${mode%%:*}"
+    if [ "${!var:-}" = "1" ]; then
+      : > "$STATE_DIR/$task.cloud.$mark"
+    else
+      rm -f "$STATE_DIR/$task.cloud.$mark"
+    fi
+  done
   detach "$task" watch "$task" "$branch" "$verify_task"
   echo "offloaded $task: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null)"
 }
