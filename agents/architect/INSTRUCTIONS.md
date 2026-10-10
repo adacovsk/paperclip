@@ -682,6 +682,9 @@ git ls-remote --exit-code --heads origin "task/{task-id}" >/dev/null \
   || { echo "NO REMOTE BRANCH task/{task-id} — push failed silently"; exit 1; }
 gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q . \
   || { echo "NO PR CREATED for task/{task-id} — run failed"; exit 1; }
+# The Dispatcher closes this Verify when the open PR carries this head. Nothing
+# else does: the server holds a no-skill task at in_review until the branch merges.
+git -C "$WORKTREE" rev-parse HEAD > "$VERIFY_DIR/{task-id}.landed"
 rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{task-id}.base-red" "$VERIFY_DIR/{task-id}.freshness" "$VERIFY_DIR/{task-id}.pid" "$VERIFY_DIR/{task-id}".cloud.*
 git for-each-ref --format='%(refname)' "refs/heads/cloud-verify/{task-id}/" | xargs -r -n1 git update-ref -d   # fetched cloud work, now in the task branch
 [ -n "$PAPERCLIP_ISSUE_IDENTIFIER" ] && [ "$PAPERCLIP_ISSUE_IDENTIFIER" != "{task-id}" ] \

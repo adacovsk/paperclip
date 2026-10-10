@@ -265,6 +265,32 @@ class RoutineFire(unittest.TestCase):
         self.assertFalse(dispatch.routine_fire(None, "me"))
 
 
+class VerifyLanded(unittest.TestCase):
+    VERIFY = {"status": "in_review", "createdAt": "2026-01-01T00:00:00.000Z"}
+    HEAD = "b" * 40
+    AFTER = dispatch.iso_ts("2026-01-01T01:00:00Z")
+    BEFORE = dispatch.iso_ts("2025-12-31T23:00:00Z")
+
+    def test_architect_landed_head_on_the_open_pr_closes_it(self):
+        self.assertTrue(dispatch.verify_landed(self.VERIFY, self.HEAD, None, (self.HEAD, self.AFTER)))
+
+    def test_merged_pr_closes_it_without_a_marker(self):
+        self.assertTrue(dispatch.verify_landed(self.VERIFY, None, 7, None))
+
+    def test_open_pr_without_a_marker_is_left(self):
+        # A Verify re-dispatched onto a head that already has a PR looks like this.
+        self.assertIsNone(dispatch.verify_landed(self.VERIFY, self.HEAD, None, None))
+
+    def test_marker_older_than_the_verify_is_left(self):
+        self.assertIsNone(dispatch.verify_landed(self.VERIFY, self.HEAD, None, (self.HEAD, self.BEFORE)))
+
+    def test_pr_on_another_head_is_left(self):
+        self.assertIsNone(dispatch.verify_landed(self.VERIFY, "c" * 40, None, (self.HEAD, self.AFTER)))
+
+    def test_closed_verify_is_left(self):
+        self.assertIsNone(dispatch.verify_landed({**self.VERIFY, "status": "blocked"}, None, 7, None))
+
+
 class MainHasDir(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

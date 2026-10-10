@@ -14,6 +14,7 @@ whole instruction set. This script runs those rows directly:
                                              (or resume the Review it held)
   stage blocked on a merge conflict       -> Rebase subtask, Worker slots allowing
   held Verify, capacity free              -> dispatch it
+  Verify whose landed head the PR carries -> close it (or the PR merged)
   `Held: until <id> merges|opens its PR`  -> back to backlog once it has
   `Held: waiting on <id>`, <id> closed     -> back to backlog
   its own routine fire, sweep finished      -> close the routine's issue
@@ -49,6 +50,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -81,6 +83,7 @@ SCHEMA_PATH = re.compile(r"^assets/schemas/")
 #: Worker to win the race and the merge is the operator's.
 MAX_REBASES = int(os.environ.get("DISPATCHER_MAX_REBASES", 3))
 HELD_VERIFY = "Intended assignee: Architect (held"
+VERIFY_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-verify"
 
 
 # --------------------------------------------------------------------------- decisions
@@ -311,6 +314,32 @@ def hold_resolved(blocker: dict | None, kind: str, blocker_pr_open: bool) -> str
     return None
 
 
+def verify_landed(verify: dict, open_head: str | None, merged_pr: int | None,
+                  landed: tuple[str, float] | None) -> str | None:
+    """Why an `in_review` Verify has met its goal (cargo-green + PR opened), or None.
+
+    The Architect opens its own PR, and nothing that closes a Verify runs after
+    it: the server holds a no-skill task at `in_review` until its branch merges,
+    and the operator merges with no Architect run on the task. `landed` is the
+    Architect Landing's `{parent}.landed` marker, (head it published, mtime).
+    An open PR at that head is not enough alone: a Verify re-dispatched onto a
+    head that already has a PR (freshness, a stale red sentinel) starts out in
+    exactly that state, with no live run while its cloud build is out. So the
+    marker must postdate the Verify, and name the head the PR carries.
+    """
+    if verify["status"] != "in_review":
+        return None
+    if merged_pr is not None:
+        return f"PR #{merged_pr} for its branch is merged"
+    if open_head and landed and landed[0] == open_head and landed[1] > iso_ts(verify["createdAt"]):
+        return f"the Architect landed {open_head[:9]} and the open PR carries it"
+    return None
+
+
+def iso_ts(stamp: str) -> float:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+
+
 def overruled(comments: list[dict], blocker_id: str) -> bool:
     """Whether the Coordinator already re-held this task after we released it.
 
@@ -444,6 +473,23 @@ def open_pr_heads(project: Path) -> dict[str, str]:
         cwd=project, capture_output=True, text=True, timeout=60, check=True,
     ).stdout
     return {pr["headRefName"]: pr["headRefOid"] for pr in json.loads(out)}
+
+
+def merged_pr_numbers(project: Path) -> dict[str, int]:
+    """Recently merged PRs as {head branch: number}."""
+    out = subprocess.run(
+        ["gh", "pr", "list", "--state", "merged", "--limit", "300", "--json", "headRefName,number"],
+        cwd=project, capture_output=True, text=True, timeout=60, check=True,
+    ).stdout
+    return {pr["headRefName"]: pr["number"] for pr in json.loads(out)}
+
+
+def landed_marker(identifier: str) -> tuple[str, float] | None:
+    path = VERIFY_DIR / f"{identifier}.landed"
+    try:
+        return path.read_text().strip(), path.stat().st_mtime
+    except OSError:
+        return None
 
 
 def verify_capacity() -> int | None:
@@ -749,6 +795,7 @@ def sweep(api: Api, project: Path) -> None:
         elif decision.kind == "handoff":
             hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
 
+    close_landed_verifies(api, project, pr_heads)
     released = release_holds(api, pr_heads)
 
     # Promotion needs the Coordinator's contention rules; ask only when it could promote.
@@ -788,6 +835,29 @@ def sweep(api: Api, project: Path) -> None:
                 save_state("refill.json", {"at": time.time()}, False)
     # Forget tasks that left the hand-off set so a later return re-notifies.
     save_state("handoffs.json", seen, api.dry_run)
+
+
+def close_landed_verifies(api: Api, project: Path, pr_heads: dict[str, str]) -> None:
+    """Close every `in_review` Verify whose PR is open at its landed head, or merged.
+
+    The Coordinator's §Landing closes the Verify for a PR it opens itself; this
+    covers the PRs the Architect opens, which no other step ever closed.
+    """
+    verifies = [v for v in api.issues(status="in_review") if stage_of(v) == "verify" and v.get("parentId")]
+    if not verifies:
+        return
+    merged = merged_pr_numbers(project)
+    for verify in verifies:
+        identifier = api.get(f"/issues/{verify['parentId']}")["identifier"]
+        branch = f"task/{identifier}"
+        why = verify_landed(verify, pr_heads.get(branch), merged.get(branch), landed_marker(identifier))
+        if why:
+            api.set_status(
+                verify,
+                {"status": "done"},
+                f"Verify complete: {why} (`{branch}`).",
+                f"verify  {verify['identifier']}: close ({why})",
+            )
 
 
 def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
