@@ -367,7 +367,7 @@ dispatch, and `in_review` is not a parking status. So for each surplus `needs-bu
   PATCH is the dispatch.
 
 **§Landing sweep's predicate changes with it**: "in_review + assignee = Architect" means
-*dispatched, awaiting result* and nothing else. A held verify is `todo` + unassigned, has no
+*dispatched, awaiting result* and nothing else. "in_review + assignee = Dispatcher" is the same state for a build the Dispatcher launched itself (`DISPATCH_LAUNCHES_VERIFY=1`); the Dispatcher tends it, so the sweep skips it too. A held verify is `todo` + unassigned, has no
 wrapper, sentinel or build to probe, and the sweep must skip it — never read it as a dead build.
 
 **Do not restore "dispatch all their Architects in the same fire", and do not answer a deep queue

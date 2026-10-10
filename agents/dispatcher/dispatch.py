@@ -24,6 +24,9 @@ whole instruction set. This script runs those rows directly:
                                              needing judgment go to the Coordinator
   verify sentinel not yet routed            -> settle it without a model, or wake the
                                              Architect on that Verify once
+  Verify dispatched, cloud lane open        -> launch it here, the Verify assigned to the
+    (DISPATCH_LAUNCHES_VERIFY=1)                Dispatcher until a model is needed
+  Dispatcher's Verify, watcher dead         -> resume it (cloud-verify.sh resume)
   sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
   sentinel 0, main moved past its base      -> freshness re-verify (relaunch-verify.sh);
                                              a docs-only move or the cap wakes it to land
@@ -95,6 +98,13 @@ SCHEMA_PATH = re.compile(r"^assets/schemas/")
 #: Worker to win the race and the merge is the operator's.
 MAX_REBASES = int(os.environ.get("DISPATCHER_MAX_REBASES", 3))
 HELD_VERIFY = "Intended assignee: Architect (held"
+# Opt-in: the Dispatcher launches a Verify's first build itself while the cloud
+# lane is open, instead of assigning the Architect only for it to run Step 0 and
+# `offload`. Off, every Verify goes to the Architect as before.
+LAUNCHES_VERIFY = os.environ.get("DISPATCH_LAUNCHES_VERIFY") == "1"
+# Step 0's scope check, read conservatively: any of these words sends the
+# Verify to the Architect, which refuses review work in its own words.
+REVIEW_WORDS = re.compile(r"\b(review|audit)", re.I)
 #: Distinct verifies that must independently blame the same `origin/main` before
 #: a main-repair is filed. One can be a misdiagnosis; two agreeing is the signal.
 MAIN_REPAIR_MIN = int(os.environ.get("DISPATCHER_MAIN_REPAIR_MIN", 2))
@@ -431,8 +441,8 @@ def verdict_base(verdict: str) -> str:
 INCONCLUSIVE = ("99", "75")
 # A relaunch pushes the branch and starts a cloud session, a minute or more
 # each, inside a run the server kills at its 600 s timeout. Past this many
-# seconds of run time no new build is started, and the relaunch waits for the
-# next sweep.
+# seconds of run time no new build is started: a relaunch waits for the next
+# sweep, and a first launch goes to the Architect as before.
 LAUNCH_BUDGET_S = int(os.environ.get("DISPATCH_LAUNCH_BUDGET_S", "240"))
 RUN_START = time.monotonic()
 
@@ -753,7 +763,8 @@ def create_review(api: Api, agents: dict, parent: dict, git_st: GitState):
     )
 
 
-def create_verify(api: Api, agents: dict, parent: dict, after: dict, git_st: GitState, dispatch: bool):
+def create_verify(api: Api, agents: dict, parent: dict, after: dict, git_st: GitState, dispatch: bool,
+                  assignee: str | None = None):
     wt, branch = worktree_lines(parent["identifier"])
     held = "" if dispatch else "\nIntended assignee: Architect (held — no verify capacity free)\n"
     where = ", ".join(f"`{p}`" for p in git_st.changed) or "(see branch)"
@@ -766,7 +777,7 @@ def create_verify(api: Api, agents: dict, parent: dict, after: dict, git_st: Git
         f"**Where** — {where}\n{held}"
     )
     label_ids = [l["id"] for l in parent.get("labels") or [] if l["name"] == "needs-build"]
-    api.write(
+    return api.write(
         "POST",
         f"/companies/{api.company}/issues",
         {
@@ -776,7 +787,7 @@ def create_verify(api: Api, agents: dict, parent: dict, after: dict, git_st: Git
             "priority": parent.get("priority") or "medium",
             "parentId": parent["id"],
             "goalId": parent.get("goalId"),
-            "assigneeAgentId": agents["Architect"] if dispatch else None,
+            "assigneeAgentId": (assignee or agents["Architect"]) if dispatch else None,
             "dedupeKey": "verify",
             **({"labelIds": label_ids} if label_ids else {}),
         },
@@ -927,6 +938,23 @@ def sweep(api: Api, project: Path) -> None:
             return True
         return False
 
+    def self_launcher(parent_id: str | None) -> tuple[str, dict] | None:
+        """(Dispatcher id, parent) when this Verify's first build launches here.
+
+        Only while the cloud lane is open: a closed lane means the local chain,
+        which is the Architect's to run. Assigning the Dispatcher wakes no one,
+        since an agent's own assignment is not a wake.
+        """
+        if not (LAUNCHES_VERIFY and capacity is None and parent_id and agents.get("Dispatcher")
+                and launch_budget_left()):
+            return None
+        parent = api.get(f"/issues/{parent_id}")
+        why = needs_architect(parent)
+        if why:
+            print(f"verify  {parent['identifier']}: Architect launches it ({why})", flush=True)
+            return None
+        return agents["Dispatcher"], parent
+
     def hand_off(issue: dict, sig: str, reason: str) -> None:
         seen[issue["id"]] = sig
         if handed.get(issue["id"]) != sig:
@@ -940,12 +968,15 @@ def sweep(api: Api, project: Path) -> None:
         body = api.get(f"/issues/{held['id']}").get("description") or ""
         if HELD_VERIFY not in body or not take_capacity():
             continue
+        launcher = self_launcher(held.get("parentId"))
         api.set_status(
             held,
-            {"status": "in_review", "assigneeAgentId": agents["Architect"]},
+            {"status": "in_review", "assigneeAgentId": launcher[0] if launcher else agents["Architect"]},
             "Dispatching: verify capacity is free (held at creation for lack of a build slot).",
             f"verify  {held['identifier']}: dispatch held verify",
         )
+        if launcher:
+            launch_verify(api, agents, held, launcher[1])
 
     # Oldest parent first, so a hot file's longest-waiting branch gets the slot.
     for parent, children, git_st in sorted(loaded, key=lambda t: t[0]["createdAt"]):
@@ -957,7 +988,12 @@ def sweep(api: Api, project: Path) -> None:
             create_review(api, agents, parent, git_st)
         elif decision.kind == "verify":
             review = max((c for c in children if stage_of(c) == "review"), key=lambda c: c["createdAt"])
-            create_verify(api, agents, parent, review, git_st, take_capacity())
+            dispatch_now = take_capacity()
+            launcher = self_launcher(parent["id"]) if dispatch_now else None
+            created = create_verify(api, agents, parent, review, git_st, dispatch_now,
+                                    launcher[0] if launcher else None)
+            if launcher and created:
+                launch_verify(api, agents, created, launcher[1])
         elif decision.kind == "rebase":
             if rebase_slots <= 0:
                 continue
@@ -1085,16 +1121,20 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         return
     markers = base_red_markers()
     by_task = {m.task: m for m in markers}
+    owners = [agents["Architect"], *([agents["Dispatcher"]] if agents.get("Dispatcher") else [])]
     verifies = [
-        v for v in api.issues(status="in_review", assigneeAgentId=agents["Architect"])
+        v for owner in owners for v in api.issues(status="in_review", assigneeAgentId=owner)
         if stage_of(v) == "verify" and v.get("parentId")
     ]
     for verify in verifies:
         parent = api.get(f"/issues/{verify['parentId']}")["identifier"]
+        mine = verify.get("assigneeAgentId") == agents.get("Dispatcher")
         path = VERIFY_DIR / f"{parent}.exit"
         try:
             code, mtime = path.read_text().strip(), path.stat().st_mtime
         except OSError:
+            if mine and not seeding:
+                tend_launch(api, agents, verify, parent)
             continue  # no result yet: the build is out, or the Architect has not launched it
         key = f"{code}|{mtime}"
         if state.get(verify["identifier"]) == key:
@@ -1135,8 +1175,11 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
                 (VERIFY_DIR / f"{parent}.base-red").write_text(
                     "\n".join([main_sha, verify["identifier"], *(f"{e} (same failure as main's recorded break)" for e in errors)]) + "\n"
                 )
+            # Parked on the Architect, not the Dispatcher: requeue-base-red.sh
+            # re-dispatches by toggling the assignee, and assigning a `blocked`
+            # task wakes no one, so this costs no run now.
             api.set_status(
-                verify, {"status": "blocked"},
+                verify, {"status": "blocked", **({"assigneeAgentId": agents["Architect"]} if mine else {})},
                 f"Red only on main's known break: the verify of {parent} fails at "
                 + ", ".join(f"`{e}`" for e in errors)
                 + f", the same locations other verifies already recorded against origin/main {main_sha[:9]}. "
@@ -1144,6 +1187,8 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
                 "No model run was spent on it.",
                 f"sentinel {verify['identifier']}: base-red ({why})",
             )
+        elif action == "wake" and mine:
+            hand_to_architect(api, agents, verify, f"its verify result needs a model ({why})")
         elif action == "wake":
             try:
                 api.write(
@@ -1164,6 +1209,77 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
     save_state("sentinels.json", state, api.dry_run)
 
 
+def needs_architect(parent: dict) -> str | None:
+    """Why this parent's Verify goes straight to the Architect, or None.
+
+    Main-repair verifies carry their own offload flags and scope rules, and a
+    title Step 0 might refuse as review work is the Architect's to word.
+    """
+    labels = {l["name"] for l in parent.get("labels") or []}
+    if "ci-failure" in labels or parent["title"].startswith("ci-fix:") \
+            or "Main-repair:" in (parent.get("description") or ""):
+        return "main-repair"
+    if REVIEW_WORDS.search(parent["title"]):
+        return "title reads as review work"
+    return None
+
+
+def launch_verify(api: Api, agents: dict, verify: dict, parent: dict) -> bool:
+    """Run the first build of a Verify assigned to the Dispatcher; on any
+    refusal hand it to the Architect, whose assignment wake is today's dispatch."""
+    # A duplicate create returns the open Verify already there: launch only one
+    # this Dispatcher holds, and never beside a build that is still out.
+    if verify.get("assigneeAgentId") != agents.get("Dispatcher") or watcher_alive(parent["identifier"]):
+        return False
+    out = run_relaunch(verify, parent["identifier"], "launch")
+    if out is not None and out.returncode == 0:
+        note = (out.stdout.strip().splitlines() or [""])[-1]
+        try:
+            api.write(
+                "POST", f"/issues/{verify['id']}/comments",
+                {"body": "Launched by the Dispatcher, no model run: the cloud lane is building it. "
+                         "The Verify stays assigned to the Dispatcher until a result needs the Architect."
+                         f"\n\n`{note}`"},
+                f"verify  {verify['identifier']}: launched",
+            )
+        except urllib.error.HTTPError as exc:
+            print(f"verify  {verify['identifier']}: launch comment refused ({exc.code})", flush=True)
+        return True
+    said = "relaunch-verify.sh did not run" if out is None else \
+        ((out.stdout.strip().splitlines() or [f"exit {out.returncode}"])[-1])
+    hand_to_architect(api, agents, verify, f"the Dispatcher could not launch it (`{said}`)")
+    return False
+
+
+def hand_to_architect(api: Api, agents: dict, verify: dict, why: str) -> None:
+    """Assign a Dispatcher-held Verify to the Architect; the change is the wake."""
+    api.set_status(
+        verify, {"status": "in_review", "assigneeAgentId": agents["Architect"]},
+        f"Handing to the Architect: {why}.",
+        f"verify  {verify['identifier']}: hand to Architect",
+    )
+
+
+def watcher_alive(parent: str) -> bool:
+    """Whether `{parent}.pid` names a live cloud-verify process (INSTRUCTIONS §dead watcher)."""
+    try:
+        pid = (VERIFY_DIR / f"{parent}.pid").read_text().strip()
+        return b"cloud-verify" in Path(f"/proc/{int(pid)}/cmdline").read_bytes()
+    except (OSError, ValueError):
+        return False
+
+
+def run_relaunch(verify: dict, parent: str, mode: str) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(
+            ["bash", str(HERE.parent / "architect" / "relaunch-verify.sh"), parent, verify["identifier"], mode],
+            capture_output=True, text=True, timeout=900,
+        )
+    except subprocess.SubprocessError as exc:
+        print(f"verify  {verify['identifier']}: relaunch-verify.sh {mode} failed to run ({exc})", flush=True)
+        return None
+
+
 def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
     """Run `relaunch-verify.sh`; True when the verify went back out with no model.
 
@@ -1174,13 +1290,8 @@ def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
     if api.dry_run:
         print(f"sentinel {verify['identifier']}: would relaunch ({mode}: {why})", flush=True)
         return True
-    try:
-        out = subprocess.run(
-            ["bash", str(HERE.parent / "architect" / "relaunch-verify.sh"), parent, verify["identifier"], mode],
-            capture_output=True, text=True, timeout=900,
-        )
-    except subprocess.SubprocessError as exc:
-        print(f"sentinel {verify['identifier']}: relaunch failed to run ({exc})", flush=True)
+    out = run_relaunch(verify, parent, mode)
+    if out is None:
         return False
     said = (out.stdout.strip().splitlines() or [""])[-1]
     print(f"sentinel {verify['identifier']}: {said or f'relaunch exit {out.returncode}'}", flush=True)
@@ -1197,6 +1308,39 @@ def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
     except urllib.error.HTTPError as exc:
         print(f"sentinel {verify['identifier']}: relaunch comment refused ({exc.code})", flush=True)
     return True  # the build is out either way; waking now would launch a second one
+
+
+def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:
+    """A Dispatcher-held Verify with no result yet: its build must still be out.
+
+    A recorded cloud launch whose watcher died is resumed, exactly as the
+    Architect's state machine does, never offloaded again (that would start a
+    second VM). No launch on record means the launch never completed; the
+    Architect takes it from Step 0. A launch under ten minutes old is left alone
+    while its watcher writes its pid.
+    """
+    launched = VERIFY_DIR / f"{parent}.cloud.launched"
+    if not launched.exists():
+        hand_to_architect(api, agents, verify, "no cloud launch is recorded for it")
+        return
+    if watcher_alive(parent) or time.time() - launched.stat().st_mtime < 600:
+        return
+    if api.dry_run:
+        print(f"verify  {verify['identifier']}: would resume its dead cloud watcher", flush=True)
+        return
+    wt = Path(project_root()) / ".paperclip" / "worktrees" / parent
+    try:
+        out = subprocess.run(
+            [str(HERE.parent / "architect" / "cloud-verify.sh"), "resume", parent, verify["identifier"]],
+            cwd=wt, capture_output=True, text=True, timeout=300,
+        )
+        resumed = out.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        resumed = False
+    if resumed:
+        print(f"verify  {verify['identifier']}: resumed its dead cloud watcher", flush=True)
+    else:
+        hand_to_architect(api, agents, verify, "its cloud watcher died and `cloud-verify.sh resume` failed")
 
 
 def requeue_base_red(dry_run: bool) -> None:

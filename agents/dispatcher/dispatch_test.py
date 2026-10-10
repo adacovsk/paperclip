@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import subprocess
 import tempfile
 import time
 import sys
@@ -529,15 +530,102 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual([m for _, m in self.relaunched], ["retry", "retry"])
 
 
+class DispatcherLaunch(unittest.TestCase):
+    """A Verify the Dispatcher launches stays off the Architect until a model is needed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.run_relaunch,
+                      dispatch.watcher_alive)
+        dispatch.VERIFY_DIR, dispatch.STATE_DIR = root / "verify", root / "state"
+        dispatch.VERIFY_DIR.mkdir()
+        dispatch.STATE_DIR.mkdir()
+        (dispatch.STATE_DIR / "sentinels.json").write_text('{"_seeded": "1"}')
+        dispatch.git = lambda project, *args: "a" * 40
+        self.rc = 0
+        dispatch.run_relaunch = lambda verify, parent, mode: subprocess.CompletedProcess([], self.rc, "relaunch-verify T-1: ok\n", "")
+        dispatch.watcher_alive = lambda parent: False
+        self.agents = {"Architect": "arch", "Dispatcher": "disp"}
+
+    def tearDown(self):
+        (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.run_relaunch,
+         dispatch.watcher_alive) = self.saved
+        self.tmp.cleanup()
+
+    def verify(self, owner="disp"):
+        return {"id": "v1", "identifier": "V-1", "parentId": "p1", "title": "Verify: T-1 x",
+                "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": owner}
+
+    def assignees(self, api):
+        return [w[2].get("assigneeAgentId") for w in api.writes if w[0] == "PATCH"]
+
+    def test_a_launch_keeps_the_verify_off_the_architect(self):
+        api = SweepApi()
+        self.assertTrue(dispatch.launch_verify(api, self.agents, self.verify(), {"identifier": "T-1"}))
+        self.assertEqual(self.assignees(api), [])
+
+    def test_a_refused_launch_assigns_the_architect(self):
+        self.rc = 1
+        api = SweepApi()
+        self.assertFalse(dispatch.launch_verify(api, self.agents, self.verify(), {"identifier": "T-1"}))
+        self.assertEqual(self.assignees(api), ["arch"])
+
+    def test_a_verify_it_does_not_hold_is_left_alone(self):
+        api = SweepApi()
+        self.assertFalse(dispatch.launch_verify(api, self.agents, self.verify("arch"), {"identifier": "T-1"}))
+        self.assertEqual(api.writes, [])
+
+    def test_main_repair_and_review_titles_go_to_the_architect(self):
+        self.assertTrue(dispatch.needs_architect({"title": "ci-fix: x", "labels": []}))
+        self.assertTrue(dispatch.needs_architect({"title": "x", "labels": [{"name": "ci-failure"}]}))
+        self.assertTrue(dispatch.needs_architect({"title": "x", "description": "Main-repair: yes", "labels": []}))
+        self.assertTrue(dispatch.needs_architect({"title": "Review and verify x", "labels": []}))
+        self.assertIsNone(dispatch.needs_architect({"title": "Add a feat", "labels": []}))
+
+    def sweep(self, owner):
+        api = SweepApi(owner)
+        dispatch.route_sentinels(api, self.agents, Path(self.tmp.name))
+        return api
+
+    def test_a_result_needing_a_model_is_handed_over_by_assignment(self):
+        (dispatch.VERIFY_DIR / "T-1.exit").write_text("1\n")
+        api = self.sweep("disp")
+        self.assertEqual(self.assignees(api), ["arch"])
+        self.assertFalse(any(w[1].endswith("/wakeup") for w in api.writes))
+
+    def test_a_base_red_park_moves_it_to_the_architect_while_blocked(self):
+        (dispatch.VERIFY_DIR / "T-2.base-red").write_text("a" * 40 + "\nV-2\nsrc/m.rs:1 E0308 x\n")
+        (dispatch.VERIFY_DIR / "T-1.exit").write_text("1\n")
+        v = "CLOUD-VERIFY-V2\nbase: " + "a" * 40 + "\n--- errors ---\n--> src/m.rs:1:4 E0308\n"
+        (dispatch.VERIFY_DIR / "T-1.cloud.verdict").write_text(v)
+        api = self.sweep("disp")
+        patches = [w[2] for w in api.writes if w[0] == "PATCH"]
+        self.assertEqual(patches, [{"status": "blocked", "assigneeAgentId": "arch"}])
+
+    def test_no_result_and_no_launch_on_record_goes_to_the_architect(self):
+        self.assertEqual(self.assignees(self.sweep("disp")), ["arch"])
+
+    def test_a_build_still_out_is_left_alone(self):
+        (dispatch.VERIFY_DIR / "T-1.cloud.launched").write_text("1\n")
+        self.assertEqual(self.sweep("disp").writes, [])
+
+    def test_the_architect_s_own_verify_without_a_result_is_not_touched(self):
+        self.assertEqual(self.sweep("arch").writes, [])
+
+
 class SweepApi:
     dry_run = False
 
-    def __init__(self):
+    def __init__(self, owner="arch"):
         self.writes = []
+        self.owner = owner
 
     def issues(self, **query):
+        if query.get("assigneeAgentId", self.owner) != self.owner:
+            return []
         return [{"id": "v1", "identifier": "V-1", "parentId": "p1", "title": "Verify: T-1 x",
-                 "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": "arch"}]
+                 "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": self.owner}]
 
     def get(self, path):
         return {"identifier": "T-1"}
