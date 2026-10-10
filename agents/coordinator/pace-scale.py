@@ -51,6 +51,13 @@ moment promotion reopens. Worker and
 Reviewer slots keep the pace tier, because the Coordinator spends Worker slots
 on unblock work (conflict rebases) before it promotes anything, and review
 drains. The cap never widens, and an unreadable stock caps at baseline.
+
+A VERIFY BLOCKED ONLY ON A RED MAIN IS NOT STOCK. Its Architect recorded a
+`<task>.base-red` marker: the task's own diff is clean, and the requeue
+re-dispatches it the moment `main` moves. Counted, one compile break on `main`
+escalates every verify built on it, and the pile those escalations make closes
+promotion for as long as `main` stays red -- the gate punishes the tasks for
+`main`'s fault and starves the pipeline on top of the break.
 """
 
 import importlib.util
@@ -115,13 +122,34 @@ def cap_supply(result: dict, stock: int | None) -> dict:
     return result
 
 
+def base_red_escalations(verify_dir: str) -> set[str]:
+    """Identifiers of the tasks that escalated on a base-red marker."""
+    out = set()
+    try:
+        names = os.listdir(verify_dir)
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".base-red"):
+            continue
+        try:
+            with open(os.path.join(verify_dir, name)) as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        out.add(lines[1].strip() if len(lines) > 1 and lines[1].strip() else name[: -len(".base-red")])
+    return out
+
+
 def read_stock() -> int | None:
-    """Architect-held `blocked` tasks plus open `task/*` PRs."""
+    """Architect-held `blocked` tasks plus open `task/*` PRs, less verifies blocked on a red `main`."""
     with urllib.request.urlopen(f"{API}/api/companies/{COMPANY}/agents", timeout=10) as resp:
         agents = {a["name"]: a["id"] for a in json.load(resp)}
     url = f"{API}/api/companies/{COMPANY}/issues?status=blocked&assigneeAgentId={agents['Architect']}"
     with urllib.request.urlopen(url, timeout=30) as resp:
-        blocked = sum(1 for i in json.load(resp) if i["status"] == "blocked")
+        verify_dir = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "paperclip-verify")
+        base_red = base_red_escalations(verify_dir)
+        blocked = sum(1 for i in json.load(resp) if i["status"] == "blocked" and i["identifier"] not in base_red)
     prs = subprocess.run(
         ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName",
          "--jq", '[.[] | select(.headRefName | startswith("task/"))] | length'],

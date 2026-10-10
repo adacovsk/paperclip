@@ -18,6 +18,8 @@ whole instruction set. This script runs those rows directly:
   Verify the cloud lane found superseded  -> close it and its parent
   `Held: until <id> merges|opens its PR`  -> back to backlog once it has
   `Held: waiting on <id>`, <id> closed     -> back to backlog
+  base-red marker, main moved past it      -> requeue the verify (requeue-base-red.sh)
+  base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task
   its own routine fire, sweep finished      -> close the routine's issue
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
@@ -84,6 +86,9 @@ SCHEMA_PATH = re.compile(r"^assets/schemas/")
 #: Worker to win the race and the merge is the operator's.
 MAX_REBASES = int(os.environ.get("DISPATCHER_MAX_REBASES", 3))
 HELD_VERIFY = "Intended assignee: Architect (held"
+#: Distinct verifies that must independently blame the same `origin/main` before
+#: a main-repair is filed. One can be a misdiagnosis; two agreeing is the signal.
+MAIN_REPAIR_MIN = int(os.environ.get("DISPATCHER_MAIN_REPAIR_MIN", 2))
 VERIFY_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-verify"
 
 
@@ -354,6 +359,48 @@ def superseded_evidence(verify: dict, marker: tuple[str, float] | None) -> str |
     return text.strip()
 
 
+@dataclass(frozen=True)
+class BaseRed:
+    task: str
+    sha: str
+    escalated: str
+    errors: tuple[str, ...]
+
+
+def parse_base_red(task: str, text: str) -> BaseRed | None:
+    """An Architect's `{task}.base-red`: main sha, escalating task, then error lines."""
+    lines = [l.strip() for l in text.splitlines()]
+    if not lines or not re.fullmatch(r"[0-9a-f]{7,40}", lines[0]):
+        return None
+    escalated = lines[1] if len(lines) > 1 and lines[1] else task
+    return BaseRed(task, lines[0], escalated, tuple(l for l in lines[2:] if l))
+
+
+def main_repair_due(markers: list[BaseRed], main_sha: str) -> list[BaseRed]:
+    """The markers that blame current `main`, when enough distinct tasks agree."""
+    current = [m for m in markers if m.sha == main_sha]
+    return current if len({m.task for m in current}) >= MAIN_REPAIR_MIN else []
+
+
+def main_repair_body(markers: list[BaseRed], main_sha: str, worktree: str, branch: str) -> str:
+    errors: list[str] = []
+    for m in markers:
+        errors += [e for e in m.errors if e not in errors]
+    listed = "\n".join(f"- {e}" for e in errors[:30]) or (
+        "- (no error lines recorded in the markers; read the escalation comments on the tasks below)"
+    )
+    who = ", ".join(sorted({issue_link(m.escalated) for m in markers}))
+    return (
+        f"worktree: {worktree}\nbranch:   {branch}\n\n"
+        f"Main-repair: origin/main {main_sha} is red; {len(markers)} verifies escalated on it.\n\n"
+        "**What** — Fix `origin/main` so it compiles and its lib tests pass. Breakage already on "
+        "`main` is in scope wherever it is; no `#[allow]`/`#[expect]`/`#[ignore]`, no deleted test.\n\n"
+        f"**Why** — every verify built on this `main` fails here first, escalates, and counts as "
+        f"stuck stock. Escalated by: {who}.\n\n"
+        f"## Compile errors\n{listed}\n"
+    )
+
+
 def iso_ts(stamp: str) -> float:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
 
@@ -538,6 +585,18 @@ def superseded_marker(identifier: str) -> tuple[str, float] | None:
         return path.read_text(), path.stat().st_mtime
     except OSError:
         return None
+
+
+def base_red_markers() -> list[BaseRed]:
+    markers = []
+    for path in sorted(VERIFY_DIR.glob("*.base-red")):
+        try:
+            parsed = parse_base_red(path.name.removesuffix(".base-red"), path.read_text())
+        except OSError:
+            continue
+        if parsed:
+            markers.append(parsed)
+    return markers
 
 
 def verify_capacity() -> int | None:
@@ -845,6 +904,8 @@ def sweep(api: Api, project: Path) -> None:
 
     close_landed_verifies(api, project, pr_heads)
     close_superseded(api)
+    requeue_base_red(api.dry_run)
+    file_main_repair(api, agents, project)
     released = release_holds(api, pr_heads)
 
     # Promotion needs the Coordinator's contention rules; ask only when it could promote.
@@ -907,6 +968,88 @@ def close_landed_verifies(api: Api, project: Path, pr_heads: dict[str, str]) -> 
                 f"Verify complete: {why} (`{branch}`).",
                 f"verify  {verify['identifier']}: close ({why})",
             )
+
+
+def requeue_base_red(dry_run: bool) -> None:
+    """Re-dispatch verifies whose base-red `main` has moved on.
+
+    The Coordinator also runs this, but only when a fire reaches that step; a
+    fixed `main` then waited on the next full sweep while every verify it
+    stranded counted as stuck stock. The Dispatcher runs on every stage
+    completion, so the requeue follows the merge that fixed `main`.
+    """
+    script = HERE.parent / "architect" / "requeue-base-red.sh"
+    out = subprocess.run(
+        ["bash", str(script), *(["--dry-run"] if dry_run else [])],
+        capture_output=True, text=True, timeout=300,
+    )
+    for line in out.stdout.splitlines():
+        if "unchanged" not in line:
+            print(f"basered {line}", flush=True)
+
+
+def file_main_repair(api: Api, agents: dict, project: Path) -> None:
+    """File one `ci-fix:` task when several verifies blame the same red `main`.
+
+    Each Architect that hits breakage already on `main` records a base-red marker
+    and escalates; nothing else acts on that until the nightly Tester, so a
+    break found within minutes waited for an operator to read the escalations.
+    The task follows the Coordinator's `ci-fix` intake shape (title, label,
+    `main`-rooted worktree, `## Compile errors`, Architect assignee) so its
+    dedupe by commit sha and the Architect's main-repair scope both apply.
+    """
+    try:
+        main_sha = git(project, "rev-parse", "origin/main").strip()
+    except subprocess.SubprocessError:
+        return
+    due = main_repair_due(base_red_markers(), main_sha)
+    if not due:
+        return
+    short = main_sha[:9]
+    for existing in api.issues(q=short):
+        if existing["title"].startswith("ci-fix:") and short in existing["title"] and existing["status"] != "cancelled":
+            return
+    title = f"ci-fix: {short} — main is red ({len(due)} verifies escalated on it)"
+    labels = {l["name"]: l["id"] for l in api.get(f"/companies/{api.company}/labels")}
+    created = api.write(
+        "POST",
+        f"/companies/{api.company}/issues",
+        {
+            "title": title,
+            "description": main_repair_body(due, main_sha, "(allocating)", "(allocating)"),
+            "status": "backlog",
+            "priority": "critical",
+            "labelIds": [labels[n] for n in ("ci-failure", "needs-build") if n in labels],
+        },
+        f"repair  main {short}: file ci-fix ({len(due)} base-red verifies)",
+    )
+    if not created:
+        return
+    identifier = created["identifier"]
+    wt, branch = worktree_lines(identifier)
+    try:
+        git(project, "worktree", "add", wt, "-b", branch, main_sha)
+        ok = git(project / wt, "branch", "--show-current").strip() == branch
+    except subprocess.SubprocessError:
+        ok = False
+    if not ok:
+        api.set_status(
+            created, {"status": "blocked"},
+            "Held: worktree allocation failed — the Dispatcher could not branch "
+            f"`{branch}` from origin/main {short}. Allocate it and assign the Architect.",
+            f"repair  {identifier}: worktree allocation failed",
+        )
+        return
+    api.write(
+        "PATCH", f"/issues/{created['id']}",
+        {"description": main_repair_body(due, main_sha, wt, branch), "status": "todo"},
+        f"repair  {identifier}: worktree {wt}",
+    )
+    api.write(
+        "PATCH", f"/issues/{created['id']}",
+        {"assigneeAgentId": agents["Architect"]},
+        f"repair  {identifier}: assign Architect",
+    )
 
 
 def close_superseded(api: Api) -> None:
