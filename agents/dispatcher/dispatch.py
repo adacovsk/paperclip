@@ -22,6 +22,8 @@ whole instruction set. This script runs those rows directly:
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task
   free Worker slots, promotion open         -> promote backlog (promote.py); candidates
                                              needing judgment go to the Coordinator
+  verify sentinel not yet routed            -> settle it without a model, or wake the
+                                             Architect on that Verify once
   its own routine fire, sweep finished      -> close the routine's issue
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
@@ -403,6 +405,50 @@ def main_repair_body(markers: list[BaseRed], main_sha: str, worktree: str, branc
         f"stuck stock. Escalated by: {who}.\n\n"
         f"## Compile errors\n{listed}\n"
     )
+
+
+_SRC_LOC = re.compile(r"[\w./-]+\.rs:\d+")
+
+
+def error_locations(text: str) -> set[str]:
+    """`path.rs:line` locations named in compiler or test output."""
+    return set(_SRC_LOC.findall(text))
+
+
+def verdict_errors(verdict: str) -> str:
+    return verdict.split("--- errors ---", 1)[1] if "--- errors ---" in verdict else ""
+
+
+def verdict_base(verdict: str) -> str:
+    """The main commit a cloud verdict built on: rebased-onto when it resolved, else base."""
+    fields = dict(re.findall(r"(?m)^(rebased-onto|base): *(\S+)", verdict))
+    return fields.get("rebased-onto") or fields.get("base") or ""
+
+
+def route_sentinel(exit_code: str, base_red: BaseRed | None, verdict: str, main_sha: str,
+                   known: list[BaseRed], landed_after: bool = False) -> tuple[str, str]:
+    """What a readable verify sentinel needs: ("settle" | "base-red" | "wake", why).
+
+    settle    nothing for a model to do; record it and move on
+    base-red  red only on errors another verify already blamed on this `main`:
+              record the marker, park the Verify, no model
+    wake      the Architect's state machine has work here
+    """
+    if exit_code == "94":
+        return "settle", "superseded; the Dispatcher closes it"
+    if exit_code == "100":
+        return "settle", "deliberately reaped"
+    if exit_code == "0" and landed_after:
+        return "settle", "already landed; the PR carries it"
+    if base_red and base_red.sha == main_sha and exit_code != "0":
+        return "settle", f"already recorded as red on main {main_sha[:9]}; the requeue re-dispatches it"
+    if exit_code == "1" and verdict and not base_red:
+        base = verdict_base(verdict)
+        seen = set().union(*(error_locations("\n".join(m.errors)) for m in known if m.sha == main_sha)) if known else set()
+        mine = error_locations(verdict_errors(verdict))
+        if base and main_sha.startswith(base[:9]) and mine and seen and mine <= seen:
+            return "base-red", "fails only where other verifies already blamed main " + main_sha[:9]
+    return "wake", f"sentinel {exit_code}"
 
 
 def iso_ts(stamp: str) -> float:
@@ -909,6 +955,7 @@ def sweep(api: Api, project: Path) -> None:
     close_landed_verifies(api, project, pr_heads)
     close_superseded(api)
     requeue_base_red(api.dry_run)
+    route_sentinels(api, agents, project)
     file_main_repair(api, agents, project)
     released = release_holds(api, pr_heads)
     promoted, judged = promotion.promote(api, agents, project, pr_heads)
@@ -975,6 +1022,86 @@ def close_landed_verifies(api: Api, project: Path, pr_heads: dict[str, str]) -> 
                 f"Verify complete: {why} (`{branch}`).",
                 f"verify  {verify['identifier']}: close ({why})",
             )
+
+
+def route_sentinels(api: Api, agents: dict, project: Path) -> None:
+    """Settle each newly readable verify sentinel, waking the Architect only when needed.
+
+    A sentinel used to wake the Architect directly, and a model run read it.
+    Over a day, 111 of those runs finished in under a minute: the result was one
+    already handled, a superseded verdict, or a red already recorded as main's.
+    Each sentinel is routed once, keyed on its value and mtime, so a repeated
+    callback or the scheduled sweep never re-wakes the Architect for it.
+    """
+    state = load_state("sentinels.json")
+    # The first sweep has no record of what the Architect already read. Waking it
+    # for every sentinel on disk would be the burst of no-op runs this step exists
+    # to remove, so the first sweep only records them.
+    seeding = not state
+    try:
+        main_sha = git(project, "rev-parse", "origin/main").strip()
+    except subprocess.SubprocessError:
+        return
+    markers = base_red_markers()
+    by_task = {m.task: m for m in markers}
+    verifies = [
+        v for v in api.issues(status="in_review", assigneeAgentId=agents["Architect"])
+        if stage_of(v) == "verify" and v.get("parentId")
+    ]
+    for verify in verifies:
+        parent = api.get(f"/issues/{verify['parentId']}")["identifier"]
+        path = VERIFY_DIR / f"{parent}.exit"
+        try:
+            code, mtime = path.read_text().strip(), path.stat().st_mtime
+        except OSError:
+            continue  # no result yet: the build is out, or the Architect has not launched it
+        key = f"{code}|{mtime}"
+        if state.get(verify["identifier"]) == key:
+            continue
+        if seeding or verify.get("executionRunId"):
+            state[verify["identifier"]] = key  # a live Architect run is already reading it
+            continue
+        try:
+            verdict = (VERIFY_DIR / f"{parent}.cloud.verdict").read_text()
+        except OSError:
+            verdict = ""
+        landed = landed_marker(parent)
+        action, why = route_sentinel(code, by_task.get(parent), verdict, main_sha,
+                                     [m for m in markers if m.task != parent],
+                                     bool(landed and landed[1] >= mtime))
+        if action == "base-red":
+            errors = sorted(error_locations(verdict_errors(verdict)))
+            if not api.dry_run:
+                (VERIFY_DIR / f"{parent}.base-red").write_text(
+                    "\n".join([main_sha, verify["identifier"], *(f"{e} (same failure as main's recorded break)" for e in errors)]) + "\n"
+                )
+            api.set_status(
+                verify, {"status": "blocked"},
+                f"Red only on main's known break: the verify of {parent} fails at "
+                + ", ".join(f"`{e}`" for e in errors)
+                + f", the same locations other verifies already recorded against origin/main {main_sha[:9]}. "
+                "Recorded a base-red marker; the requeue re-dispatches this verify once main moves. "
+                "No model run was spent on it.",
+                f"sentinel {verify['identifier']}: base-red ({why})",
+            )
+        elif action == "wake":
+            try:
+                api.write(
+                    "POST", f"/agents/{agents['Architect']}/wakeup",
+                    {"source": "automation", "triggerDetail": "callback", "reason": "verify-sentinel-ready",
+                     "payload": {"issueIdentifier": verify["identifier"]}},
+                    f"sentinel {verify['identifier']}: wake Architect ({why})",
+                )
+            except urllib.error.HTTPError as exc:
+                # Not recorded: the next sweep retries, and the callback's own
+                # fallback still woke the Architect while this was refused.
+                print(f"sentinel {verify['identifier']}: wake refused ({exc.code}); left for the next sweep", flush=True)
+                continue
+        else:
+            print(f"sentinel {verify['identifier']}: settled ({why})", flush=True)
+        state[verify["identifier"]] = key
+    state.setdefault("_seeded", "1")
+    save_state("sentinels.json", state, api.dry_run)
 
 
 def requeue_base_red(dry_run: bool) -> None:

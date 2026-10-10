@@ -356,6 +356,61 @@ class BaseRedMainRepair(unittest.TestCase):
         self.assertTrue(body.startswith("worktree: .paperclip/worktrees/AA-9\nbranch:   task/AA-9"))
 
 
+class SentinelRouting(unittest.TestCase):
+    MAIN = "a" * 40
+
+    def marker(self, task, errors=(), sha=None):
+        return dispatch.BaseRed(task, sha or self.MAIN, f"V-{task}", tuple(errors))
+
+    def verdict(self, base, errors):
+        return f"CLOUD-VERIFY-V2\nbase: {base}\nresult: FAIL\n--- errors ---\n{errors}\n"
+
+    def route(self, code, base_red=None, verdict="", known=(), landed=False):
+        return dispatch.route_sentinel(code, base_red, verdict, self.MAIN, list(known), landed)[0]
+
+    def test_superseded_and_reaped_settle(self):
+        self.assertEqual(self.route("94"), "settle")
+        self.assertEqual(self.route("100"), "settle")
+
+    def test_green_wakes_the_architect_to_land(self):
+        self.assertEqual(self.route("0"), "wake")
+
+    def test_green_already_landed_settles(self):
+        self.assertEqual(self.route("0", landed=True), "settle")
+
+    def test_red_already_recorded_on_this_main_settles(self):
+        self.assertEqual(self.route("1", base_red=self.marker("T-1")), "settle")
+
+    def test_red_recorded_on_an_old_main_wakes(self):
+        self.assertEqual(self.route("1", base_red=self.marker("T-1", sha="b" * 40)), "wake")
+
+    def test_red_at_main_s_known_break_is_recorded_without_a_model(self):
+        known = [self.marker("T-2", ["src/m.rs:285 test-failure x"])]
+        v = self.verdict(self.MAIN, "panicked at src/m.rs:285:9\nassertion failed")
+        self.assertEqual(self.route("1", verdict=v, known=known), "base-red")
+
+    def test_an_extra_error_of_its_own_wakes(self):
+        known = [self.marker("T-2", ["src/m.rs:285 test-failure x"])]
+        v = self.verdict(self.MAIN, "src/m.rs:285:9 failed\n--> src/mine.rs:10:4 E0308")
+        self.assertEqual(self.route("1", verdict=v, known=known), "wake")
+
+    def test_a_verdict_built_on_another_main_wakes(self):
+        known = [self.marker("T-2", ["src/m.rs:285 x"])]
+        v = self.verdict("c" * 40, "src/m.rs:285:9 failed")
+        self.assertEqual(self.route("1", verdict=v, known=known), "wake")
+
+    def test_a_red_no_other_verify_blamed_wakes(self):
+        self.assertEqual(self.route("1", verdict=self.verdict(self.MAIN, "src/m.rs:285:9")), "wake")
+
+    def test_conflict_and_inconclusive_still_wake(self):
+        for code in ("98", "99", "137", "75", "95", "96"):
+            self.assertEqual(self.route(code), "wake", code)
+
+    def test_rebased_onto_wins_over_base(self):
+        v = f"base: {'c' * 40}\nrebased-onto: {self.MAIN}\n--- errors ---\nsrc/m.rs:1\n"
+        self.assertEqual(dispatch.verdict_base(v), self.MAIN)
+
+
 class TrainHeads(unittest.TestCase):
     def test_train_head_is_also_the_tasks_pr(self):
         heads = dispatch.by_head([{"headRefName": "train/7/AA-13055", "headRefOid": "o"}], "headRefOid")
