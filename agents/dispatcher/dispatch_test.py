@@ -507,6 +507,18 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual(len(self.sweep()), 1)
         self.assertEqual(len(self.relaunched), 1)
 
+    def test_a_relaunch_past_the_time_budget_waits_for_the_next_sweep(self):
+        saved = dispatch.LAUNCH_BUDGET_S
+        dispatch.LAUNCH_BUDGET_S = 0
+        try:
+            self.sentinel("99")
+            self.assertEqual(self.sweep(), [])
+            self.assertEqual(self.relaunched, [])
+        finally:
+            dispatch.LAUNCH_BUDGET_S = saved
+        self.sweep()
+        self.assertEqual(self.relaunched, [("T-1", "retry")])
+
     def test_a_real_result_between_clears_the_strike(self):
         self.sentinel("99")
         self.sweep()

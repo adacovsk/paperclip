@@ -429,6 +429,16 @@ def verdict_base(verdict: str) -> str:
 
 
 INCONCLUSIVE = ("99", "75")
+# A relaunch pushes the branch and starts a cloud session, a minute or more
+# each, inside a run the server kills at its 600 s timeout. Past this many
+# seconds of run time no new build is started, and the relaunch waits for the
+# next sweep.
+LAUNCH_BUDGET_S = int(os.environ.get("DISPATCH_LAUNCH_BUDGET_S", "240"))
+RUN_START = time.monotonic()
+
+
+def launch_budget_left() -> bool:
+    return time.monotonic() - RUN_START < LAUNCH_BUDGET_S
 
 
 def route_sentinel(exit_code: str, base_red: BaseRed | None, verdict: str, main_sha: str,
@@ -1107,6 +1117,9 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
                                      bool(landed and landed[1] >= mtime),
                                      verified_base, state.get(strike_key) == code)
         if action in ("retry", "fresh"):
+            if not launch_budget_left():
+                print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
+                continue  # not recorded, so the next sweep routes it again
             relaunched = relaunch(api, verify, parent, action, why)
             if relaunched:
                 state[verify["identifier"]] = key
