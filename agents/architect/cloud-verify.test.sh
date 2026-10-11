@@ -91,6 +91,66 @@ seed_state AA-1 "$REF" "$NOW"
 make_git "refs/heads/cloud-verify/AA-12/bbb222"
 "$CV" poll AA-1 >/dev/null 2>&1;               check "AA-12 ref not matched by AA-1 -> 75" "$?" 75
 
+echo "resume:"
+# Poll deletes the remote ref on reading it, so a launch whose verdict was read
+# can never answer again. Resuming it waits out the deadline and reports 99; a
+# finished verify must come back as "offload afresh" (4) instead.
+make_resume_git() {  # published-ref ("" = none on origin)
+  cat > "$BIN/git" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+  branch)     echo task/AA-5; exit 0 ;;
+  ls-remote)  [ -n "$1" ] && [ "\$3" = "$1" ] && echo "deadbee\trefs/x"; exit 0 ;;
+  *)          exit 0 ;;
+esac
+EOF
+  chmod +x "$BIN/git"
+}
+cat > "$BIN/session" <<EOF
+#!/usr/bin/env bash
+echo "\$1 \$2" >> "$DIR/session.calls"
+[ "\$1" = GET ] && echo "{\"status_bucket\": \"\$(cat "$DIR/session.status")\"}"
+exit 0
+EOF
+chmod +x "$BIN/session"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/systemd-run"; chmod +x "$BIN/systemd-run"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/detached"\n' "$DIR" > "$BIN/setsid"; chmod +x "$BIN/setsid"
+export CLOUD_SESSION="$BIN/session"
+R5="refs/heads/cloud-verify/AA-5/eee555"
+resume_case() {  # delivered-ref published-ref session-status
+  rm -f "$CLOUD_VERIFY_DIR"/AA-5.* "$DIR/detached" "$DIR/session.calls"
+  seed_state AA-5 "$R5" "$NOW"; echo session_x > "$CLOUD_VERIFY_DIR/AA-5.cloud.session"
+  [ -n "$1" ] && printf '%s\n' "$1" > "$CLOUD_VERIFY_DIR/AA-5.cloud.delivered"
+  make_resume_git "$2"; printf '%s' "$3" > "$DIR/session.status"
+  "$CV" resume AA-5 >/dev/null 2>&1; rc=$?; sleep 0.2
+}
+resume_case "$R5" "" completed
+check "delivered launch -> 4"                     "$rc" 4
+check "  ...no watcher started"                   "$([ -f "$DIR/detached" ] && echo yes || echo no)" no
+check "  ...launch record dropped"                "$([ -f "$CLOUD_VERIFY_DIR/AA-5.cloud.launched" ] && echo yes || echo no)" no
+check "  ...finished session deleted"             "$(grep -c '^DELETE session_x$' "$DIR/session.calls")" 1
+resume_case "$R5" "" running
+check "delivered, session still running -> 4"     "$rc" 4
+check "  ...running session not deleted"          "$(grep -c '^DELETE' "$DIR/session.calls")" 0
+resume_case "" "" completed
+check "finished session, no ref on origin -> 4"   "$rc" 4
+resume_case "" "" running
+check "still building -> resumed"                 "$rc" 0
+check "  ...watcher started"                      "$(grep -c "rewatch AA-5" "$DIR/detached" 2>/dev/null)" 1
+resume_case "" "$R5" completed
+check "verdict waiting on origin -> resumed"      "$rc" 0
+resume_case "" "" ""
+check "session unreadable -> resumed, not retired" "$rc" 0
+resume_case "refs/heads/cloud-verify/AA-5/old111" "" running
+check "delivered marker for another head -> resumed" "$rc" 0
+rm -f "$CLOUD_VERIFY_DIR"/AA-5.* "$BIN/systemd-run" "$BIN/setsid" "$BIN/session"
+unset CLOUD_SESSION
+
+echo "poll marks the launch delivered:"
+seed_state AA-1 "$REF" "$NOW"; make_git "$REF"; verdict PASS
+"$CV" poll AA-1 >/dev/null 2>&1
+check "delivered names the read ref"              "$(cat "$CLOUD_VERIFY_DIR/AA-1.cloud.delivered" 2>/dev/null)" "$REF"
+
 echo "launch preconditions:"
 "$CV" poll AA-404 >/dev/null 2>&1;             check "poll before launch -> 96" "$?" 96
 make_git ""

@@ -451,7 +451,7 @@ above, with these cloud-specific meanings (you can tell a cloud result by
   why its first attempt was discarded. Only when `offload` refuses (a second
   rejection at that head) launch the **local** chain. A later head (a rebase or a
   fix commit) offloads normally — the refusal does not outlive the head it judged.
-- **No sentinel, a `{task-id}.cloud.launched`, and no live watcher** (`{task-id}.pid` empty, or not a `cloud-verify` process) → the watcher died, not the VM: its session is still building or has already published. From the worktree run `"$CV" resume "{task-id}" "{verify-task-id}"` and exit the run. Never `offload` again in this state — that starts a second VM for a verdict the first one may already have written.
+- **No sentinel, a `{task-id}.cloud.launched`, and no live watcher** (`{task-id}.pid` empty, or not a `cloud-verify` process) → the watcher died, not the VM: its session is still building or has already published. From the worktree run `"$CV" resume "{task-id}" "{verify-task-id}"` and exit the run. Never `offload` again in this state — that starts a second VM for a verdict the first one may already have written. **The one exception is `resume` exiting `4`**: that launch already delivered its verdict (or its session finished with nothing on origin), so there is nothing to wait for, and `resume` has dropped the launch record. Treat it as "absent + no build" and offload afresh; the verdict it gave described an older `main`, which is why its sentinel was cleared.
 - **`99`** → no verdict ref by the deadline. That is usually a slow session, not
   a dead one, and its verdict can still land after the sentinel is written. So
   `rm -f "$EXIT"` and offload again **on the same head**. The ref is keyed on the

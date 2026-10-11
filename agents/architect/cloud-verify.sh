@@ -90,6 +90,7 @@ STATE_DIR="${CLOUD_VERIFY_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify}
 # only detection latency here; a deadline shorter than the tail throws away
 # finished verdicts and pays for the build twice.
 DEADLINE="${CLOUD_VERIFY_DEADLINE:-10800}"
+CLOUD_SESSION="${CLOUD_SESSION:-$(dirname "$0")/cloud-session.sh}"
 
 die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 
@@ -274,6 +275,7 @@ cmd_launch() {
   sid="$(printf '%s' "$out" | sed -n 's/.*\(session_[A-Za-z0-9]\{8,\}\).*/\1/p' | head -1)"
   [ -n "$sid" ] || { printf '%s\n' "$out" >&2; die "no session id in launch output"; }
 
+  rm -f "$STATE_DIR/$task.cloud.delivered"
   printf '%s\n' "$sid"  > "$STATE_DIR/$task.cloud.session"
   printf '%s\n' "$ref"  > "$STATE_DIR/$task.cloud.ref"
   printf '%s\n' "$head" > "$STATE_DIR/$task.cloud.launched-head"
@@ -310,6 +312,9 @@ cmd_poll() {
     refs/heads/cloud-verify/*) git push -q origin --delete "$ref" 2>/dev/null || true ;;
     *) die "refusing to delete unexpected ref $ref" 99 ;;
   esac
+  # The remote ref is gone from here on, so this launch can never answer again.
+  # `resume` reads this to refuse waiting on it.
+  printf '%s\n' "$ref" > "$STATE_DIR/$task.cloud.delivered"
   printf '%s\n' "$body" > "$STATE_DIR/$task.cloud.verdict"
   printf '%s\n' "$body"
   case "$(field "$body" result)" in
@@ -744,8 +749,21 @@ detach() {
 # launch, and no live watcher. Never starts a VM — the launched session is still
 # building or has already published, and `rewatch` reads the same ref it would.
 # Run from the task's worktree, like `offload`.
+#
+# A launch whose verdict was already read is NOT resumable, and exits 4 so the
+# caller offloads afresh. Poll deletes the remote ref on reading it, so a rewatch
+# of a delivered launch waits out the whole deadline for a ref that cannot
+# reappear, then reports 99 — and two 99s escalate a task whose build finished.
+# The state looks resumable whenever something cleared the sentinel but not the
+# launch: a base-red requeue, a refused relaunch. The verdict it gave described
+# an older main, which is why the sentinel was cleared in the first place, so the
+# only useful next build is a new one on current main.
+#
+# A session that is still building on an older main is NOT discarded. main moves
+# many times an hour; restarting every verify it overtakes would mean none ever
+# finish. Landing's freshness gate re-verifies a stale green when it matters.
 cmd_resume() {
-  local task="${1:?task id}" verify_task="${2:-$1}" pid
+  local task="${1:?task id}" verify_task="${2:-$1}" pid ref
   [ -f "$STATE_DIR/$task.cloud.launched" ] || { echo "no cloud launch recorded for $task"; exit 1; }
   [ ! -f "$STATE_DIR/$task.exit" ] || { echo "$task already has a sentinel ($(cat "$STATE_DIR/$task.exit"))"; exit 1; }
   pid="$(cat "$STATE_DIR/$task.pid" 2>/dev/null)"
@@ -753,8 +771,45 @@ cmd_resume() {
     echo "watcher for $task is alive (pid $pid)"; exit 1
   fi
   [ "$(git branch --show-current)" = "task/$task" ] || { echo "not in task/$task's worktree"; exit 1; }
+  ref="$(cat "$STATE_DIR/$task.cloud.ref" 2>/dev/null)"
+  if [ -n "$ref" ] && [ "$(cat "$STATE_DIR/$task.cloud.delivered" 2>/dev/null)" = "$ref" ]; then
+    retire_launch "$task" "its verdict was already read"
+  fi
+  # State written before `.cloud.delivered` existed: a finished session with no
+  # ref on origin has nothing left to publish either.
+  if [ -n "$ref" ] && [ -z "$(git ls-remote origin "$ref" 2>/dev/null)" ] \
+     && [ "$(session_status "$task")" = "completed" ]; then
+    retire_launch "$task" "its session finished and no verdict is on origin"
+  fi
   detach "$task" rewatch "$task" "$verify_task"
   echo "resumed $task: watching $(cat "$STATE_DIR/$task.cloud.ref")"
+}
+
+# Prints the session's status bucket ("completed" once it has stopped), or
+# nothing when it cannot be read. Unreadable is never treated as finished.
+session_status() {
+  local sid
+  sid="$(cat "$STATE_DIR/$1.cloud.session" 2>/dev/null)"
+  [ -n "$sid" ] || return 0
+  "$CLOUD_SESSION" GET "$sid" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("status_bucket") or "")
+except Exception:
+    pass' 2>/dev/null
+}
+
+# Drop a launch that will never answer, so nothing resumes it again, and delete
+# its session once it has stopped (deleting a running one kills its build).
+retire_launch() {
+  local task="$1" why="$2" sid
+  sid="$(cat "$STATE_DIR/$task.cloud.session" 2>/dev/null)"
+  if [ -n "$sid" ] && [ "$(session_status "$task")" = "completed" ]; then
+    "$CLOUD_SESSION" DELETE "$sid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$STATE_DIR/$task.cloud.launched" "$STATE_DIR/$task.cloud.session"
+  echo "not resumable: $task's cloud launch is over ($why) — offload afresh"
+  exit 4
 }
 
 cmd_rewatch() {
