@@ -86,8 +86,10 @@ for marker in "$S"/*.base-red; do
   fi
 
   # Clear before re-dispatch: a woken Architect must find no result, so it
-  # launches rather than re-reading the stale red and escalating again.
-  rm -f "$S/$task.exit" "$S/$task.cloud.verdict" "$S/$task.cloud.head" "$marker"
+  # launches rather than re-reading the stale red and escalating again. The
+  # cloud launch record goes too: with it and no sentinel the state reads as a
+  # dead watcher, and resuming that waits on a verdict that was already read.
+  rm -f "$S/$task.exit" "$S/$task.cloud.verdict" "$S/$task.cloud.head" "$S/$task.cloud.launched" "$marker"
   [ "$esc" != "$task" ] && rm -f "$S/$esc.exit"
 
   id=""; status=""; assignee=""   # a failed read must not reuse the last marker's task

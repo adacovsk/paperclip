@@ -94,6 +94,15 @@ bash "$R" >/dev/null
 [ "$(grep -c PATCH "$D/calls")" = 2 ] && ok "an unknown task does not reuse the previous lookup" \
   || fail "PATCH count $(grep -c PATCH "$D/calls"), expected 2"
 
+# 4b. The cloud launch record is cleared with the sentinel, so the woken
+# Architect does not read "launch, no sentinel" as a dead watcher and resume it.
+reset
+printf '%s\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"; date +%s > "$V/T-1.cloud.launched"
+echo '[{"identifier":"T-1","id":"u1","status":"blocked","assigneeAgentId":"arch"}]' > "$D/issues.json"
+bash "$R" >/dev/null
+[ ! -e "$V/T-1.cloud.launched" ] && ok "requeue clears the cloud launch record" \
+  || fail "cloud launch record survived the requeue"
+
 # 5. --dry-run changes nothing.
 reset
 printf '%s\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
