@@ -37,6 +37,7 @@ set -uo pipefail
 REPO="${TRAIN_GATE_REPO:-$(git remote get-url origin 2>/dev/null | sed -E 's#^(git@|https://)github\.com[:/]##; s#\.git$##')}"
 GATE_DIR="${TRAIN_GATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify/train-gate}"
 SEM="${TRAIN_GATE_SEM:-$(cd "$(dirname "$0")" && pwd)/cargo-sem.sh}"
+STATUS="${TRAIN_GATE_STATUS:-$(cd "$(dirname "$0")" && pwd)/post-verify-status.sh}"
 
 die() { printf 'train-gate: %s\n' "$1" >&2; exit "${2:-4}"; }
 
@@ -115,6 +116,14 @@ cmd_check() {
 cmd_merge() {
   cmd_check "$@" || exit $?
   local i n prev="$MAIN" now
+  # `pipeline/verify` is posted on each head here, after `check` has just
+  # re-proved the tree, and not when `verify` records it: a status is keyed on
+  # the head, not on the tree, so one posted at verify time would still read
+  # green after main moved and let the stale stack be merged by hand.
+  for i in "${!PRS[@]}"; do
+    PIPELINE_VERIFY_REPO="$REPO" "$STATUS" cargo "${HEADS[$i]}" "train tree ${TREE:0:9} green via train-gate" >/dev/null \
+      || die "cannot post pipeline/verify on PR #${PRS[$i]}; nothing merged" 5
+  done
   for i in "${!PRS[@]}"; do
     n="${PRS[$i]}"
     gh pr merge "$n" --repo "$REPO" --merge --match-head-commit "${HEADS[$i]}" >/dev/null \

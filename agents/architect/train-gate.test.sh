@@ -15,7 +15,7 @@ TG="$HERE/train-gate.sh"
 DIR="$(mktemp -d)"
 trap 'rm -rf "$DIR"' EXIT
 BIN="$DIR/bin"; mkdir -p "$BIN"
-export TRAIN_GATE_DIR="$DIR/gate" TRAIN_GATE_SEM="$BIN/sem" TRAIN_GATE_REPO=o/r
+export TRAIN_GATE_DIR="$DIR/gate" TRAIN_GATE_SEM="$BIN/sem" TRAIN_GATE_REPO=o/r TRAIN_GATE_STATUS="$BIN/status"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
@@ -56,12 +56,18 @@ case "\$1 \$2" in
     echo MERGED > "$DIR/pr/\$n.state" ;;
 esac
 EOF
-chmod +x "$BIN/sem" "$BIN/gh"
+# The status poster records "<mode> <sha>" per call; STATUS_FAIL=1 refuses.
+cat > "$BIN/status" <<EOF
+#!/usr/bin/env bash
+[ -n "\${STATUS_FAIL:-}" ] && exit 3
+printf '%s %s\n' "\$1" "\$2" >> "$DIR/status.log"
+EOF
+chmod +x "$BIN/sem" "$BIN/gh" "$BIN/status"
 export PATH="$BIN:$PATH"
 
 # setup: main has a.rs; PR 1 adds b.rs, PR 2 (stacked on 1) adds c.rs.
 setup() {
-  rm -rf "$O" "$W" "$L" "$DIR/pr" "$DIR/sem.log" "$TRAIN_GATE_DIR"; mkdir -p "$DIR/pr"
+  rm -rf "$O" "$W" "$L" "$DIR/pr" "$DIR/sem.log" "$DIR/status.log" "$TRAIN_GATE_DIR"; mkdir -p "$DIR/pr"
   git init -q --bare -b main "$O"
   git init -q -b main "$W"; g remote add origin "$O"
   echo a > "$W/a.rs"; g add a.rs; g commit -qm base; g push -q origin main
@@ -120,9 +126,17 @@ echo "merge:"
 setup
 tg merge 1 2;                                 check "merge without a record -> 3" "$?" 3
 check "  ...nothing merged" "$(cat "$DIR/pr/1.state" 2>/dev/null || echo OPEN)" OPEN
+check "  ...no pipeline/verify posted" "$(cat "$DIR/status.log" 2>/dev/null | wc -l)" 0
+tg verify 1 2
+check "  ...verify alone posts no status" "$(cat "$DIR/status.log" 2>/dev/null | wc -l)" 0
+STATUS_FAIL=1 tg merge 1 2;                   check "status post fails -> 5" "$?" 5
+check "  ...nothing merged" "$(cat "$DIR/pr/1.state" 2>/dev/null || echo OPEN)" OPEN
+setup
 tg verify 1 2; VERIFIED="$(cat "$DIR/out" | sed -n 's/^GREEN: tree \([0-9a-f]*\).*/\1/p')"
 tg merge 1 2;                                 check "verified stack merges -> 0" "$?" 0
 check "  ...main carries the verified tree" "$(git -C "$O" rev-parse 'main^{tree}')" "$VERIFIED"
+check "  ...posted cargo on every head" "$(grep -c '^cargo ' "$DIR/status.log")" 2
+check "  ...on the PR heads themselves" "$(cut -d' ' -f2 "$DIR/status.log" | sort | tr '\n' ' ')" "$(git -C "$L" rev-parse refs/train-gate/pr/1 refs/train-gate/pr/2 | sort | tr '\n' ' ')"
 
 setup; tg verify 1 2
 # Another merge lands inside the window between the check and PR 1's merge.

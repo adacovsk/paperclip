@@ -553,6 +553,7 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
   # do not spend a capped re-verify on it. The script fails closed.
   if [ -n "$OLD_BASE" ] && ! "$HOME/code/paperclip/agents/architect/freshness-reverify-needed.sh" "$OLD_BASE" origin/main; then
     echo "origin/main advanced only in documentation since the verified base — the green build stands; landing without a re-verify"
+    VERIFY_NOTE="cargo green; main advanced in docs only since"
   elif [ "$N" -lt "$FRESHNESS_CAP" ]; then
     # Under the cap → re-verify: bump the counter, drop the sentinel, relaunch
     # the detached build, exit. A later wake re-evaluates the sentinel.
@@ -622,6 +623,7 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
     # At/over the cap → STOP re-verifying. We're already rebased onto current main
     # (just not re-run through cargo); fall through to push+PR and flag it loudly.
     echo "FRESHNESS CAP HIT (anti-livelock bound): origin/main advanced ${FRESHNESS_CAP}× under the detached build; landing task/{task-id} on $(git rev-parse --short origin/main) WITHOUT re-verifying the latest advance. Operator: confirm no merge interaction with recently-landed PRs."
+    VERIFY_NOTE="cargo green on an older main; rebased onto main unbuilt (freshness cap)"
   fi
 fi
 
@@ -640,6 +642,15 @@ gh auth switch --user "${PAPERCLIP_GH_USER:?set PAPERCLIP_GH_USER to your repo's
 
 # 3. Push the task branch (from inside the worktree, on the task branch).
 git push -u origin "task/{task-id}"
+
+# 3.5 Record the verify on the pushed SHA as the `pipeline/verify` status —
+#     the context `main`'s branch protection requires. It names this exact
+#     commit, so anything pushed onto the branch afterwards starts without one
+#     and cannot merge on this verify. Post it only here, on a head that came
+#     out of a green sentinel; never on a commit cargo did not build.
+"$HOME/code/paperclip/agents/architect/post-verify-status.sh" cargo "$(git rev-parse HEAD)" \
+    "${VERIFY_NOTE:-cargo clippy + test --lib green, landing gate green}" \
+  || echo "WARNING: pipeline/verify not posted on task/{task-id} — the PR cannot merge until it is; say so in your final comment"
 
 # 4. Open the PR — base = main, head = task branch. Idempotent: skip if a
 #    PR for this head already exists (e.g. a re-dispatched run after a
@@ -683,6 +694,11 @@ EOF
 if ! gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q .; then
   gh pr create --base main --head "task/{task-id}" --title "<task title>" --body-file "$BODY"
 fi
+
+#    A `Verify: dependency bump PR #<n>` lands nothing: there is no task
+#    branch and no PR to open. On a green sentinel, post step 3.5's status on
+#    the bump PR's head (the commit the worktree built), comment the result on
+#    the PR, and stop — the merge stays the operator's.
 
 # 5. STRUCTURAL POSTCONDITION — a missing remote branch or PR fails the run
 #    (non-zero exit). Run-success is NOT verification; a PR must exist.
