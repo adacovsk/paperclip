@@ -5,7 +5,8 @@
 # alone (re-running would only reproduce the red); a stale one has its result
 # deleted BEFORE the task is re-dispatched; the re-dispatch toggles the assignee
 # through null (the only thing that fires a wake); and a task that is no longer
-# blocked is cleared but not touched.
+# blocked is cleared but not touched, unless a newer `Verify:` subtask of the
+# same task is the one blocked — the marker may still name a cancelled predecessor.
 #
 # Run: bash agents/architect/requeue-base-red.test.sh
 set -u
@@ -102,6 +103,20 @@ echo '[{"identifier":"T-1","id":"u1","status":"blocked","assigneeAgentId":"arch"
 bash "$R" >/dev/null
 [ ! -e "$V/T-1.cloud.launched" ] && ok "requeue clears the cloud launch record" \
   || fail "cloud launch record survived the requeue"
+
+# 6. Marker names a cancelled predecessor Verify; a newer one re-escalated the
+#    same red and is the one blocked → that one is re-dispatched.
+reset
+printf '%s\nV-1\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"; echo 1 > "$V/V-2.exit"
+echo '[{"identifier":"V-1","id":"u1","status":"cancelled","assigneeAgentId":"arch","title":"Verify: T-1 old","issueNumber":1},
+{"identifier":"V-3","id":"u3","status":"blocked","assigneeAgentId":"arch","title":"Verify: T-10 other","issueNumber":3},
+{"identifier":"V-2","id":"u2","status":"blocked","assigneeAgentId":"arch","title":"Verify: T-1 newer","issueNumber":2}]' > "$D/issues.json"
+out="$(bash "$R")"
+p1="$(grep PATCH "$D/calls" | sed -n 1p)"
+case "$p1" in *"/issues/u2 "*'"status":"todo","assigneeAgentId":null'*) ok "falls back to the blocked successor Verify";; *) fail "fallback PATCH wrong: $p1";; esac
+! grep -q "/issues/u3 " "$D/calls" && ok "a Verify of T-10 is not taken for T-1" || fail "matched the T-10 verify"
+[ ! -e "$V/V-2.exit" ] && ok "successor's stale sentinel deleted" || fail "successor sentinel survived"
+case "$out" in *"requeued V-2"*) ok "reports the successor";; *) fail "no successor report: $out";; esac
 
 # 5. --dry-run changes nothing.
 reset

@@ -72,6 +72,21 @@ for i in d:
         break' "$1"
 }
 
+# Prints "<uuid> blocked <assigneeAgentId|-> <identifier>" for the newest
+# blocked issue titled `Verify: <task>` (and not `Verify: <task>0…`).
+lookup_verify() {
+  api GET "/companies/$PAPERCLIP_COMPANY_ID/issues?q=$1" | python3 -c '
+import json, re, sys
+d = json.load(sys.stdin)
+d = d if isinstance(d, list) else d.get("issues", [])
+pat = re.compile(r"Verify: " + re.escape(sys.argv[1]) + r"(?![0-9A-Za-z])")
+hits = [i for i in d if i.get("status") == "blocked" and pat.match(i.get("title") or "")]
+hits.sort(key=lambda i: i.get("issueNumber") or 0, reverse=True)
+if hits:
+    i = hits[0]
+    print(i["id"], "blocked", i.get("assigneeAgentId") or "-", i.get("identifier"))' "$1"
+}
+
 shopt -s nullglob
 for marker in "$S"/*.base-red; do
   task="$(basename "$marker" .base-red)"
@@ -94,6 +109,19 @@ for marker in "$S"/*.base-red; do
 
   id=""; status=""; assignee=""   # a failed read must not reuse the last marker's task
   read -r id status assignee < <(lookup "$esc" 2>/dev/null) || true
+  # The named task is whoever escalated first. A later `Verify:` subtask can
+  # re-escalate the same red and keep the marker, so the name may be a
+  # cancelled or done predecessor while the live verify sits blocked. Clearing
+  # the marker on the stale name would then strand that verify with nothing
+  # left to wake it, so fall back to the newest blocked `Verify: <task>`.
+  if [ "$status" != "blocked" ]; then
+    fb=""; fbid=""; fbst=""; fbas=""
+    read -r fbid fbst fbas fb < <(lookup_verify "$task" 2>/dev/null) || true
+    if [ -n "$fbid" ]; then
+      [ "$fb" != "$esc" ] && rm -f "$S/$fb.exit"
+      id="$fbid"; status="$fbst"; assignee="$fbas"; esc="$fb"
+    fi
+  fi
   if [ -z "$id" ]; then
     echo "$task: cleared; $esc not found in the task list — not re-dispatched"; continue
   fi
