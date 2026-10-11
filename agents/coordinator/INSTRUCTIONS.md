@@ -122,7 +122,7 @@ minutes.
 2a. **Dependency-bump intake.** `gh pr list --state open --json number,title,headRefName,files` from the project checkout; select PRs whose changed files include `Cargo.toml` or `Cargo.lock`. For each not already mapped to an active AA task (search task titles for the PR number):
    a. Create AA-<n> titled `Verify: dependency bump PR #<pr>`, label `needs-build`, `dedupeKey: "verify"`, status `todo`.
    b. Allocate the worktree from **the PR's head branch**, not `origin/main` — the bump only exists on the PR branch, so a main-rooted worktree compiles the old versions and reports a meaningless green.
-   c. Assign Architect. It runs cargo against the worktree and comments the result on the PR; it does **not** merge — dependency bumps stay an operator decision.
+   c. Assign Architect. It runs cargo against the worktree, comments the result on the PR and, when green, posts `pipeline/verify` on the PR head it built (Architect §Landing); it does **not** merge — dependency bumps stay an operator decision.
    Scoped to manifest changes rather than to a bot actor, so a hand-edited dependency is covered too.
    **Why this exists**: this step replaces the `pull_request` trigger that was removed to conserve Actions minutes. A bump is not a task, so no agent otherwise ever builds it. **Do not drop this step without restoring that trigger** — deleting both leaves dependency bumps verified by nobody. → [why nothing else ever builds a bump](rationale/dependency-bump-intake.md)
 2b. **Requeue base-red verifies.** Run `"$HOME/code/paperclip/agents/architect/requeue-base-red.sh"` (needs `PAPERCLIP_PROJECT` and `PAPERCLIP_COMPANY_ID`). An Architect that escalates a red already on `main` leaves a `<task>.base-red` marker naming the `origin/main` it built against; once `main` has moved past it the script deletes the stale result and re-dispatches the blocked verify, with a comment naming what resolved it. Run it every fire, before step 3: a base-red verify is otherwise `blocked` with nothing left to wait on, and it was an operator deleting sentinels by hand that unstranded the last batch — one of them the fix `main` itself was waiting on. Record the lines it prints.
@@ -523,13 +523,23 @@ For each parent `{task-id}`:
    - **Open PR** → publish the verified tip if the PR does not already carry it, then step 5.
      Compare `H=$(git -C .paperclip/worktrees/{task-id} rev-parse HEAD)` with
      `O=$(git rev-parse origin/task/{task-id})`:
-     - `H == O` → nothing to do.
+     - `H == O` → nothing to publish.
      - `O` is an ancestor of `H` → `git push origin "$H:refs/heads/task/{task-id}"`.
      - Diverged (a Worker or Reviewer rebase rewrote the branch) → **never force-push.** In the
        worktree run `git merge --no-ff --no-commit -s ours "$O"`, `git read-tree -u --reset "$H"`,
        then `git commit -m "Merge rebased tip onto the PR branch"`. That produces a commit whose
        tree is exactly the verified `H` and whose history descends from `O`. Push that commit as a
        fast-forward.
+
+     Then make sure the PR head carries `pipeline/verify`, the status `main`'s branch
+     protection requires (`gh api repos/{owner}/{repo}/commits/<head>/status`). If it
+     lacks one and the head is `H` (equal, or after an ancestor push), post
+     `"$HOME/code/paperclip/agents/architect/post-verify-status.sh" cargo "$H" "cargo green per verify sentinel"` — the same
+     cargo-green sentinel this sweep lands on. After the diverged publish, post
+     `"$HOME/code/paperclip/agents/architect/post-verify-status.sh" carry <merge-commit> "$H" "republished verified tip"`; it
+     refuses unless the merge commit's tree is `H`'s and `H` is already green, so post
+     `H` first if it is not. Never post on a head this sweep did not land from a green
+     sentinel.
 
      Skipping this is how rebased tips stayed local while their PRs kept the stale pre-rebase head.
      GitHub then showed the PR as conflicting while the clean-merge gate passed, because the gate
@@ -545,6 +555,15 @@ For each parent `{task-id}`:
      BODY=$(mktemp)
      (cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/generate_pr_body.py {task-id}) > "$BODY" \
        && gh pr create --head task/{task-id} --base main --title "<task title>" --body-file "$BODY"
+     # The status main requires, on the head just published. data-only has no
+     # cargo, so it gets `nocargo`, which refuses a diff that touches Rust.
+     H=$(git -C "$PAPERCLIP_PROJECT/.paperclip/worktrees/{task-id}" rev-parse HEAD)
+     if [ -f "$VERIFY_DIR/{task-id}.base" ]; then
+       (cd "$PAPERCLIP_PROJECT" && "$HOME/code/paperclip/agents/architect/post-verify-status.sh" cargo "$H" "cargo green per verify sentinel; landing gate green")
+     else
+       (cd "$PAPERCLIP_PROJECT" && "$HOME/code/paperclip/agents/architect/post-verify-status.sh" nocargo "$H" "data-only; landing gate green") \
+         || echo "data-only task/{task-id} touches Rust — block the parent: it needs the Architect"
+     fi
      ```
 
      **A red landing gate means no PR.** It runs `scripts/verify.sh` (guards,
