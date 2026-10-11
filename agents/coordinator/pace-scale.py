@@ -3,7 +3,7 @@
 
 Prints one JSON object:
 
-    {"deficit": 51, "tier": 3, "worker_slots": 12, "reviewer_slots": 12,
+    {"deficit": 51, "tier": 3, "worker_slots": 12, "reviewer_slots": 10,
      "writer_threshold": 3, "planner_floor": 40, "stock": 12,
      "promote_slots": 12, "why": "..."}
 
@@ -47,10 +47,10 @@ backlog until the pile drains below it. The floor tier still admitted 2
 promotions a fire, ~96 a day, more than the pipeline lands. The backlog itself
 keeps filling (the Planner's target is `worker_slots`, and `planner_floor`
 keeps the floor tier's value): it is a queue, not load, and is ready the
-moment promotion reopens. Worker and
-Reviewer slots keep the pace tier, because the Coordinator spends Worker slots
-on unblock work (conflict rebases) before it promotes anything, and review
-drains. The cap never widens, and an unreadable stock caps at baseline.
+moment promotion reopens. Worker
+slots keep the pace tier, because the Coordinator spends Worker slots on unblock
+work (conflict rebases) before it promotes anything. Reviewer slots sit at the
+server's ceiling in every tier (REVIEWER_SLOTS): review drains. The cap never widens, and an unreadable stock caps at baseline.
 
 A VERIFY BLOCKED ONLY ON A RED MAIN IS NOT STOCK. Its Architect recorded a
 `<task>.base-red` marker: the task's own diff is clean, and the requeue
@@ -76,19 +76,24 @@ _spec = importlib.util.spec_from_file_location(
 cloud_pace = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cloud_pace)
 
-#: (deficit must exceed, worker slots, reviewer slots, writer threshold, planner floor)
+#: (deficit must exceed, worker slots, writer threshold, planner floor)
 #: A negative deficit is usage *ahead* of the calendar: the week's quota is being
 #: spent faster than the week passes, so supply steps down to a floor of 2 slots
 #: rather than running the account dry before the reset and stalling every agent.
 TIERS = [
-    (float("-inf"), 2, 2, 2, 5),
-    (-20.0, 4, 4, 2, 10),
-    (-10.0, 6, 6, 2, 15),
-    (-5.0, 8, 8, 2, 20),
-    (0.0, 10, 10, 2, 25),
-    (10.0, 12, 12, 3, 30),
-    (25.0, 12, 12, 3, 40),
+    (float("-inf"), 2, 2, 5),
+    (-20.0, 4, 2, 10),
+    (-10.0, 6, 2, 15),
+    (-5.0, 8, 2, 20),
+    (0.0, 10, 2, 25),
+    (10.0, 12, 3, 30),
+    (25.0, 12, 3, 40),
 ]
+#: Reviewer run slots, at the server's ceiling in every tier. A Reviewer runs no
+#: cargo and no pytest, so the box-load reason that caps Worker slots does not
+#: apply, and review only drains work a Worker already produced: narrowing it
+#: saves no quota, it just parks finished diffs ahead of the Architect.
+REVIEWER_SLOTS = 10
 #: Today's fixed values, and what an unreadable meter falls back to.
 BASELINE = 3
 
@@ -115,7 +120,7 @@ def cap_supply(result: dict, stock: int | None) -> dict:
     result["promote_slots"] = result["worker_slots"]
     result["why"] = f"{result['why']}; {why}"
     if cap is not None and cap < result["tier"]:
-        _, workers, _, writers, floor = TIERS[cap]
+        _, workers, writers, floor = TIERS[cap]
         result.update(promote_slots=workers, writer_threshold=writers, planner_floor=floor)
     if cap == 0:
         result["promote_slots"] = 0  # promotion closed: unblock and land only
@@ -178,12 +183,12 @@ def scale(usage: dict | None, now: float) -> dict:
 
 
 def _tier(i: int, deficit: float | None, why: str) -> dict:
-    _, workers, reviewers, writers, floor = TIERS[i]
+    _, workers, writers, floor = TIERS[i]
     return {
         "deficit": None if deficit is None else round(deficit),
         "tier": i,
         "worker_slots": workers,
-        "reviewer_slots": reviewers,
+        "reviewer_slots": REVIEWER_SLOTS,
         "writer_threshold": writers,
         "planner_floor": floor,
         "why": why,
