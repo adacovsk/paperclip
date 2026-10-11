@@ -54,7 +54,7 @@ summary wakes you again — six consecutive no-op fires, observed.
 | Assignments | `GET /api/companies/:companyId/issues?assigneeAgentId=:id&status=todo,in_progress,blocked` |
 | Checkout | `POST /api/issues/:issueId/checkout` |
 | Task context | `GET /api/issues/:issueId/heartbeat-context` |
-| Comments | `GET /api/issues/:issueId/comments` |
+| Comments | `GET /api/issues/:issueId/comments` — **newest first**; add `?order=asc` for oldest first |
 | Comment delta | `GET /api/issues/:issueId/comments?after=:id&order=asc` |
 | Update task | `PATCH /api/issues/:issueId` (optional `comment` field) |
 | Add comment | `POST /api/issues/:issueId/comments` |
