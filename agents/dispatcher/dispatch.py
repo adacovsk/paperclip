@@ -18,6 +18,7 @@ whole instruction set. This script runs those rows directly:
   Verify the cloud lane found superseded  -> close it and its parent
   `Held: until <id> merges|opens its PR`  -> back to backlog once it has
   `Held: waiting on <id>`, <id> closed     -> back to backlog
+  same work filed twice, copy unstarted     -> cancel it, re-point holds on it (dedupe.py)
   base-red marker, main moved past it      -> requeue the verify (requeue-base-red.sh)
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task
   free Worker slots, promotion open         -> promote backlog (promote.py); candidates
@@ -68,11 +69,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import dedupe  # noqa: E402
 import promote as promotion  # noqa: E402
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 HANDOFF_FILE = STATE_DIR / "handoff.json"
 #: Hold release reads every held task's comments; once per window is plenty.
 HOLD_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_HOLD_SCAN_SECONDS", 300))
+# The dedupe sweep lists every live and recently done task; duplicates are filed at
+# Planner cadence, so a slower scan than the hold sweep loses nothing.
+DEDUPE_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_DEDUPE_SCAN_SECONDS", 1800))
 #: A refill wake the Coordinator just answered needs no repeat inside this window.
 REFILL_INTERVAL = float(os.environ.get("DISPATCHER_REFILL_SECONDS", 300))
 
@@ -1032,6 +1037,9 @@ def sweep(api: Api, project: Path) -> None:
     requeue_base_red(api.dry_run)
     route_sentinels(api, agents, project)
     file_main_repair(api, agents, project)
+    # Before release_holds: a hold on a cancelled duplicate reads as released, so it
+    # must move to the surviving copy first or the waiting task is freed early.
+    dedupe_duplicates(api, project)
     released = release_holds(api, pr_heads)
     promoted, judged = promotion.promote(api, agents, project, pr_heads)
     in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
@@ -1474,6 +1482,16 @@ def close_superseded(api: Api) -> None:
             f"Branch disposition: **Abandoned** — superseded. `{branch}` tip `{tip}` is kept on origin.",
             f"close   {parent['identifier']}: superseded by {sha_line[:9]}",
         )
+
+
+def dedupe_duplicates(api: Api, project: Path) -> int:
+    """Cancel unstarted copies of work filed twice (dedupe.py). Returns how many."""
+    state = load_state("dedupe.json")
+    if time.time() - state.get("at", 0) < DEDUPE_SCAN_INTERVAL:
+        return 0
+    cancelled = dedupe.sweep(api, project)
+    save_state("dedupe.json", {"at": time.time()}, api.dry_run)
+    return cancelled
 
 
 def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
