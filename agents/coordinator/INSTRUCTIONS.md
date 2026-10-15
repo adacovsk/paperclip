@@ -61,7 +61,12 @@ So branch on the wake:
   One sentinel became readable; nothing else changed. Do not run steps 1–3, do
   not re-scan the graph, and **file no routine record** — a targeted landing is
   recorded on the task it landed. Then refill slots (below) and exit.
-- **`subtask_completed` / assignment wakes** → advance **that task's** stage
+- **`contextSnapshot.source: routine.dispatch`** → this is the scheduled fire even though it arrives
+  with `wakeReason: issue_assigned` (the routine files its own `Coordinator routine <date> fire <n>`
+  task and assigns it to you). Check this **before** the assignment branch below: read as an ordinary
+  assignment it matched "advance that task's stage … and exit", and three post-reset fires ended after
+  step 2d with steps 3 and 5–9 undone. Run the full sweep.
+- **`subtask_completed` / other assignment wakes** → advance **that task's** stage
   (step 3's signal table), refill slots (below), and exit. A single stage
   completing does not require re-deriving the whole pipeline.
 - **The scheduled routine fire, an operator message, or an inbox item** → run
