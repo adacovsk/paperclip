@@ -535,6 +535,77 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual([m for _, m in self.relaunched], ["retry", "retry"])
 
 
+class MainRepairSentinel(SentinelSweep):
+    """A parentless `ci-fix:` main-repair: its sentinel is keyed by its own identifier."""
+
+    REPAIR = {"id": "r1", "identifier": "R-1", "title": "ci-fix: aaaaaaaaa — main is red (2 verifies escalated on it)",
+              "dedupeKey": None, "status": "in_review", "assigneeAgentId": "arch"}
+
+    def sentinel(self, code, base=None):
+        (dispatch.VERIFY_DIR / "R-1.exit").write_text(code + "\n")
+        if base:
+            (dispatch.VERIFY_DIR / "R-1.base").write_text(base + "\n")
+
+    def sweep(self):
+        api = SweepApi(issues=[self.REPAIR])
+        dispatch.route_sentinels(api, {"Architect": "arch"}, Path(self.tmp.name))
+        return [w for w in api.writes if w[0] == "POST" and w[1].endswith("/wakeup")]
+
+    def test_a_green_repair_wakes_the_architect(self):
+        self.sentinel("0", base=self.MAIN)
+        wakes = self.sweep()
+        self.assertEqual([w[2]["payload"]["issueIdentifier"] for w in wakes], ["R-1"])
+
+    def test_a_green_repair_on_an_older_main_wakes_rather_than_rebuilds(self):
+        self.sentinel("0", base="b" * 40)
+        self.assertEqual(len(self.sweep()), 1)
+        self.assertEqual(self.relaunched, [])
+
+    def test_a_red_repair_is_never_parked_as_base_red(self):
+        for task in ("T-1", "T-2"):
+            (dispatch.VERIFY_DIR / f"{task}.base-red").write_text(f"{self.MAIN}\nV-{task}\nsrc/m.rs:1 E0063\n")
+        (dispatch.VERIFY_DIR / "R-1.cloud.verdict").write_text(
+            f"CLOUD-VERIFY-V2\nbase: {self.MAIN}\nresult: FAIL\n--- errors ---\nsrc/m.rs:1 E0063\n")
+        self.sentinel("1")
+        self.assertEqual(len(self.sweep()), 1)
+        self.assertFalse((dispatch.VERIFY_DIR / "R-1.base-red").exists())
+
+    def test_a_routed_sentinel_is_not_routed_again(self):
+        self.sentinel("0", base=self.MAIN)
+        self.sweep()
+        self.assertEqual(self.sweep(), [])
+
+    # The inherited relaunch cases are written against T-1's sentinel.
+    test_a_relaunch_wakes_no_one = None
+    test_a_relaunch_handed_back_wakes_the_architect = None
+    test_the_same_inconclusive_code_twice_wakes_the_second_time = None
+    test_a_relaunch_past_the_time_budget_waits_for_the_next_sweep = None
+    test_a_real_result_between_clears_the_strike = None
+
+
+class MainRepairDedupe(unittest.TestCase):
+    def repair(self, sha, status):
+        return {"identifier": f"R-{sha}", "title": f"ci-fix: {sha} — main is red (2 verifies escalated on it)",
+                "status": status}
+
+    def test_a_live_repair_for_an_older_sha_blocks_another_filing(self):
+        self.assertIsNotNone(dispatch.existing_main_repair([self.repair("bbbbbbbbb", "in_review")], "aaaaaaaaa"))
+
+    def test_a_blocked_repair_only_covers_its_own_sha(self):
+        self.assertIsNone(dispatch.existing_main_repair([self.repair("bbbbbbbbb", "blocked")], "aaaaaaaaa"))
+        self.assertIsNotNone(dispatch.existing_main_repair([self.repair("aaaaaaaaa", "blocked")], "aaaaaaaaa"))
+
+    def test_a_finished_repair_for_an_older_sha_does_not_block(self):
+        self.assertIsNone(dispatch.existing_main_repair([self.repair("bbbbbbbbb", "done")], "aaaaaaaaa"))
+
+    def test_a_cancelled_repair_for_this_sha_does_not_block(self):
+        self.assertIsNone(dispatch.existing_main_repair([self.repair("aaaaaaaaa", "cancelled")], "aaaaaaaaa"))
+
+    def test_a_coordinator_ci_fix_is_not_a_main_repair(self):
+        other = {"identifier": "C-1", "title": "ci-fix: run 123 failed", "status": "in_review"}
+        self.assertIsNone(dispatch.existing_main_repair([other], "aaaaaaaaa"))
+
+
 class DispatcherLaunch(unittest.TestCase):
     """A Verify the Dispatcher launches stays off the Architect until a model is needed."""
 
@@ -622,13 +693,16 @@ class DispatcherLaunch(unittest.TestCase):
 class SweepApi:
     dry_run = False
 
-    def __init__(self, owner="arch"):
+    def __init__(self, owner="arch", issues=None):
         self.writes = []
         self.owner = owner
+        self.listed = issues
 
     def issues(self, **query):
         if query.get("assigneeAgentId", self.owner) != self.owner:
             return []
+        if self.listed is not None:
+            return self.listed
         return [{"id": "v1", "identifier": "V-1", "parentId": "p1", "title": "Verify: T-1 x",
                  "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": self.owner}]
 
