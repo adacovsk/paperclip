@@ -30,7 +30,10 @@ whole instruction set. This script runs those rows directly:
                                              Dispatcher until a model is needed
   Dispatcher's Verify, watcher dead         -> resume it (cloud-verify.sh resume)
   sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
-  sentinel 0, main moved past its base      -> freshness re-verify (relaunch-verify.sh);
+  sentinel 0, accepted cloud verdict        -> land it (architect/land.sh): freshness
+                                             re-verify, resolve-mode offload on a
+                                             conflict, or push + PR; the rest wakes
+  sentinel 0, local build, main moved       -> freshness re-verify (relaunch-verify.sh);
                                              a docs-only move or the cap wakes it to land
   main-repair sentinel (own identifier)     -> wake the Architect; never base-red, never
                                              a freshness rebuild
@@ -701,7 +704,7 @@ def verify_capacity() -> int | None:
     lane = subprocess.run(
         [sys.executable, str(HERE.parent / "architect" / "cloud-pace.py")],
         capture_output=True, text=True, timeout=60,
-    ).stdout.strip()
+    ).stdout.strip() if os.environ.get("ARCHITECT_CLOUD_LANE") == "1" else "0"
     if lane == "1":
         return None
     try:
@@ -891,8 +894,28 @@ def retire_superseded(api: Api, agents: dict, stages: list[tuple[str, dict]], re
 # --------------------------------------------------------------------------- sweep
 
 
+def inherit_cloud_lane(roster: list[dict]) -> None:
+    """Run this sweep's offloads under the Architect's `ARCHITECT_CLOUD_LANE`.
+
+    The flag is the Architect's rollback switch and lives in its adapter env.
+    `cloud-verify.sh offload` refuses without it, so a Dispatcher whose own env
+    lacked it saw the pace gate open, took the launch, and had every offload
+    refused as "cloud lane off": each launch and relaunch went back to the
+    Architect, which then offloaded the same head successfully. Reading it from
+    the Architect keeps one switch for both.
+    """
+    architect = next((a for a in roster if a["name"] == "Architect"), {})
+    flag = ((architect.get("adapterConfig") or {}).get("env") or {}).get("ARCHITECT_CLOUD_LANE") or {}
+    value = flag.get("value") if isinstance(flag, dict) else flag
+    if value == "1":
+        os.environ["ARCHITECT_CLOUD_LANE"] = "1"
+    else:
+        os.environ.pop("ARCHITECT_CLOUD_LANE", None)
+
+
 def sweep(api: Api, project: Path) -> None:
     roster = api.get(f"/companies/{api.company}/agents")
+    inherit_cloud_lane(roster)
     agents = {a["name"]: a["id"] for a in roster}
     worker = next(a for a in roster if a["name"] == "Worker")
 
@@ -1139,7 +1162,8 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
     ]
     for verify in verifies:
         repair = not verify.get("parentId")
-        parent = verify["identifier"] if repair else api.get(f"/issues/{verify['parentId']}")["identifier"]
+        parent_issue = None if repair else api.get(f"/issues/{verify['parentId']}")
+        parent = verify["identifier"] if repair else parent_issue["identifier"]
         mine = verify.get("assigneeAgentId") == agents.get("Dispatcher")
         path = VERIFY_DIR / f"{parent}.exit"
         try:
@@ -1174,7 +1198,19 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
             # Rebuilding a repair rooted at an older `main` just verifies the old
             # break again; whether a later merge already fixed it is the Architect's call.
             action = "wake"
-        if action in ("retry", "fresh"):
+        if code == "0" and action in ("fresh", "wake") and not repair and verdict \
+                and not needs_architect(parent_issue) and not DEPENDENCY_BUMP.match(verify["title"]):
+            if not launch_budget_left():
+                print(f"sentinel {verify['identifier']}: landing deferred to the next sweep (run time budget)", flush=True)
+                continue  # not recorded, so the next sweep routes it again
+            outcome = land(api, verify, parent_issue)
+            if outcome is None:
+                continue  # did not finish: the next sweep tries again
+            if outcome:
+                state[verify["identifier"]] = key
+                continue
+            action, why = "wake", f"{why}; land.sh handed it back"
+        elif action in ("retry", "fresh"):
             if not launch_budget_left():
                 print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
                 continue  # not recorded, so the next sweep routes it again
@@ -1326,6 +1362,48 @@ def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
     except urllib.error.HTTPError as exc:
         print(f"sentinel {verify['identifier']}: relaunch comment refused ({exc.code})", flush=True)
     return True  # the build is out either way; waking now would launch a second one
+
+
+DEPENDENCY_BUMP = re.compile(r"^Verify: dependency bump\b")
+#: land.sh runs the landing gate, a minute or two under build load, inside a
+#: sweep the server kills at 600 s; LAUNCH_BUDGET_S plus this stays under it.
+LAND_TIMEOUT_S = int(os.environ.get("DISPATCH_LAND_TIMEOUT_S", "330"))
+
+
+def land(api: Api, verify: dict, parent: dict) -> bool | None:
+    """Run `land.sh` on a green cloud verify: True when nothing is left for a model.
+
+    True means it landed (the open PR then closes the Verify through
+    `close_landed_verifies`) or put a new build out (a freshness re-verify, or
+    a resolve verify of a branch that conflicts with main). False means the
+    caller wakes the Architect, exactly as before this existed. None means it
+    did not finish and the sentinel is left for the next sweep.
+    """
+    if api.dry_run:
+        print(f"sentinel {verify['identifier']}: would run land.sh", flush=True)
+        return True
+    try:
+        out = subprocess.run(
+            ["bash", str(HERE.parent / "architect" / "land.sh"), parent["identifier"], verify["identifier"], parent["title"]],
+            capture_output=True, text=True, timeout=LAND_TIMEOUT_S,
+        )
+    except subprocess.SubprocessError as exc:
+        print(f"sentinel {verify['identifier']}: land.sh did not finish ({exc})", flush=True)
+        return None
+    said = (out.stdout.strip().splitlines() or [f"land.sh exit {out.returncode}"])[-1]
+    print(f"sentinel {verify['identifier']}: {said}", flush=True)
+    if out.returncode not in (0, 2):
+        return False
+    what = "Landed" if out.returncode == 0 else "Relaunched"
+    try:
+        api.write(
+            "POST", f"/issues/{verify['id']}/comments",
+            {"body": f"{what} by the Dispatcher, no model run (`land.sh`).\n\n`{said}`"},
+            f"sentinel {verify['identifier']}: land comment",
+        )
+    except urllib.error.HTTPError as exc:
+        print(f"sentinel {verify['identifier']}: land comment refused ({exc.code})", flush=True)
+    return True
 
 
 def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:

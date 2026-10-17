@@ -477,6 +477,20 @@ lane is open; the gate, not your read of the queue, decides.
 > lane's resolve mode before Landing, never by hand-editing conflict markers
 > in this block.)
 
+**A cloud green lands through `land.sh` first.** When `{task-id}.cloud.verdict`
+exists and the sentinel reads `0`, run
+`"$HOME/code/paperclip/agents/architect/land.sh" "{task-id}" "{verify-task-id}" "<task title>"`
+before anything below. It is this section as a script for the case with no
+judgement left in it: the verdict carries the schema result and every
+out-of-scope fix, and the body comes from the project's PR body generator. The
+Dispatcher runs it on every such sentinel, so you see one only when it handed
+the verify back. **Exit 0** → landed; put the PR URL it prints in your final
+message. **Exit 2** → a freshness re-verify or a resolve-mode verify is out;
+exit the run. **Exit 1** → its last line says what needs you (a red landing
+gate, a conflict a resolve verify already failed on, a closed PR); handle that
+with the block below. A local build always uses the block below: its PR body
+has to list your own fixes.
+
 On the wake where the sentinel reads `0` (cargo passed), land the work.
 **Commit, push, and PR are a SINGLE self-contained Bash block — never
 split across turns.** They were previously two sections ("commit your
