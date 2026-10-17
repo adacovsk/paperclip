@@ -20,7 +20,8 @@ whole instruction set. This script runs those rows directly:
   `Held: waiting on <id>`, <id> closed     -> back to backlog
   same work filed twice, copy unstarted     -> cancel it, re-point holds on it (dedupe.py)
   base-red marker, main moved past it      -> requeue the verify (requeue-base-red.sh)
-  base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task
+  base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task,
+                                             unless a live one already exists
   free Worker slots, promotion open         -> promote backlog (promote.py); candidates
                                              needing judgment go to the Coordinator
   verify sentinel not yet routed            -> settle it without a model, or wake the
@@ -31,6 +32,8 @@ whole instruction set. This script runs those rows directly:
   sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
   sentinel 0, main moved past its base      -> freshness re-verify (relaunch-verify.sh);
                                              a docs-only move or the cap wakes it to land
+  main-repair sentinel (own identifier)     -> wake the Architect; never base-red, never
+                                             a freshness rebuild
   its own routine fire, sweep finished      -> close the routine's issue
 
 Everything else that is waiting on the Coordinator -- a dirty tree, no commits,
@@ -1128,12 +1131,15 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
     markers = base_red_markers()
     by_task = {m.task: m for m in markers}
     owners = [agents["Architect"], *([agents["Dispatcher"]] if agents.get("Dispatcher") else [])]
+    # A main-repair has no parent: it verifies its own `main`-rooted branch, so
+    # its sentinel is keyed by its own identifier.
     verifies = [
         v for owner in owners for v in api.issues(status="in_review", assigneeAgentId=owner)
-        if stage_of(v) == "verify" and v.get("parentId")
+        if stage_of(v) == "verify" and (v.get("parentId") or is_main_repair(v))
     ]
     for verify in verifies:
-        parent = api.get(f"/issues/{verify['parentId']}")["identifier"]
+        repair = not verify.get("parentId")
+        parent = verify["identifier"] if repair else api.get(f"/issues/{verify['parentId']}")["identifier"]
         mine = verify.get("assigneeAgentId") == agents.get("Dispatcher")
         path = VERIFY_DIR / f"{parent}.exit"
         try:
@@ -1158,10 +1164,16 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         except OSError:
             verified_base = ""
         strike_key = f"{verify['identifier']}#strike"
-        action, why = route_sentinel(code, by_task.get(parent), verdict, main_sha,
-                                     [m for m in markers if m.task != parent],
+        # A main-repair's red is the break it was filed to fix, and the markers
+        # it would match are the ones that filed it: never park it as base-red.
+        action, why = route_sentinel(code, None if repair else by_task.get(parent), verdict, main_sha,
+                                     [] if repair else [m for m in markers if m.task != parent],
                                      bool(landed and landed[1] >= mtime),
                                      verified_base, state.get(strike_key) == code)
+        if repair and action == "fresh":
+            # Rebuilding a repair rooted at an older `main` just verifies the old
+            # break again; whether a later merge already fixed it is the Architect's call.
+            action = "wake"
         if action in ("retry", "fresh"):
             if not launch_budget_left():
                 print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
@@ -1367,6 +1379,32 @@ def requeue_base_red(dry_run: bool) -> None:
             print(f"basered {line}", flush=True)
 
 
+MAIN_REPAIR_TITLE = re.compile(r"^ci-fix: [0-9a-f]{7,40} — main is red\b")
+
+
+def is_main_repair(issue: dict) -> bool:
+    return bool(MAIN_REPAIR_TITLE.match(issue.get("title") or ""))
+
+
+def existing_main_repair(issues: list[dict], short: str) -> dict | None:
+    """The main-repair that makes filing another one a duplicate, or None.
+
+    Deduping by sha alone filed a new repair on every merge while `main` stayed
+    red, since each merge moves the sha and the markers still agree: thirty for
+    one breakage at once. Any live repair is the repair for current `main`; one
+    that is `blocked` is waiting on the operator and only covers its own sha, so
+    a stale escalation cannot silence a later break.
+    """
+    for issue in issues:
+        if not is_main_repair(issue):
+            continue
+        if issue["status"] in OPEN - {"blocked"}:
+            return issue
+        if short in issue["title"] and issue["status"] != "cancelled":
+            return issue
+    return None
+
+
 def file_main_repair(api: Api, agents: dict, project: Path) -> None:
     """File one `ci-fix:` task when several verifies blame the same red `main`.
 
@@ -1385,9 +1423,8 @@ def file_main_repair(api: Api, agents: dict, project: Path) -> None:
     if not due:
         return
     short = main_sha[:9]
-    for existing in api.issues(q=short):
-        if existing["title"].startswith("ci-fix:") and short in existing["title"] and existing["status"] != "cancelled":
-            return
+    if existing_main_repair(api.issues(q="main%20is%20red"), short):
+        return
     title = f"ci-fix: {short} — main is red ({len(due)} verifies escalated on it)"
     labels = {l["name"]: l["id"] for l in api.get(f"/companies/{api.company}/labels")}
     created = api.write(
