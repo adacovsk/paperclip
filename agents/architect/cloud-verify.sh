@@ -72,7 +72,10 @@
 #   75  still running (no verdict yet, inside the deadline) — poll again
 #   96  environment broken (claude/script missing, no launch state) — NOT a build failure
 #   98  stale base (branch not pushed, or base moved) — operator resolves
-#   99  inconclusive (deadline passed with no verdict ref; the session may still publish late) — relaunch
+#   99  inconclusive (deadline passed with no verdict ref; the session may still publish late,
+#       or the VM reported INCONCLUSIVE because a gate hit its time limit) — relaunch
+#   92  internal only, never a sentinel: the session's sandbox never started.
+#       await_verdict relaunches it itself, and gives up as 99.
 set -uo pipefail
 
 STATE_DIR="${CLOUD_VERIFY_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify}"
@@ -91,6 +94,16 @@ STATE_DIR="${CLOUD_VERIFY_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify}
 # finished verdicts and pays for the build twice.
 DEADLINE="${CLOUD_VERIFY_DEADLINE:-10800}"
 CLOUD_SESSION="${CLOUD_SESSION:-$(dirname "$0")/cloud-session.sh}"
+# A sandbox can fail to come up at all (`provision_error_category: rate_limited`)
+# within a second of launch. The session then reads as idle and never publishes,
+# so a watcher that only waits for the verdict ref spends the full DEADLINE on it,
+# twice, and then escalates a task whose code nothing ever judged. The failures
+# arrive in bursts when a sweep launches twenty sessions within a few minutes, so
+# launches are spaced, and a session that never started is relaunched by this
+# watcher, with backoff, before it ever counts as a 99.
+START_RETRIES="${CLOUD_VERIFY_START_RETRIES:-3}"
+START_BACKOFF="${CLOUD_VERIFY_START_BACKOFF:-120}"
+LAUNCH_SPACING="${CLOUD_VERIFY_LAUNCH_SPACING:-30}"
 
 die() { printf 'cloud-verify: %s\n' "$*" >&2; exit "${2:-96}"; }
 
@@ -185,6 +198,19 @@ ${sync_text}
    No semaphore, no CARGO_INCREMENTAL, no job or codegen-unit limits.
    On 'No space left on device': cargo clean -p rust-bevy-rpg, then re-run.
 
+   HOW TO RUN AND WAIT. A background command is KILLED when it reaches its own
+   timeout, and the default timeout (10 minutes) kills a cold clippy mid-compile.
+   Run each gate as its own Bash call with run_in_background: true and
+   timeout: 7200000 (the maximum), ending with an append of '<gate>=<exit status>'
+   to a status file. Then stop and wait for that call's completion notification:
+   do not read its log on a timer and do not start a sleep or until loop as a
+   waiter. The notification is the wait, and every extra turn costs a full
+   context read. This applies to every re-run in step 3 as well.
+   If a gate is stopped by the time limit, do not restart it. Go to step 6 with
+   result: INCONCLUSIVE and name the gate under '--- errors ---'. A gate that
+   never finished judged nothing, so the other side relaunches rather than
+   treating it as red.
+
 3. Fix failures, at most ${cap} rounds of fix -> commit -> re-run step 2.
    In the task's files, fix anything. In ANY OTHER file, fix an error only when
    the task's own diff caused it, which here means all of:
@@ -226,7 +252,7 @@ CLOUD-VERIFY-V2
 task: ${task}
 launched: ${head}
 base: <\$BASE>${rebased_line}
-result: PASS | FAIL | SUPERSEDED
+result: PASS | FAIL | SUPERSEDED | INCONCLUSIVE
 superseded-by: <sha>                  (SUPERSEDED only)
 fixes: <rounds used in step 3>
 schemas: not-relevant | regenerated | proved-empty
@@ -271,11 +297,12 @@ cmd_launch() {
   # Conflict resolution is judgement, not mechanics: at low effort a session
   # restores the pre-split structure instead of porting onto main's.
   [ -f "$STATE_DIR/$task.cloud.resolve" ] && { resolve=1; effort="${CLOUD_VERIFY_RESOLVE_EFFORT:-high}"; }
+  space_launch
   out="$(script -qec "claude --effort $effort --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}" "$repair" "$resolve" "$wide" "$prior")")" /dev/null 2>&1)"
   sid="$(printf '%s' "$out" | sed -n 's/.*\(session_[A-Za-z0-9]\{8,\}\).*/\1/p' | head -1)"
   [ -n "$sid" ] || { printf '%s\n' "$out" >&2; die "no session id in launch output"; }
 
-  rm -f "$STATE_DIR/$task.cloud.delivered"
+  rm -f "$STATE_DIR/$task.cloud.delivered" "$STATE_DIR/$task.cloud.started"
   printf '%s\n' "$sid"  > "$STATE_DIR/$task.cloud.session"
   printf '%s\n' "$ref"  > "$STATE_DIR/$task.cloud.ref"
   printf '%s\n' "$head" > "$STATE_DIR/$task.cloud.launched-head"
@@ -284,6 +311,46 @@ cmd_launch() {
 }
 
 field() { printf '%s\n' "$1" | sed -n "s/^$2: *//p" | head -1; }
+
+# Hold launches LAUNCH_SPACING seconds apart across every watcher on this box.
+# The lock is released before the launch itself, so a slow launch never blocks
+# the next one for longer than the spacing.
+space_launch() {
+  local stamp="$STATE_DIR/.last-launch" last now wait
+  mkdir -p "$STATE_DIR"
+  exec 9>"$STATE_DIR/.launch.lock"
+  flock 9 2>/dev/null || true
+  last="$(cat "$stamp" 2>/dev/null || echo 0)"; now="$(date +%s)"
+  wait=$((last + LAUNCH_SPACING - now))
+  [ "$wait" -gt 0 ] && sleep "$wait"
+  date +%s > "$stamp"
+  exec 9>&-
+}
+
+# Whether the launched session's sandbox came up, from its event log:
+# `started`, `failed:<step> <category>`, or `pending` (also for an unreadable
+# log — a network blip must never read as a dead session). Once started, the
+# marker stops further reads: a started session cannot un-start.
+startup_state() {
+  local task="$1" sid
+  [ -f "$STATE_DIR/$task.cloud.started" ] && { echo started; return; }
+  sid="$(cat "$STATE_DIR/$task.cloud.session" 2>/dev/null)"
+  [ -n "$sid" ] || { echo pending; return; }
+  "$CLOUD_SESSION" EVENTS "$sid" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    events = json.load(sys.stdin).get("data") or []
+except Exception:
+    print("pending"); sys.exit()
+logs = [(e.get("data") or {}) for e in events if e.get("type") == "env_manager_log"]
+steps = [(d.get("extra") or {}) for d in logs]
+if any(x.get("step_id") == "start_cc" and x.get("step_status") == "completed" for x in steps):
+    print("started")
+else:
+    bad = next((x for x in steps if x.get("step_status") == "failed"), None)
+    print("failed:%s %s" % (bad.get("step_id", "?"), bad.get("provision_error_category", "")) if bad else "pending")
+' 2>/dev/null || echo pending
+}
 
 cmd_poll() {
   local task="${1:?task id}"
@@ -297,6 +364,12 @@ cmd_poll() {
   # ls-remote before fetch: asking for a ref that does not exist yet is the
   # normal pending case, not an error worth logging every minute.
   if [ -z "$(git ls-remote origin "$ref" 2>/dev/null)" ]; then
+    local start
+    start="$(startup_state "$task")"
+    case "$start" in
+      started) : > "$STATE_DIR/$task.cloud.started" ;;
+      failed:*) die "session $(cat "$STATE_DIR/$task.cloud.session" 2>/dev/null) never started (${start#failed:})" 92 ;;
+    esac
     [ $((now - launched)) -lt "$DEADLINE" ] && exit 75
     die "no verdict after ${DEADLINE}s — session never published; relaunch" 99
   fi
@@ -322,6 +395,7 @@ cmd_poll() {
     FAIL)  exit 1  ;;
     SUPERSEDED) exit 94 ;;
     STALE) exit 98 ;;
+    INCONCLUSIVE) exit 99 ;;
     *)     exit 99 ;;
   esac
 }
@@ -358,14 +432,14 @@ cmd_watch() {
     printf '%s\n' "$rc" > "$exit_file"
     wake; return 0
   fi
-  await_verdict "$task"
+  await_verdict "$task" "$branch"
 }
 
 # The half of `watch` after the launch: poll until the VM publishes a verdict,
 # accept or reject its commits, write the sentinel, wake. Separate so `rewatch`
 # can finish a launch whose watcher died without starting a second VM.
 await_verdict() {
-  local task="${1:?task id}" rc
+  local task="${1:?task id}" branch="${2:-}" rc starts=0 sid
   local exit_file="$STATE_DIR/$task.exit"
   echo $$ > "$STATE_DIR/$task.pid"
 
@@ -378,6 +452,22 @@ await_verdict() {
   while :; do
     ( cmd_poll "$task" ) >> "$STATE_DIR/$task.cloud.log" 2>&1
     rc=$?
+    if [ "$rc" -eq 92 ]; then
+      # Never started, so nothing was judged and nothing was spent: relaunch the
+      # same head here rather than surfacing a 99, whose second occurrence in a
+      # row escalates. Only from `watch`, which knows the branch, and only while
+      # the worktree still sits on the launched head.
+      starts=$((starts + 1))
+      if [ -z "$branch" ] || [ "$starts" -gt "$START_RETRIES" ] \
+         || [ "$(git rev-parse HEAD 2>/dev/null)" != "$(cat "$STATE_DIR/$task.cloud.launched-head" 2>/dev/null)" ]; then
+        rc=99; break
+      fi
+      sid="$(cat "$STATE_DIR/$task.cloud.session" 2>/dev/null)"
+      [ -n "$sid" ] && "$CLOUD_SESSION" DELETE "$sid" >/dev/null 2>&1
+      sleep $((START_BACKOFF * starts))
+      ( cmd_launch "$task" "$branch" ) >> "$STATE_DIR/$task.cloud.log" 2>&1 || { rc=$?; break; }
+      continue
+    fi
     [ "$rc" -eq 75 ] || break
     n=$((n + 1))
     if [ "$n" -ge "$cap" ]; then rc=99; break; fi

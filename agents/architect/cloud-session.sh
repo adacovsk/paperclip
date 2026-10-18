@@ -2,7 +2,10 @@
 # Read or delete a Claude Code cloud session through the sessions API, with the
 # operator's own login. Neither `claude` nor the agent tools offer a delete.
 #
-# Usage:  cloud-session.sh GET|DELETE <session_id>
+# Usage:  cloud-session.sh GET|DELETE|EVENTS <session_id>
+#
+# EVENTS reads the session's event log, which is the only place a sandbox that
+# never came up says so: the session itself still reads as idle.
 #
 # The id is the `session_…` part of the URL `claude --cloud` prints (also
 # recorded as `<task>.cloud.session` in the verify cache). GET first: deleting a
@@ -12,12 +15,17 @@
 # separately with `git push origin --delete cloud-verify/<task>/<sha>`.
 set -euo pipefail
 
-method="${1:?GET|DELETE}"; id="${2:?session id}"
-case "$method" in GET|DELETE) ;; *) echo "usage: $0 GET|DELETE <session_id>" >&2; exit 2 ;; esac
+method="${1:?GET|DELETE|EVENTS}"; id="${2:?session id}"
+path="$id"
+case "$method" in
+  GET|DELETE) ;;
+  EVENTS) method=GET; path="$id/events?limit=1000" ;;
+  *) echo "usage: $0 GET|DELETE|EVENTS <session_id>" >&2; exit 2 ;;
+esac
 
 token="$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/.credentials.json')))['claudeAiOauth']['accessToken'])")"
 org="$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude.json')))['oauthAccount']['organizationUuid'])")"
-curl -sS -X "$method" "https://api.anthropic.com/v1/sessions/$id" \
+curl -sS -X "$method" "https://api.anthropic.com/v1/sessions/$path" \
   -H "Authorization: Bearer $token" \
   -H "anthropic-version: 2023-06-01" \
   -H "anthropic-beta: ccr-byoc-2025-07-29" \
