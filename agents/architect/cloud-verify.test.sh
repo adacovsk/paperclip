@@ -16,6 +16,11 @@ DIR="$(mktemp -d)"
 BIN="$DIR/bin"; mkdir -p "$BIN"
 export CLOUD_VERIFY_DIR="$DIR/state"; mkdir -p "$CLOUD_VERIFY_DIR"
 export PATH="$BIN:$PATH"
+# Never space launches under test, and never let poll reach the real sessions
+# API: the default session stub reports an empty event log, i.e. "pending".
+export CLOUD_VERIFY_LAUNCH_SPACING=0 CLOUD_VERIFY_START_BACKOFF=0
+printf '#!/usr/bin/env bash\necho "{}"\n' > "$BIN/session-default"; chmod +x "$BIN/session-default"
+export CLOUD_SESSION="$BIN/session-default"
 
 trap 'rm -rf "$DIR"' EXIT
 PASS=0; FAIL=0
@@ -144,7 +149,7 @@ check "session unreadable -> resumed, not retired" "$rc" 0
 resume_case "refs/heads/cloud-verify/AA-5/old111" "" running
 check "delivered marker for another head -> resumed" "$rc" 0
 rm -f "$CLOUD_VERIFY_DIR"/AA-5.* "$BIN/systemd-run" "$BIN/setsid" "$BIN/session"
-unset CLOUD_SESSION
+export CLOUD_SESSION="$BIN/session-default"
 
 echo "poll marks the launch delivered:"
 seed_state AA-1 "$REF" "$NOW"; make_git "$REF"; verdict PASS
@@ -657,6 +662,88 @@ setup_resolve AA-94; supersede AA-94 ""
 sed -i '/^superseded-by:/d' "$CLOUD_VERIFY_DIR/AA-94.cloud.verdict"
 superseded AA-94;                               check "no superseded-by line -> rejected" "$?" 1
 rm -f "$CLOUD_VERIFY_DIR"/AA-9?.cloud.resolve
+
+echo "a session that never started:"
+# Its sandbox failed to provision; it reads as idle forever. Poll must say so at
+# once instead of waiting out the deadline, and watch must relaunch it itself.
+events() {  # step_id step_status [category]
+  cat > "$BIN/session" <<EOF
+#!/usr/bin/env bash
+echo "\$1 \$2" >> "$DIR/session.calls"
+[ "\$1" = EVENTS ] && echo '{"data":[{"type":"env_manager_log","data":{"extra":{"step_id":"$1","step_status":"$2","provision_error_category":"${3:-}"}}}]}'
+exit 0
+EOF
+  chmod +x "$BIN/session"; export CLOUD_SESSION="$BIN/session"; rm -f "$DIR/session.calls"
+}
+seed_state AA-40 "refs/heads/cloud-verify/AA-40/bbb222" "$NOW"; echo session_y > "$CLOUD_VERIFY_DIR/AA-40.cloud.session"
+make_git ""
+events provision failed rate_limited
+"$CV" poll AA-40 >/dev/null 2>&1;              check "provision failed -> 92"             "$?" 92
+events provision started
+"$CV" poll AA-40 >/dev/null 2>&1;              check "still provisioning -> 75"           "$?" 75
+check "  ...not yet marked started" "$([ -f "$CLOUD_VERIFY_DIR/AA-40.cloud.started" ] && echo yes || echo no)" no
+events start_cc completed
+"$CV" poll AA-40 >/dev/null 2>&1;              check "started -> 75"                      "$?" 75
+check "  ...marked started" "$([ -f "$CLOUD_VERIFY_DIR/AA-40.cloud.started" ] && echo yes || echo no)" yes
+events provision failed rate_limited
+"$CV" poll AA-40 >/dev/null 2>&1;              check "a started session is not re-read -> 75" "$?" 75
+check "  ...no events call once started" "$(cat "$DIR/session.calls" 2>/dev/null | grep -c '^EVENTS')" 0
+rm -f "$CLOUD_VERIFY_DIR/AA-40.cloud.started"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/session"
+"$CV" poll AA-40 >/dev/null 2>&1;              check "unreadable event log -> 75, not dead" "$?" 75
+seed_state AA-40 "refs/heads/cloud-verify/AA-40/bbb222" "$((NOW - 99999))"
+"$CV" poll AA-40 >/dev/null 2>&1;              check "unreadable past deadline -> 99"      "$?" 99
+rm -f "$CLOUD_VERIFY_DIR"/AA-40.*
+
+echo "watch relaunches a session that never started:"
+cat > "$BIN/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in rev-parse) echo bbb222 ;; *) exit 0 ;; esac
+EOF
+chmod +x "$BIN/git"
+cat > "$BIN/script" <<EOF
+#!/usr/bin/env bash
+echo x >> "$DIR/launches"; echo "View: .../session_01ABCDEFGH?from=cli"
+EOF
+chmod +x "$BIN/script"
+events provision failed rate_limited; rm -f "$DIR/launches" "$CLOUD_VERIFY_DIR/AA-41.exit"
+CLOUD_VERIFY_START_RETRIES=2 "$CV" watch AA-41 task/AA-41 >/dev/null 2>&1
+check "retries exhausted -> .exit=99"  "$(cat "$CLOUD_VERIFY_DIR/AA-41.exit" 2>/dev/null)" 99
+check "  ...launched 1 + 2 retries"    "$(wc -l < "$DIR/launches" 2>/dev/null | tr -d ' ')" 3
+check "  ...each dead session deleted" "$(grep -c '^DELETE session_01ABCDEFGH$' "$DIR/session.calls" 2>/dev/null)" 2
+rm -f "$CLOUD_VERIFY_DIR"/AA-41.* "$DIR/launches"
+export CLOUD_SESSION="$BIN/session-default"; rm -f "$BIN/session"
+
+echo "INCONCLUSIVE verdict:"
+seed_state AA-1 "$REF" "$NOW"; make_git "$REF"
+verdict INCONCLUSIVE; "$CV" poll AA-1 >/dev/null 2>&1; check "INCONCLUSIVE -> 99" "$?" 99
+
+echo "launch spacing:"
+cat > "$BIN/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in rev-parse) echo bbb222 ;; *) exit 0 ;; esac
+EOF
+chmod +x "$BIN/git"
+cat > "$BIN/script" <<'EOF'
+#!/usr/bin/env bash
+echo "View: .../session_01ABCDEFGH?from=cli"
+EOF
+chmod +x "$BIN/script"
+date +%s > "$CLOUD_VERIFY_DIR/.last-launch"
+t0="$(date +%s)"; CLOUD_VERIFY_LAUNCH_SPACING=2 "$CV" launch AA-42 task/AA-42 >/dev/null 2>&1
+check "a launch right after another waits out the spacing" "$([ $(( $(date +%s) - t0 )) -ge 1 ] && echo waited || echo immediate)" waited
+rm -f "$CLOUD_VERIFY_DIR"/AA-42.*
+
+echo "the prompt says how to wait:"
+cat > "$BIN/script" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$2" > "$DIR/launch.cmd"; echo "View: .../session_01ABCDEFGH?from=cli"
+EOF
+chmod +x "$BIN/script"
+"$CV" launch AA-43 task/AA-43 >/dev/null 2>&1
+check "prompt sets the maximum background timeout" "$(grep -c 'timeout: 7200000' "$DIR/launch.cmd")" 1
+check "prompt offers INCONCLUSIVE"                 "$(grep -c 'PASS | FAIL | SUPERSEDED | INCONCLUSIVE' "$DIR/launch.cmd")" 1
+rm -f "$CLOUD_VERIFY_DIR"/AA-43.*
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
