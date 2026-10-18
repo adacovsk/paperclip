@@ -22,7 +22,8 @@
 #         1  a model has to look; the last line of output says why
 # Env:    PAPERCLIP_PROJECT, PAPERCLIP_GH_USER (required), XDG_CACHE_HOME,
 #         LAND_RELAUNCH / LAND_FRESHNESS / LAND_CV / LAND_STATUS / LAND_GH /
-#         LAND_GATE / LAND_BODY / LAND_BODY_CHECK (test seams).
+#         LAND_GATE / LAND_BODY / LAND_BODY_CHECK (test seams; LAND_GATE stands in
+#         for the explicit gate only, never for the pre-push hook).
 set -uo pipefail
 
 task="${1:?task id}"; verify="${2:?verify task id}"; title="${3:?task title}"
@@ -120,10 +121,24 @@ if [ "$old" != "$main" ]; then
   fi
 fi
 
+# The landing gate runs once. The project's pre-push hook is the same
+# `verify --head <sha>`, so where it is installed and this head is new to origin
+# the push is the gate; running both doubled the slowest step of a landing.
+# Otherwise (no hook, or a head origin already has, where the hook sees nothing
+# to push and checks nothing) the gate runs explicitly first.
 head="$(git rev-parse HEAD)"
-gate "$head" > "$S/$task.land-gate.log" 2>&1 \
-  || model "LANDING GATE FAILED: scripts/verify.sh is red on $branch (output in $task.land-gate.log)"
-git push -q -u origin "$branch" 2>/dev/null || model "push of $branch was rejected"
+hook="$(git rev-parse --git-path hooks/pre-push)"
+if [ -x "$hook" ] && grep -q 'run -e dev verify' "$hook" \
+   && [ "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" != "$head" ]; then
+  git push -u origin "$branch" > "$S/$task.land-gate.log" 2>&1 \
+    || { grep -q 'pre-push: verification failed' "$S/$task.land-gate.log" \
+           && model "LANDING GATE FAILED: the pre-push verify is red on $branch (output in $task.land-gate.log)"
+         model "push of $branch was rejected (output in $task.land-gate.log)"; }
+else
+  gate "$head" > "$S/$task.land-gate.log" 2>&1 \
+    || model "LANDING GATE FAILED: scripts/verify.sh is red on $branch (output in $task.land-gate.log)"
+  git push -q -u origin "$branch" 2>/dev/null || model "push of $branch was rejected"
+fi
 "$STATUS" cargo "$head" "${note:-cargo clippy + test --lib green, landing gate green}" >/dev/null 2>&1 \
   || say "WARNING: pipeline/verify not posted on $head; the PR cannot merge until it is"
 

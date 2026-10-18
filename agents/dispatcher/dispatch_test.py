@@ -465,7 +465,7 @@ class SentinelSweep(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.land)
+        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.start_landing)
         dispatch.VERIFY_DIR, dispatch.STATE_DIR = root / "verify", root / "state"
         dispatch.VERIFY_DIR.mkdir()
         dispatch.STATE_DIR.mkdir()
@@ -479,15 +479,14 @@ class SentinelSweep(unittest.TestCase):
             return self.relaunch_ok
         dispatch.relaunch = fake_relaunch
         self.landed = []
-        self.land_result = True
 
-        def fake_land(api, verify, parent):
+        def fake_start(api, verify, parent):
             self.landed.append(parent["identifier"])
-            return self.land_result
-        dispatch.land = fake_land
+            return True
+        dispatch.start_landing = fake_start
 
     def tearDown(self):
-        dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.land = self.saved
+        dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.start_landing = self.saved
         self.tmp.cleanup()
 
     def sentinel(self, code, base=None):
@@ -505,7 +504,13 @@ class SentinelSweep(unittest.TestCase):
     def verdict(self):
         (dispatch.VERIFY_DIR / "T-1.cloud.verdict").write_text("CLOUD-VERIFY-V2\nresult: PASS\n")
 
-    def test_a_green_cloud_verify_lands_without_a_model(self):
+    def finished(self, rc, said="land T-1: done", pid=None):
+        pid_f, out_f, rc_f = dispatch.landing_files("T-1")
+        pid_f.write_text(f"{pid or 1} v1 V-1\n")
+        out_f.write_text(said + "\n")
+        rc_f.write_text(f"{rc}\n")
+
+    def test_a_green_cloud_verify_starts_a_landing_without_a_model(self):
         self.verdict()
         self.sentinel("0", base=self.MAIN)
         self.assertEqual(self.sweep(), [])
@@ -517,20 +522,54 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual(self.sweep(), [])
         self.assertEqual((self.landed, self.relaunched), (["T-1"], []))
 
+    def test_a_running_landing_is_left_alone(self):
+        self.verdict()
+        self.sentinel("0", base=self.MAIN)
+        dispatch.landing_files("T-1")[0].write_text("1 v1 V-1\n")
+        alive, dispatch.landing_alive = dispatch.landing_alive, lambda pid: True
+        try:
+            self.assertEqual(self.sweep(), [])
+        finally:
+            dispatch.landing_alive = alive
+        self.assertEqual(self.landed, [])
+
+    def test_a_landing_that_died_without_a_result_starts_again(self):
+        self.verdict()
+        self.sentinel("0", base=self.MAIN)
+        dispatch.landing_files("T-1")[0].write_text("999999999 v1 V-1\n")
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual(self.landed, ["T-1"])
+
     def test_a_landing_handed_back_wakes_the_architect(self):
         self.verdict()
-        self.land_result = False
         self.sentinel("0", base=self.MAIN)
+        self.finished(1, "land T-1: uncommitted changes in the worktree")
         self.assertEqual(len(self.sweep()), 1)
+        self.assertEqual(self.landed, [])
+        self.assertFalse(dispatch.landing_files("T-1")[2].exists())
 
-    def test_an_unfinished_landing_is_retried_next_sweep(self):
+    def test_another_verifys_refusal_does_not_wake_this_one(self):
         self.verdict()
-        self.land_result = None
         self.sentinel("0", base=self.MAIN)
+        self.finished(1)
+        dispatch.landing_files("T-1")[0].write_text("1 v0 V-0\n")
         self.assertEqual(self.sweep(), [])
-        self.land_result = True
-        self.sweep()
-        self.assertEqual(self.landed, ["T-1", "T-1"])
+        self.assertEqual(self.landed, ["T-1"])
+
+    def test_a_finished_landing_is_reported_and_cleared(self):
+        self.finished(0, "land T-1: PR confirmed: https://example/pr/1")
+        api = SweepApi()
+        dispatch.collect_landings(api)
+        self.assertEqual([(m, p) for m, p, _ in api.writes], [("POST", "/issues/v1/comments")])
+        self.assertIn("Landed by the Dispatcher", api.writes[0][2]["body"])
+        self.assertFalse(any(f.exists() for f in dispatch.landing_files("T-1")))
+
+    def test_a_refused_landing_is_left_for_the_sweep(self):
+        self.finished(1)
+        api = SweepApi()
+        dispatch.collect_landings(api)
+        self.assertEqual(api.writes, [])
+        self.assertTrue(dispatch.landing_files("T-1")[2].exists())
 
     def test_a_local_green_is_not_landed_by_script(self):
         self.sentinel("0", base=self.MAIN)
@@ -629,10 +668,14 @@ class MainRepairSentinel(SentinelSweep):
     test_the_same_inconclusive_code_twice_wakes_the_second_time = None
     test_a_relaunch_past_the_time_budget_waits_for_the_next_sweep = None
     test_a_real_result_between_clears_the_strike = None
-    test_a_green_cloud_verify_lands_without_a_model = None
+    test_a_green_cloud_verify_starts_a_landing_without_a_model = None
     test_a_green_on_an_older_main_goes_to_land_not_relaunch = None
+    test_a_running_landing_is_left_alone = None
+    test_a_landing_that_died_without_a_result_starts_again = None
     test_a_landing_handed_back_wakes_the_architect = None
-    test_an_unfinished_landing_is_retried_next_sweep = None
+    test_another_verifys_refusal_does_not_wake_this_one = None
+    test_a_finished_landing_is_reported_and_cleared = None
+    test_a_refused_landing_is_left_for_the_sweep = None
     test_a_local_green_is_not_landed_by_script = None
     test_a_main_repair_parent_is_not_landed_by_script = None
 
