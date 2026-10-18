@@ -112,6 +112,31 @@ check "  branch now contains main" "$(git -C "$WT" merge-base --is-ancestor orig
 check "  cap flagged in the body" "$(grep -c 'freshness cap' "$S/T-1.pr-body.md")" 1
 check "  no skip token when schemas regenerated" "$(grep -c 'skip-schema-regen' "$S/T-1.pr-body.md")" 0
 
+echo "the pre-push hook is the gate where it is installed"
+mkdir -p "$DIR/hooks"
+# The stub names the command land.sh looks for: pixi run -e dev verify
+printf '#!/usr/bin/env bash\n# pixi run -e dev verify\nwhile read -r _ sha _ _; do echo "hook $sha" >> %s; done\n[ "${HOOK_RC:-0}" = 0 ] || { echo "pre-push: verification failed"; exit 1; }\n' \
+  "$CALLS" > "$DIR/hooks/pre-push"
+chmod +x "$DIR/hooks/pre-push"
+git -C "$WT" config core.hooksPath "$DIR/hooks"
+newhead() { (cd "$WT" && echo "$RANDOM" >> work.txt && git commit -qam more); }
+newhead; green; echo https://example/pr/1 > "$DIR/open-pr"
+r=$(PRS="1 OPEN" run)
+check "new head with a hook -> 0" "$r" 0
+check "  the hook ran on the head" "$(called "hook $(git -C "$WT" rev-parse HEAD)")" 1
+check "  the explicit gate did not" "$(called gate)" 0
+newhead; green
+r=$(HOOK_RC=1 run)
+check "hook red -> 1" "$r" 1
+check "  said it was the gate" "$(grep -c 'LANDING GATE FAILED' "$DIR/out")" 1
+check "  no PR" "$(called pr-create)" 0
+git -C "$WT" push -q --no-verify origin task/T-1
+green; echo https://example/pr/1 > "$DIR/open-pr"
+r=$(PRS="1 OPEN" run)
+check "head already on origin -> explicit gate, 0" "$r" 0
+check "  the explicit gate ran" "$(called gate)" 1
+git -C "$WT" config --unset core.hooksPath
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

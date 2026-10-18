@@ -30,7 +30,8 @@ whole instruction set. This script runs those rows directly:
                                              Dispatcher until a model is needed
   Dispatcher's Verify, watcher dead         -> resume it (cloud-verify.sh resume)
   sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
-  sentinel 0, accepted cloud verdict        -> land it (architect/land.sh): freshness
+  sentinel 0, accepted cloud verdict        -> land it (architect/land.sh, detached; the
+                                             next sweep reads its result): freshness
                                              re-verify, resolve-mode offload on a
                                              conflict, or push + PR; the rest wakes
   sentinel 0, local build, main moved       -> freshness re-verify (relaunch-verify.sh);
@@ -1058,6 +1059,7 @@ def sweep(api: Api, project: Path) -> None:
         elif decision.kind == "handoff":
             hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
 
+    collect_landings(api)
     close_landed_verifies(api, project, pr_heads)
     close_superseded(api)
     requeue_base_red(api.dry_run)
@@ -1165,6 +1167,11 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         parent_issue = None if repair else api.get(f"/issues/{verify['parentId']}")
         parent = verify["identifier"] if repair else parent_issue["identifier"]
         mine = verify.get("assigneeAgentId") == agents.get("Dispatcher")
+        if not repair and landing_running(parent):
+            # land.sh may remove the sentinel or start a build mid-run; nothing
+            # here reads either until it has finished.
+            print(f"sentinel {verify['identifier']}: land.sh is still running", flush=True)
+            continue
         path = VERIFY_DIR / f"{parent}.exit"
         try:
             code, mtime = path.read_text().strip(), path.stat().st_mtime
@@ -1200,16 +1207,11 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
             action = "wake"
         if code == "0" and action in ("fresh", "wake") and not repair and verdict \
                 and not needs_architect(parent_issue) and not DEPENDENCY_BUMP.match(verify["title"]):
-            if not launch_budget_left():
-                print(f"sentinel {verify['identifier']}: landing deferred to the next sweep (run time budget)", flush=True)
-                continue  # not recorded, so the next sweep routes it again
-            outcome = land(api, verify, parent_issue)
-            if outcome is None:
-                continue  # did not finish: the next sweep tries again
-            if outcome:
-                state[verify["identifier"]] = key
-                continue
-            action, why = "wake", f"{why}; land.sh handed it back"
+            said = landing_handed_back(parent, verify)
+            if said is None:
+                start_landing(api, verify, parent_issue)
+                continue  # not recorded: the next sweep reads the result
+            action, why = "wake", f"{why}; land.sh handed it back ({said})"
         elif action in ("retry", "fresh"):
             if not launch_budget_left():
                 print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
@@ -1365,44 +1367,145 @@ def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
 
 
 DEPENDENCY_BUMP = re.compile(r"^Verify: dependency bump\b")
-#: land.sh runs the landing gate, a minute or two under build load, inside a
-#: sweep the server kills at 600 s; LAUNCH_BUDGET_S plus this stays under it.
-LAND_TIMEOUT_S = int(os.environ.get("DISPATCH_LAND_TIMEOUT_S", "330"))
+#: land.sh runs the landing gate, several minutes under build load, so it runs
+#: detached rather than inside a sweep the server kills at 600 s: a gate that
+#: outran a sweep's timeout was killed before its push, every sweep, and the
+#: green landings queued behind it waited on it. Each landing runs its own
+#: verify, so only this many run at once on the shared box.
+LAND_MAX_RUNNING = int(os.environ.get("DISPATCH_LAND_MAX_RUNNING", "2"))
+#: A land.sh still running after this long is hung, not slow; it is killed and
+#: the next sweep starts the landing again.
+LAND_STALE_S = int(os.environ.get("DISPATCH_LAND_STALE_S", "1800"))
 
 
-def land(api: Api, verify: dict, parent: dict) -> bool | None:
-    """Run `land.sh` on a green cloud verify: True when nothing is left for a model.
+def landing_files(parent: str) -> tuple[Path, Path, Path]:
+    """`{parent}.land.pid` ("<pid> <verify id> <verify identifier>"), `.land.out`, `.land.rc` (written last)."""
+    return tuple(VERIFY_DIR / f"{parent}.land.{ext}" for ext in ("pid", "out", "rc"))
 
-    True means it landed (the open PR then closes the Verify through
-    `close_landed_verifies`) or put a new build out (a freshness re-verify, or
-    a resolve verify of a branch that conflicts with main). False means the
-    caller wakes the Architect, exactly as before this existed. None means it
-    did not finish and the sentinel is left for the next sweep.
-    """
-    if api.dry_run:
-        print(f"sentinel {verify['identifier']}: would run land.sh", flush=True)
-        return True
+
+def clear_landing(parent: str) -> None:
+    for f in landing_files(parent):
+        f.unlink(missing_ok=True)
+
+
+def landing_pid(parent: str) -> tuple[int, str, str] | None:
     try:
-        out = subprocess.run(
-            ["bash", str(HERE.parent / "architect" / "land.sh"), parent["identifier"], verify["identifier"], parent["title"]],
-            capture_output=True, text=True, timeout=LAND_TIMEOUT_S,
-        )
-    except subprocess.SubprocessError as exc:
-        print(f"sentinel {verify['identifier']}: land.sh did not finish ({exc})", flush=True)
+        pid, verify_id, identifier = landing_files(parent)[0].read_text().split()
+        return int(pid), verify_id, identifier
+    except (OSError, ValueError):
         return None
-    said = (out.stdout.strip().splitlines() or [f"land.sh exit {out.returncode}"])[-1]
-    print(f"sentinel {verify['identifier']}: {said}", flush=True)
-    if out.returncode not in (0, 2):
-        return False
-    what = "Landed" if out.returncode == 0 else "Relaunched"
+
+
+def landing_alive(pid: int) -> bool:
     try:
-        api.write(
-            "POST", f"/issues/{verify['id']}/comments",
-            {"body": f"{what} by the Dispatcher, no model run (`land.sh`).\n\n`{said}`"},
-            f"sentinel {verify['identifier']}: land comment",
+        return b"land.sh" in Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+
+
+def landing_result(parent: str) -> tuple[str, str, int, str] | None:
+    """(verify id, verify identifier, exit code, last line) of a finished land.sh, else None."""
+    pid_f, out_f, rc_f = landing_files(parent)
+    rec = landing_pid(parent)
+    try:
+        rc = int(rc_f.read_text().strip())
+    except (OSError, ValueError):
+        return None
+    if rec is None:
+        return None
+    try:
+        lines = out_f.read_text().strip().splitlines()
+    except OSError:
+        lines = []
+    return rec[1], rec[2], rc, (lines or [f"land.sh exit {rc}"])[-1]
+
+
+def landing_running(parent: str) -> bool:
+    """A started land.sh with no result yet. A dead or hung one is cleared so the next sweep restarts it."""
+    rec = landing_pid(parent)
+    if rec is None or landing_files(parent)[2].exists():
+        return False
+    if not landing_alive(rec[0]):
+        print(f"sentinel {rec[2]}: land.sh died without a result; landing again", flush=True)
+        clear_landing(parent)
+        return False
+    if time.time() - landing_files(parent)[0].stat().st_mtime > LAND_STALE_S:
+        try:
+            os.killpg(rec[0], 9)
+        except OSError:
+            pass
+        print(f"sentinel {rec[2]}: land.sh ran past {LAND_STALE_S}s; killed, landing again next sweep", flush=True)
+        clear_landing(parent)
+    return True
+
+
+def collect_landings(api: Api) -> None:
+    """Report every finished landing that left nothing for a model, before its PR closes the Verify.
+
+    A refusal (exit 1) stays on disk: its Verify is still in review, and
+    route_sentinels wakes the Architect for it with land.sh's reason.
+    """
+    for rc_f in sorted(VERIFY_DIR.glob("*.land.rc")):
+        parent = rc_f.name[: -len(".land.rc")]
+        result = landing_result(parent)
+        if result is None:
+            clear_landing(parent)  # a result with no record of what it was for
+            continue
+        verify_id, identifier, rc, said = result
+        if rc not in (0, 2):
+            continue
+        print(f"sentinel {identifier}: {said}", flush=True)
+        what = "Landed" if rc == 0 else "Relaunched"
+        try:
+            api.write(
+                "POST", f"/issues/{verify_id}/comments",
+                {"body": f"{what} by the Dispatcher, no model run (`land.sh`).\n\n`{said}`"},
+                f"sentinel {identifier}: land comment",
+            )
+        except urllib.error.HTTPError as exc:
+            print(f"sentinel {identifier}: land comment refused ({exc.code})", flush=True)
+        if not api.dry_run:
+            clear_landing(parent)
+
+
+def landing_handed_back(parent: str, verify: dict) -> str | None:
+    """land.sh's reason when it refused this Verify's landing (clearing it), else None."""
+    result = landing_result(parent)
+    if result is None:
+        return None
+    clear_landing(parent)
+    if result[0] != verify["id"] or result[2] in (0, 2):
+        return None  # another Verify's landing, or one collect_landings already reported
+    print(f"sentinel {verify['identifier']}: {result[3]}", flush=True)
+    return result[3]
+
+
+def start_landing(api: Api, verify: dict, parent: dict) -> bool:
+    """Start `land.sh` detached on a green cloud verify; False when it was not started."""
+    running = sum(1 for f in VERIFY_DIR.glob("*.land.pid") if landing_running(f.name[: -len(".land.pid")]))
+    if running >= LAND_MAX_RUNNING:
+        print(f"sentinel {verify['identifier']}: landing deferred, {running} already running", flush=True)
+        return False
+    if api.dry_run:
+        print(f"sentinel {verify['identifier']}: would start land.sh", flush=True)
+        return False
+    pid_f, out_f, rc_f = landing_files(parent["identifier"])
+    clear_landing(parent["identifier"])
+    # The rc is written through a rename so a sweep never reads half of it.
+    script = '"$0" "$@" > "$OUT" 2>&1; echo $? > "$RC.tmp" && mv "$RC.tmp" "$RC"'
+    try:
+        proc = subprocess.Popen(
+            ["bash", "-c", script, str(HERE.parent / "architect" / "land.sh"),
+             parent["identifier"], verify["identifier"], parent["title"]],
+            env={**os.environ, "OUT": str(out_f), "RC": str(rc_f)},
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,  # outlives the sweep, and a stale kill reaches its whole tree
         )
-    except urllib.error.HTTPError as exc:
-        print(f"sentinel {verify['identifier']}: land comment refused ({exc.code})", flush=True)
+    except OSError as exc:
+        print(f"sentinel {verify['identifier']}: land.sh did not start ({exc})", flush=True)
+        return False
+    pid_f.write_text(f"{proc.pid} {verify['id']} {verify['identifier']}\n")
+    print(f"sentinel {verify['identifier']}: started land.sh (pid {proc.pid})", flush=True)
     return True
 
 
