@@ -44,7 +44,7 @@ WEDGE_SECONDS = float(os.environ.get("FACILITATOR_WEDGE_SECONDS", 15 * 60))
 #: be mid-landing, pushed a moment before its PR is opened.
 BRANCH_MIN_AGE = float(os.environ.get("FACILITATOR_BRANCH_MIN_AGE_SECONDS", 24 * 3600))
 BRANCH_SCAN_SECONDS = float(os.environ.get("FACILITATOR_BRANCH_SCAN_SECONDS", 6 * 3600))
-WEDGE_TITLE = "Wedged dispatcher: "
+WEDGE_TITLE = "[class:wedged-dispatcher] "
 STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
 STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
 
@@ -152,19 +152,34 @@ def wedged(live_runs: list[dict], now: float) -> list[dict]:
             if a["queued"] and not a["running"] and now - ts(a["oldest"]) > WEDGE_SECONDS]
 
 
-def file_wedges(api, found: list[dict], open_titles: set[str]) -> list[str]:
+def file_wedges(api, found: list[dict], filed_before: list[dict]) -> list[str]:
+    """One class-keyed operator filing per agent (INSTRUCTIONS §Filing): an open one is
+    left alone, a closed one is reopened as a recurrence, otherwise a new one is filed."""
+    held = ("Held: operator — a server restart clears the wedged queue; a recurrence means "
+            "the guard bounding it regressed.")
     filed = []
     for a in found:
-        title = f"{WEDGE_TITLE}{a['agentName']} holds {a['queued']} queued run(s), none running"
-        if any(t.startswith(f"{WEDGE_TITLE}{a['agentName']} ") for t in open_titles):
+        prefix = f"{WEDGE_TITLE}{a['agentName']} "
+        mine = sorted((i for i in filed_before if i["title"].startswith(prefix)), key=lambda i: i["createdAt"])
+        if any(i["status"] not in ("done", "cancelled") for i in mine):
             continue
-        api.write("POST", f"/companies/{api.company}/issues",
-                  {"title": title, "status": "todo", "priority": "high",
-                   "description": f"Oldest queued run created {a['oldest']}. The per-agent start lock or an "
-                                  "`idle in transaction` backend is holding the queue; a server restart clears "
-                                  "it, and a recurrence means the guard bounding it regressed "
-                                  "(`AGENT_START_LOCK_MAX_HOLD_MS`, `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS`)."},
-                  f"wedge   {a['agentName']}: file for the operator")
+        occurrence = f"Oldest queued run created {a['oldest']}; {a['queued']} queued, none running."
+        if mine:
+            api.set_status(mine[-1], {"status": "blocked"},
+                           f"{held}\n\nRecurrence: {occurrence} The closure before this one cleared the "
+                           "queue, not the mechanism.",
+                           f"wedge   {a['agentName']}: reopen {mine[-1]['identifier']} as a recurrence")
+        else:
+            created = api.write(
+                "POST", f"/companies/{api.company}/issues",
+                {"title": f"{prefix}holds queued runs, none running", "status": "blocked", "priority": "high",
+                 "description": "The per-agent start lock or an `idle in transaction` backend is holding the "
+                                "queue. Guards that should bound it: `AGENT_START_LOCK_MAX_HOLD_MS`, "
+                                "`PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS`."},
+                f"wedge   {a['agentName']}: file for the operator")
+            if created:
+                api.write("POST", f"/issues/{created['id']}/comments", {"body": f"{held}\n\n{occurrence}"},
+                          f"wedge   {a['agentName']}: hold")
         filed.append(a["agentName"])
     return filed
 
@@ -177,34 +192,37 @@ def git(project: Path, *args: str, check: bool = True) -> subprocess.CompletedPr
                           timeout=120, check=check)
 
 
-def remote_branches(project: Path) -> list[tuple[str, float]]:
-    """(branch, tip commit time) for every origin branch except main."""
-    out = git(project, "for-each-ref", "--format=%(refname:lstrip=3)\t%(committerdate:unix)",
+def remote_branches(project: Path) -> list[tuple[str, float, str]]:
+    """(branch, tip commit time, tip sha) for every origin branch except main."""
+    out = git(project, "for-each-ref", "--format=%(refname:lstrip=3)\t%(committerdate:unix)\t%(objectname)",
               "refs/remotes/origin").stdout
-    rows = [line.split("\t") for line in out.splitlines() if "\t" in line]
-    return [(b, float(t)) for b, t in rows if b not in ("main", "HEAD", "")]
+    rows = [line.split("\t") for line in out.splitlines() if line.count("\t") == 2]
+    return [(b, float(t), sha) for b, t, sha in rows if b not in ("main", "HEAD", "")]
 
 
-def on_main(project: Path, branch: str, main_tree: str) -> str | None:
+def on_main(project: Path, tip: str, main: str) -> str | None:
     """Why the branch's work is provably on main, or None.
 
     Case 2 is decided by a merge, not by `git diff main...branch`: that three-dot diff
     compares against the merge base, so a squash-merged branch shows its whole change
     and never reads empty. Merging the branch into main and getting main's tree back
     is the claim the case makes, that the branch adds nothing.
+
+    Both sides are commits, not refs: other sweeps fetch into the same repo, and a ref
+    that moves mid-scan would compare one branch against two different mains.
     """
-    ref = f"origin/{branch}"
-    if git(project, "merge-base", "--is-ancestor", ref, "origin/main", check=False).returncode == 0:
+    if git(project, "merge-base", "--is-ancestor", tip, main, check=False).returncode == 0:
         return "tip is on origin/main"
-    merged = git(project, "merge-tree", "--write-tree", "origin/main", ref, check=False)
+    main_tree = git(project, "rev-parse", f"{main}^{{tree}}").stdout.strip()
+    merged = git(project, "merge-tree", "--write-tree", main, tip, check=False)
     if merged.returncode == 0 and merged.stdout.split("\n", 1)[0].strip() == main_tree:
         return "merging it into origin/main changes nothing"
     return None
 
 
-def deletable(branches: list[tuple[str, float]], open_heads: set[str], now: float) -> list[str]:
-    """Branches old enough and with no open PR; whether their work is on main is checked after."""
-    return [b for b, at in branches if b not in open_heads and now - at >= BRANCH_MIN_AGE]
+def deletable(branches: list[tuple[str, float, str]], open_heads: set[str], now: float) -> list[tuple[str, str]]:
+    """(branch, tip) old enough and with no open PR; whether the work is on main is checked after."""
+    return [(b, sha) for b, at, sha in branches if b not in open_heads and now - at >= BRANCH_MIN_AGE]
 
 
 def merged_branches(project: Path, open_heads: set[str], dry_run: bool, now: float) -> list[dict]:
@@ -215,22 +233,23 @@ def merged_branches(project: Path, open_heads: set[str], dry_run: bool, now: flo
     """
     try:
         git(project, "fetch", "--quiet", "--prune", "origin")
-        main_tree = git(project, "rev-parse", "origin/main^{tree}").stdout.strip()
+        main = git(project, "rev-parse", "origin/main").stdout.strip()
     except subprocess.SubprocessError as exc:
         # Deciding against a stale origin/main could only miss a branch, but say so.
         print(f"branch  sweep skipped: {exc}", flush=True)
         return []
     delete = os.environ.get("FACILITATOR_DELETE_BRANCHES") == "1"
     found = []
-    for branch in deletable(remote_branches(project), open_heads, now):
-        why = on_main(project, branch, main_tree)
+    for branch, tip in deletable(remote_branches(project), open_heads, now):
+        why = on_main(project, tip, main)
         if not why:
             continue
         deleted = False
         if delete:
             print(("DRY " if dry_run else "") + f"branch  {branch}: delete, {why}", flush=True)
-            deleted = dry_run or git(project, "push", "--quiet", "origin", "--delete", branch,
-                                     check=False).returncode == 0
+            # The lease refuses the delete if the branch moved since it was checked.
+            deleted = dry_run or git(project, "push", "--quiet", f"--force-with-lease={branch}:{tip}",
+                                     "origin", f":refs/heads/{branch}", check=False).returncode == 0
         found.append({"branch": branch, "why": why, "deleted": deleted})
     return found
 
@@ -268,9 +287,9 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     found = wedged(live_runs, now)
     filed: list[str] = []
     if found:
-        open_titles = {i["title"] for i in api.issues(status="backlog,todo,in_progress,in_review,blocked")
-                       if i["title"].startswith(WEDGE_TITLE)}
-        filed = file_wedges(api, found, open_titles)
+        filed_before = [i for i in api.issues(status="backlog,todo,in_progress,in_review,blocked,done,cancelled")
+                        if i["title"].startswith(WEDGE_TITLE)]
+        filed = file_wedges(api, found, filed_before)
 
     # A merge-tree per remote branch is a minute of the Dispatcher's 600 s budget, and a
     # branch whose work landed costs nothing by waiting, so this runs on its own clock.

@@ -33,7 +33,7 @@ The priority step — surface and clear blockers before anything else. `GET /iss
 - **If the blocked task's owner is itself stalled, do not reassign the task to yourself.** That is the tempting move — the owner can't act, so take it "for tracking" — and it is wrong twice over. You cannot fix platform bugs (no commits, no INSTRUCTIONS edits), so the task is no more actionable on you than on them; and self-assignment mints a fresh Facilitator run *per reassignment*, each of which re-runs this sweep. That fired a once-daily routine 9 times in 100 minutes, three runs inside one 6-second window. Leave the assignee, name the stalled owner in the report, and file it to whoever can act — Coordinator or the operator.
 - Blocked >2 days with no movement → escalate in the report as a stuck task.
 
-Dedupe followups against existing.
+Dedupe followups against existing, by class (§Filing).
 
 ### 2a. Missed-wake re-dispatch (the most common silent stall)
 
@@ -50,7 +50,7 @@ Your part is reading its report: `~/.cache/paperclip-dispatcher/facilitator.json
 
 §2a finds an assigned task with **no** live run. The opposite shape is a queue that is **nothing but** live runs: an agent holding many `queued` runs and zero `running` ones, dispatching none of them. Every issue-shaped check reads healthy — the tasks *are* assigned, they *do* have runs — and the agent's own `status` still says `idle`, so nothing in steps 1, 2 or 2a can see it.
 
-Detection is mechanical (the same script and report). An agent with `queued` > 0, `running` == 0 and its oldest queued run past ~15 minutes is listed under `wedged`, and the script files one `Wedged dispatcher: <agent>` issue for the operator. Your part:
+Detection is mechanical (the same script and report). An agent with `queued` > 0, `running` == 0 and its oldest queued run past ~15 minutes is listed under `wedged`, and the script files it for the operator under `[class:wedged-dispatcher] <agent>` (§Filing). An open filing is left alone, and a closed one is reopened as a recurrence. Your part:
 
 - **Do not toggle the assignee.** That mints another queued run behind the same blockage. The state that proves the wedge is in the database: a backend `idle in transaction` on the per-agent advisory lock. Clearing it takes a server restart, and **you do not restart the server**, since a restart kills every live run, this one included.
 - **Say how long it has lasted.** Two guards should keep this short: `AGENT_START_LOCK_MAX_HOLD_MS` (5 min default) and `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS` (2 min default). A wedge lasting materially longer than either means one of them is disabled or ineffective; say so on the filed issue.
@@ -166,6 +166,18 @@ Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fail
 
 Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
 
+## Filing
+
+**File by class, not by occurrence.** A filing that describes one occurrence gets closed when that occurrence is cleared. The next occurrence of the same defect then arrives as a fresh filing with no history, so nothing ever shows that the defect keeps recurring. Missed wakes and holds that never release were each filed as new tasks sweep after sweep.
+
+- **Every filing's title starts with a class key**: `[class:<slug>] <summary>`. The slug names the mechanism, not the instance. `[class:hold-never-releases]` is a class key; one naming a task, branch or count is not.
+- **Before filing, search by the key**: `GET /issues?q=[class:<slug>]`, across `done` and `cancelled` too.
+  - **An open one exists:** add a comment for this occurrence (what, where, when) and do not file again.
+  - **A closed one exists:** reopen it to `todo`, or for an operator class to `blocked` (see below). Its comment must open `Recurrence <n>:` and say which branch of the mechanism the earlier closure missed. A closure followed by a recurrence means the earlier fix covered the symptom, not the mechanism.
+  - **Neither exists:** file a new one.
+- **Platform bugs go to the operator as `blocked`, unassigned, with a first comment of `Held: operator — <what decision or fix is needed>`.** Platform bugs are defects in the server, the Dispatcher or the agent scripts, which only an operator PR can fix. An unassigned `blocked` task with no `Held:` line sits in no one's queue. The `Held: operator` line is what §1's backlog-staleness scan reports with its age every sweep. Instruction and config problems still go to the Planner, as the Authority section says.
+- **Put the recurrence count in the report**: `[class:<slug>]` and its count, for every class that recurred this sweep. The count is the signal that a class needs a structural fix rather than another clean-up.
+
 ## Common failure modes
 
 Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` skill → file it to the Planner (instructions) or the operator (adapter env, `packages/adapters/claude-local/src/`). Timeouts → raise `timeoutSec`/`maxTurnsPerRun`. Stuck loops → read transcripts, file the triggering instruction to the Planner. Stale tasks on terminated agents → reassign. Missed assignment wake (assigned task, no live run, esp. `in_review` Review/Verify stages) → re-fire via the §2a assignee toggle (null → agent); a same-agent re-set or a bare comment is a no-op. Short-circuit (succeed, no tool calls) → rotation policy didn't fire, file bug. Comment-without-PATCH → PATCH on behalf, file fix.
@@ -181,7 +193,7 @@ Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` sk
 
 ## Never
 
-`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (grep first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push · `systemctl` (restarting or stopping any service).
+`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (search the class key first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push · `systemctl` (restarting or stopping any service).
 
 ## Finish
 

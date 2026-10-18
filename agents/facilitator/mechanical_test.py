@@ -1,6 +1,7 @@
 """Decision tests for mechanical.py.  Run: python3 -m unittest agents/facilitator/mechanical_test.py"""
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -111,10 +112,51 @@ class Wedged(unittest.TestCase):
         self.assertEqual(m.wedged([self.run_("W", "queued", 5)], NOW), [])
 
 
+class FakeApi:
+    company = "c"
+
+    def __init__(self):
+        self.calls = []
+
+    def write(self, method, path, body, what):
+        self.calls.append((method, path, body))
+        return {"id": "new"} if method == "POST" and path.endswith("/issues") else None
+
+    def set_status(self, issue, body, comment, what):
+        self.calls.append(("STATUS", issue["identifier"], body, comment))
+
+
+class FileWedges(unittest.TestCase):
+    W = {"agentName": "Worker", "queued": 3, "oldest": "2026-10-18T11:00:00Z"}
+
+    def filing(self, status):
+        return {"identifier": "X-1", "title": f"{m.WEDGE_TITLE}Worker holds queued runs, none running",
+                "status": status, "createdAt": "2026-10-01T00:00:00Z"}
+
+    def test_a_first_wedge_is_filed_held_for_the_operator(self):
+        api = FakeApi()
+        m.file_wedges(api, [self.W], [])
+        self.assertTrue(api.calls[0][2]["title"].startswith("[class:wedged-dispatcher] Worker "))
+        self.assertEqual(api.calls[0][2]["status"], "blocked")
+        self.assertTrue(api.calls[1][2]["body"].startswith("Held: operator"))
+
+    def test_an_open_filing_is_not_filed_again(self):
+        api = FakeApi()
+        self.assertEqual(m.file_wedges(api, [self.W], [self.filing("blocked")]), [])
+        self.assertEqual(api.calls, [])
+
+    def test_a_closed_filing_is_reopened_as_a_recurrence(self):
+        api = FakeApi()
+        m.file_wedges(api, [self.W], [self.filing("done")])
+        kind, ident, body, comment = api.calls[0]
+        self.assertEqual((kind, ident, body["status"]), ("STATUS", "X-1", "blocked"))
+        self.assertTrue(comment.startswith("Held: operator") and "Recurrence:" in comment)
+
+
 class Branches(unittest.TestCase):
     def test_young_branches_and_open_pr_heads_are_never_candidates(self):
-        rows = [("old", NOW - 48 * HOUR), ("young", NOW - HOUR), ("pr", NOW - 48 * HOUR)]
-        self.assertEqual(m.deletable(rows, {"pr"}, NOW), ["old"])
+        rows = [("old", NOW - 48 * HOUR, "s1"), ("young", NOW - HOUR, "s2"), ("pr", NOW - 48 * HOUR, "s3")]
+        self.assertEqual(m.deletable(rows, {"pr"}, NOW), [("old", "s1")])
 
     def test_on_main_tells_merged_and_squashed_from_unlanded_work(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,12 +185,26 @@ class Branches(unittest.TestCase):
             Path(work, "c").write_text("c\n"), g("add", "c"), g("commit", "-qm", "c")
             g("push", "-q", "origin", "unlanded")
             g("fetch", "-q", "origin")
-            tree = g("rev-parse", "origin/main^{tree}").strip()
+            main = g("rev-parse", "origin/main").strip()
+            tips = {b: sha for b, _, sha in m.remote_branches(work)}
 
-            self.assertEqual(sorted(b for b, _ in m.remote_branches(work)), ["merged", "squashed", "unlanded"])
-            self.assertEqual(m.on_main(work, "merged", tree), "tip is on origin/main")
-            self.assertEqual(m.on_main(work, "squashed", tree), "merging it into origin/main changes nothing")
-            self.assertIsNone(m.on_main(work, "unlanded", tree))
+            self.assertEqual(sorted(tips), ["merged", "squashed", "unlanded"])
+            self.assertEqual(m.on_main(work, tips["merged"], main), "tip is on origin/main")
+            self.assertEqual(m.on_main(work, tips["squashed"], main), "merging it into origin/main changes nothing")
+            self.assertIsNone(m.on_main(work, tips["unlanded"], main))
+
+            # Deletion is opt-in; with it on, only branches whose work is on main go.
+            later = NOW + 365 * 24 * HOUR
+            listed = m.merged_branches(work, set(), False, later)
+            self.assertEqual(sorted((e["branch"], e["deleted"]) for e in listed),
+                             [("merged", False), ("squashed", False)])
+            os.environ["FACILITATOR_DELETE_BRANCHES"] = "1"
+            try:
+                m.merged_branches(work, set(), False, later)
+            finally:
+                del os.environ["FACILITATOR_DELETE_BRANCHES"]
+            self.assertEqual(g("ls-remote", "--heads", "origin").count("refs/heads/"), 2)  # main, unlanded
+            self.assertIn("refs/heads/unlanded", g("ls-remote", "--heads", "origin"))
 
 
 if __name__ == "__main__":
