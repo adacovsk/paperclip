@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import importlib.util
 import json
 import os
 import re
@@ -78,6 +79,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import dedupe  # noqa: E402
 import promote as promotion  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("mechanical", HERE.parent / "facilitator" / "mechanical.py")
+facilitator = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(facilitator)
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 HANDOFF_FILE = STATE_DIR / "handoff.json"
 #: Hold release reads every held task's comments; once per window is plenty.
@@ -85,6 +90,9 @@ HOLD_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_HOLD_SCAN_SECONDS", 300))
 # The dedupe sweep lists every live and recently done task; duplicates are filed at
 # Planner cadence, so a slower scan than the hold sweep loses nothing.
 DEDUPE_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_DEDUPE_SCAN_SECONDS", 1800))
+#: The Facilitator's mechanical checks (facilitator/mechanical.py) list every live
+#: task and every remote branch; a stall is measured in hours, so half-hourly is enough.
+FACILITATOR_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_FACILITATOR_SCAN_SECONDS", 1800))
 #: A refill wake the Coordinator just answered needs no repeat inside this window.
 REFILL_INTERVAL = float(os.environ.get("DISPATCHER_REFILL_SECONDS", 300))
 
@@ -1065,6 +1073,8 @@ def sweep(api: Api, project: Path) -> None:
     requeue_base_red(api.dry_run)
     route_sentinels(api, agents, project)
     file_main_repair(api, agents, project)
+    # After route_sentinels: a sentinel it just routed is a wake it just sent, not a missed one.
+    facilitator_checks(api, project, roster, pr_heads)
     # Before release_holds: a hold on a cancelled duplicate reads as released, so it
     # must move to the surviving copy first or the waiting task is freed early.
     dedupe_duplicates(api, project)
@@ -1700,6 +1710,53 @@ def close_superseded(api: Api) -> None:
             f"Branch disposition: **Abandoned** — superseded. `{branch}` tip `{tip}` is kept on origin.",
             f"close   {parent['identifier']}: superseded by {sha_line[:9]}",
         )
+
+
+def verify_quiet_since(api: Api):
+    """`quiet_since` for facilitator.missed_wakes: when a Verify last did anything off the board.
+
+    None while its build, cloud watcher or landing is still running, or while its
+    sentinel waits for route_sentinels; otherwise the sentinel's time, since routing it
+    is the wake that may have been missed. Other stages have no off-board work.
+    """
+    routed = load_state("sentinels.json")
+    parents: dict[str, str] = {}
+
+    def quiet_since(issue: dict) -> float | None:
+        if stage_of(issue) != "verify":
+            return 0.0
+        if issue.get("parentId"):
+            if issue["parentId"] not in parents:
+                parents[issue["parentId"]] = api.get(f"/issues/{issue['parentId']}")["identifier"]
+            parent = parents[issue["parentId"]]
+        elif is_main_repair(issue):
+            parent = issue["identifier"]
+        else:
+            return 0.0
+        rec = landing_pid(parent)
+        if rec and landing_alive(rec[0]):
+            return None
+        sentinel = VERIFY_DIR / f"{parent}.exit"
+        try:
+            code, mtime = sentinel.read_text().strip(), sentinel.stat().st_mtime
+        except OSError:
+            try:
+                # A recycled pid reads as a live build; that only delays a toggle.
+                build = int((VERIFY_DIR / f"{parent}.pid").read_text().strip())
+                return None if Path(f"/proc/{build}").exists() else 0.0
+            except (OSError, ValueError):
+                return 0.0
+        return mtime if routed.get(issue["identifier"]) == f"{code}|{mtime}" else None
+
+    return quiet_since
+
+
+def facilitator_checks(api: Api, project: Path, roster: list[dict], pr_heads: dict[str, str]) -> None:
+    state = load_state("facilitator-run.json")
+    if time.time() - state.get("at", 0) < FACILITATOR_SCAN_INTERVAL:
+        return
+    facilitator.sweep(api, project, set(pr_heads), roster, verify_quiet_since(api))
+    save_state("facilitator-run.json", {"at": time.time()}, api.dry_run)
 
 
 def dedupe_duplicates(api: Api, project: Path) -> int:

@@ -33,27 +33,28 @@ The priority step — surface and clear blockers before anything else. `GET /iss
 - **If the blocked task's owner is itself stalled, do not reassign the task to yourself.** That is the tempting move — the owner can't act, so take it "for tracking" — and it is wrong twice over. You cannot fix platform bugs (no commits, no INSTRUCTIONS edits), so the task is no more actionable on you than on them; and self-assignment mints a fresh Facilitator run *per reassignment*, each of which re-runs this sweep. That fired a once-daily routine 9 times in 100 minutes, three runs inside one 6-second window. Leave the assignee, name the stalled owner in the report, and file it to whoever can act — Coordinator or the operator.
 - Blocked >2 days with no movement → escalate in the report as a stuck task.
 
-Dedupe followups against existing.
+Dedupe followups against existing, by class (§Filing).
 
 ### 2a. Missed-wake re-dispatch (the most common silent stall)
 
 Steps 1 & 2 scan `todo`/`in_progress`/`blocked`; nothing else scans `in_review`. But Review and Verify stages **live in `in_review`** (Coordinator creates them there — verifying/reviewing *is* the in-review stage), so a stage whose assignment wake never fired rots here invisibly, out of every other query. This is the single most common silent stall.
 
-`GET /issues?status=in_review,in_progress`. Flag any task that is **assigned** (`assigneeAgentId` set) but has **no live run** — `activeRun` false and either no `executionRunId` or a stale `executionLockedAt` — and `updatedAt` older than ~2h. That combination means the assignment wake was missed (or fired into a dead session); the agent is idle and nothing will re-wake it on its own. **Except a Verify assigned to the Dispatcher**: that is a cloud build the Dispatcher launched, waiting on its sentinel with no run by design (builds take hours). The Dispatcher hands it to the Architect itself when a result needs a model, and resumes it if its watcher dies. Leave it alone.
+**The re-fire is mechanical and runs every half hour on the Dispatcher's sweep, not here** (`agents/facilitator/mechanical.py`). <!-- privacy-ok: paperclip's own script, not a project file --> As a nightly step it failed on the same thing that causes the stalls: wakes die when the usage limit runs out, the Facilitator's run died with them, and verify stages sat idle for days with nothing to re-fire them. The script toggles the assignee through null and back on any assigned stage, or `in_progress` task, that has had no live run for ~2h. A toggle is the only remedy, because a comment or a same-value write fires nothing. → [why a comment cannot re-fire a wake](rationale/assignee-toggle-not-a-comment.md) It skips a Verify whose build, cloud watcher or landing is still running, and it retries a toggle that did not take no more than once per 6h.
 
-**Remedy — re-fire the wake by *changing the assignee*, not by commenting.** `wakeOnDemand` triggers on an assignee **change**, so re-assigning the *same* agent is a no-op and a re-dispatch *comment* does nothing at all. → [why a comment cannot re-fire a wake](rationale/assignee-toggle-not-a-comment.md) You must make the assignee value actually change: **unassign (set `assigneeAgentId` to null), then re-assign the original agent** (null → agent). Do **not** change `status` — `in_review` is already correct. After the toggle, confirm a fresh `executionRunId` / `executionLockedAt` appears within ~30s; if it does, the stage is moving. If no run starts even after the toggle, *then* it is a genuine rotation/config bug — file it (§3).
-
-The parent Worker task that spawned a stalled Review/Verify child is usually itself `in_review` waiting on that child — re-dispatching the child is enough; it advances on its own once the child completes. Toggle the child, not the parent.
+Your part is reading its report: `~/.cache/paperclip-dispatcher/facilitator.json`.
+- **`at` older than ~2h** means the Dispatcher is not sweeping. That is the finding: report it. Then do this step by hand, toggling `assigneeAgentId` null → agent and leaving `status` alone. Confirm a fresh `executionRunId` appears within ~30s.
+- **`toggleNotTaking`** lists tasks toggled 3+ times without moving. That is a rotation/config bug, not a missed wake: diagnose it from the run history (§3) and file it.
+- **`toggled`** goes in your report as-is.
 
 ### 2b. Wedged dispatcher (the inverse of §2a, and invisible to every other step)
 
 §2a finds an assigned task with **no** live run. The opposite shape is a queue that is **nothing but** live runs: an agent holding many `queued` runs and zero `running` ones, dispatching none of them. Every issue-shaped check reads healthy — the tasks *are* assigned, they *do* have runs — and the agent's own `status` still says `idle`, so nothing in steps 1, 2 or 2a can see it.
 
-`GET /api/companies/{companyId}/live-runs` returns every `queued` and `running` run for the company in one call. Group by `agentName` and flag an agent where **`queued` > 0, `running` == 0, and the oldest `createdAt` is more than ~15 minutes old**. A healthy agent at its cap shows `running` == `maxConcurrentRuns` alongside its queue; `running` == 0 with a queue that is not draining is the signature.
+Detection is mechanical (the same script and report). An agent with `queued` > 0, `running` == 0 and its oldest queued run past ~15 minutes is listed under `wedged`, and the script files it for the operator under `[class:wedged-dispatcher] <agent>` (§Filing). An open filing is left alone, and a closed one is reopened as a recurrence. Your part:
 
-**This is not a missed wake, so do not toggle the assignee** — that mints another queued run behind the same blockage and changes nothing. The dispatcher itself is stuck in-process, and the state that proves it is in the database: a backend sitting `idle in transaction` on the per-agent advisory lock. Clearing it takes a server restart, and **you do not restart the server**: a restart kills every live run, this one included. **File it for the operator as a platform bug (§3) with the agent name, the queue depth, and the age of the oldest queued run** — a restart is the remedy, not the fix, and a recurrence means the guard that bounds this regressed.
-
-Two guards should keep this short-lived: the per-agent start lock stops waiting on a holder that has run past `AGENT_START_LOCK_MAX_HOLD_MS` (5 min default), and `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS` (2 min default) tears down a wedged backend. If you find this shape lasting materially longer than either, say so in the report — it means one of them is disabled or ineffective.
+- **Do not toggle the assignee.** That mints another queued run behind the same blockage. The state that proves the wedge is in the database: a backend `idle in transaction` on the per-agent advisory lock. Clearing it takes a server restart, and **you do not restart the server**, since a restart kills every live run, this one included.
+- **Say how long it has lasted.** Two guards should keep this short: `AGENT_START_LOCK_MAX_HOLD_MS` (5 min default) and `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS` (2 min default). A wedge lasting materially longer than either means one of them is disabled or ineffective; say so on the filed issue.
+- **If the wedged agent is the Dispatcher, the script cannot see it.** It runs inside the Dispatcher's sweep. A stale report `at` is how this shows up, so check `GET /api/companies/{companyId}/live-runs` by hand in that case.
 
 ### 3. Run productivity
 
@@ -129,43 +130,16 @@ Never write `hiddenAt`/`hidden`; the server refuses it.
 
 ### 7. Stale branch sweep
 
-This sweeps the project repo, not paperclip, which is your working directory: run every git
-command as `git -C "$PAPERCLIP_PROJECT"`. `git -C "$PAPERCLIP_PROJECT" fetch origin --prune`, then
-`(cd "$PAPERCLIP_PROJECT" && gh api -X GET 'repos/{owner}/{repo}/branches' --paginate)` — `gh`
-fills `{owner}/{repo}` from the directory's remote. For
-**every remote branch other than `main`** — not just `task/AA-*`: `planner/*`, `op/*`, `claude/*`
-and `economy/*` all strand the same way, and the `task/AA-*` glob made 12 of 23 unmerged remote
-branches invisible to this sweep. Two of them (`planner/restock-0807d`, `planner/restock-0808c`)
-sat stranded 18 days and were found only by walking `git worktree list` by hand.
+Finding remote branches whose work is already on `origin/main` is mechanical (the same script, every 6h, `branchesOnMain` in the report). There are two ways a branch qualifies:
+- **Case 1**: its tip is an ancestor of `origin/main`.
+- **Case 2**: merging it into `origin/main` gives back `origin/main`'s own tree.
 
-| Case | Condition | Action |
-|---|---|---|
-| 1 | Tip is ancestor of `origin/main` | `git push origin --delete` |
-| 2 | Tip not ancestor, but `git diff origin/main...<branch>` empty (squash dup) | `git push origin --delete` |
-| 3 | Unique commits + linked task `done`/`cancelled`, **or a PR that is merged/closed** | Leave. **Do not report, file, or comment.** |
-| 4 | Unique commits + linked task `in_progress`/`todo`, **or an open PR** | Leave |
-| 5 | No linked task and no PR | Leave. **Do not report, file, or comment.** |
+Case 2 is decided by that merge, not by `git diff origin/main...<branch>`. The three-dot diff compares against the merge base, so a squash-merged branch shows its whole change and never reads empty, so that test cannot catch the commonest duplicate.
 
-**Cases 3 and 5 are silent, and must not be turned back into followups.** A closed PR or a
-`done`/`cancelled` task *is* the operator's recover-vs-discard decision, already made — the
-leftover commits are superseded work, not stranded work. Reporting them asked the operator to
-re-decide something decided, and it recurred as a fresh filing every sweep however many times the
-filing was closed. `rescue/*`, `archive/*`, `park/*` and idle `claude/*` refs are the same class.
-The sweep's only jobs on the remote are deleting cases 1–2 and leaving everything else alone.
+The script skips open-PR heads and tips younger than 24h, since a young tip may be mid-landing. It covers every remote branch except `main`, not only `task/*`. It deletes only when `FACILITATOR_DELETE_BRANCHES=1` is set in the Dispatcher's environment, which is the operator's call. Otherwise each entry carries `deleted: false`. Your part:
 
-**Resolving the "linked task" for a non-`task/` branch.** `planner/*`, `op/*` and `claude/*`
-carry no `AA-nnnn` in the name, so the identifier lookup that works for `task/<task-id>` returns
-nothing and every such branch falls to case 5. Resolve them through the PR instead:
-`gh pr list --head <branch> --state all --limit 1 --json number,state,mergedAt` — an open PR is
-case 4; a merged or closed PR is case 3 unless the tip is an ancestor (case 1) or the diff is
-empty (case 2) — a merged PR alone is not deletion evidence, since commits pushed after the merge
-are on neither `main` nor any PR; and only a branch with neither a linked task nor any PR is
-genuinely case 5.
-
-Auto-delete only cases 1 & 2. Never force-push. **Case 1 and 2 are safe to widen** because both
-delete only branches whose commits are provably on `origin/main`; the cases that could lose work
-(3, 4, 5) are all leave-alone, so widening the glob cannot destroy anything the narrow glob
-protected.
+- **Report the entries with `deleted: false`** as deletable branches. **Do not delete them yourself**, because the deletion was left off deliberately.
+- **Leave every other branch alone, silently.** That includes unique commits under a `done`/`cancelled` task or a merged/closed PR, unique commits under an open task or open PR, and a branch with neither. A closed PR or a finished task *is* the operator's recover-vs-discard decision, already made. Reporting those branches recurred as a fresh filing every sweep however many times the filing was closed. `rescue/*`, `archive/*`, `park/*` and idle `claude/*` refs are the same class.
 
 ### 7b. Stranded local-commit sweep
 
@@ -187,10 +161,22 @@ done
 3. its linked `AA-nnnn` task is still open but non-advancing — **no `activeRun` and no live `executionRunId`** (cross-reference via `GET /issues?q=`), **and**
 4. `updatedAt` older than one fire interval.
 
-Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, same as §7 case 3, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. (Contrast §7 cases 1–2, which delete only *merged/duplicate remote* branches whose commits are safely on `origin/main`.)
+Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, like §7's finished-task branches, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. (Contrast §7 cases 1–2, which are *remote* branches whose commits are provably on `origin/main`.)
 ### 8. Report
 
-Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a — list the task ids), stuck tasks cleared, branches deleted, followups filed. Or `Pipeline healthy` if nothing.
+Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
+
+## Filing
+
+**File by class, not by occurrence.** A filing that describes one occurrence gets closed when that occurrence is cleared. The next occurrence of the same defect then arrives as a fresh filing with no history, so nothing ever shows that the defect keeps recurring. Missed wakes and holds that never release were each filed as new tasks sweep after sweep.
+
+- **Every filing's title starts with a class key**: `[class:<slug>] <summary>`. The slug names the mechanism, not the instance. `[class:hold-never-releases]` is a class key; one naming a task, branch or count is not.
+- **Before filing, search by the key**: `GET /issues?q=[class:<slug>]`, across `done` and `cancelled` too.
+  - **An open one exists:** add a comment for this occurrence (what, where, when) and do not file again.
+  - **A closed one exists:** reopen it to `todo`, or for an operator class to `blocked` (see below). Its comment must open `Recurrence <n>:` and say which branch of the mechanism the earlier closure missed. A closure followed by a recurrence means the earlier fix covered the symptom, not the mechanism.
+  - **Neither exists:** file a new one.
+- **Platform bugs go to the operator as `blocked`, unassigned, with a first comment of `Held: operator — <what decision or fix is needed>`.** Platform bugs are defects in the server, the Dispatcher or the agent scripts, which only an operator PR can fix. An unassigned `blocked` task with no `Held:` line sits in no one's queue. The `Held: operator` line is what §1's backlog-staleness scan reports with its age every sweep. Instruction and config problems still go to the Planner, as the Authority section says.
+- **Put the recurrence count in the report**: `[class:<slug>]` and its count, for every class that recurred this sweep. The count is the signal that a class needs a structural fix rather than another clean-up.
 
 ## Common failure modes
 
@@ -199,7 +185,7 @@ Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` sk
 ## Authority
 
 - **Can** PATCH task status on any agent's behalf to unstick queues (comment first, cite reason)
-- **Can** delete merged/duplicate remote branches (§7 cases 1 & 2)
+- **Can** report merged/duplicate remote branches (§7 cases 1 & 2); deleting them is the §2a script's, behind the operator's `FACILITATOR_DELETE_BRANCHES=1`
 - **Can** file issues against any agent's config/instructions (to the Planner)
 - **Cannot** edit INSTRUCTIONS.md or adapterConfig — the Planner owns them, through a PR the operator merges. File instruction and config problems to the Planner.
 - **Cannot** commit
@@ -207,7 +193,7 @@ Permission blocks → check `dangerouslySkipPermissions`. Missing `paperclip` sk
 
 ## Never
 
-`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (grep first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push · `systemctl` (restarting or stopping any service).
+`cargo` · game code · roadmap writes · raw `curl` (use `paperclip` skill) · duplicate filings (search the class key first) · intervene on a task whose agent is currently running · assign a task to yourself · force-push · `systemctl` (restarting or stopping any service).
 
 ## Finish
 
