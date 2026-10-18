@@ -24,7 +24,7 @@
 #         1  a model has to look: no worktree, wrong branch, dirty tree, a sync
 #            conflict, the lane refused the offload, or (launch) no commits to
 #            verify, a result or build already present, a resolve already tried
-# Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME, FRESHNESS_CAP (default 2,
+# Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME, FRESHNESS_CAP (default 1,
 #         as in §Landing), RELAUNCH_CV / RELAUNCH_FRESHNESS (test seams).
 set -uo pipefail
 
@@ -33,7 +33,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 CV="${RELAUNCH_CV:-$HERE/cloud-verify.sh}"
 FRESHNESS="${RELAUNCH_FRESHNESS:-$HERE/freshness-reverify-needed.sh}"
 S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"
-CAP="${FRESHNESS_CAP:-2}"
+CAP="${FRESHNESS_CAP:-1}"
 
 say() { echo "relaunch-verify $task: $*"; }
 

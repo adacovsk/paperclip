@@ -68,7 +68,7 @@ check "  on top of the new main" "$(cd "$WT" && git merge-base --is-ancestor ori
 check "  recording the new base" "$(cat "$S/T-1.base")" "$(git -C "$PAPERCLIP_PROJECT" rev-parse origin/main)"
 check "  and counting the re-verify" "$(cat "$S/T-1.freshness")" 1
 
-echo 2 > "$S/T-1.freshness"; advance base.txt
+echo 1 > "$S/T-1.freshness"; advance base.txt
 check "fresh at the cap lands" "$(run fresh)" 3
 check "  without offloading" "$(offloads)" 0
 rm -f "$S/T-1.freshness"

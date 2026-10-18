@@ -541,10 +541,14 @@ fi
 #     so the operator can confirm no interaction. Bounded progress beats a
 #     perfect gate that never lands. (The old "converges as long as main isn't
 #     advancing faster than a build" assumption is exactly what broke.)
+#     The cap is 1. At this pipeline's merge rate main moves in code during
+#     nearly every cloud build, so a second re-verify was itself stale by the
+#     time it came back and then landed unbuilt at the cap anyway: it bought a
+#     cloud build and an hour, and no coverage the nightly Tester does not give.
 VERIFY_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"; mkdir -p "$VERIFY_DIR"
 BASE="$VERIFY_DIR/{task-id}.base"
 FRESH="$VERIFY_DIR/{task-id}.freshness"   # count of freshness re-verifies done so far
-FRESHNESS_CAP=2
+FRESHNESS_CAP=1
 git fetch -q origin main
 if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; then
   N=$([ -f "$FRESH" ] && cat "$FRESH" || echo 0)
