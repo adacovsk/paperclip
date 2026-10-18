@@ -250,17 +250,45 @@ class Holds(unittest.TestCase):
             {"createdAt": "2", "body": "Released: AA-9 has an open PR.\n\n> Held: until AA-9 opens its PR"},
             {"createdAt": "3", "body": "Held: until AA-9 opens its PR — still contended"},
         ]
-        self.assertTrue(dispatch.overruled(comments, "AA-9"))
+        self.assertTrue(dispatch.overruled(comments, ("AA-9", "pr")))
 
     def test_a_release_on_another_blocker_does_not_count(self):
         comments = [
             {"createdAt": "1", "body": "Released: AA-8 is done.\n\n> Held: until AA-8 merges"},
             {"createdAt": "2", "body": "Held: until AA-9 opens its PR — files"},
         ]
-        self.assertFalse(dispatch.overruled(comments, "AA-9"))
+        self.assertFalse(dispatch.overruled(comments, ("AA-9", "pr")))
+
+    def test_a_blocker_only_mentioned_in_the_quoted_hold_does_not_count(self):
+        comments = [
+            {"createdAt": "1", "body": "Released: AA-8 is done.\n\n> Held: until AA-8 merges — AA-9 also edits it"},
+            {"createdAt": "2", "body": "Held: until AA-9 merges — builds on its seam"},
+        ]
+        self.assertFalse(dispatch.overruled(comments, ("AA-9", "merge")))
+
+    def test_a_re_hold_on_a_stricter_condition_stays_releasable(self):
+        comments = [
+            {"createdAt": "1", "body": "Released: AA-9 has opened its PR.\n\n> Held: until AA-9 opens its PR — files"},
+            {"createdAt": "2", "body": "Held: until AA-9 merges — builds on its seam"},
+        ]
+        self.assertFalse(dispatch.overruled(comments, ("AA-9", "merge")))
+
+    def test_a_release_quoting_no_parseable_hold_does_not_count(self):
+        comments = [
+            {"createdAt": "1", "body": "Released: AA-9 is done.\n\n> Held: operator — design call"},
+            {"createdAt": "2", "body": "Held: until AA-9 merges"},
+        ]
+        self.assertFalse(dispatch.overruled(comments, ("AA-9", "merge")))
+
+    def test_a_legacy_hold_re_held_after_release_is_final(self):
+        comments = [
+            {"createdAt": "1", "body": "Released: AA-9 is done.\n\n> Held: waiting on AA-9 — files"},
+            {"createdAt": "2", "body": "Held: waiting on AA-9 — still contended"},
+        ]
+        self.assertTrue(dispatch.overruled(comments, ("AA-9", "closed")))
 
     def test_a_first_hold_is_not_overruled(self):
-        self.assertFalse(dispatch.overruled([{"createdAt": "1", "body": "Held: until AA-9 merges"}], "AA-9"))
+        self.assertFalse(dispatch.overruled([{"createdAt": "1", "body": "Held: until AA-9 merges"}], ("AA-9", "merge")))
 
     def test_merge_hold_waits_for_the_merge(self):
         in_review = {"identifier": "A-1", "status": "in_review"}
