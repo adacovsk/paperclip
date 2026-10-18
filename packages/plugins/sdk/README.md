@@ -102,7 +102,9 @@ runWorker(plugin, import.meta.url);
 
 **Context (`ctx`) in setup:** `config`, `events`, `jobs`, `launchers`, `http`, `secrets`, `activity`, `state`, `entities`, `projects`, `companies`, `issues`, `agents`, `goals`, `data`, `actions`, `streams`, `tools`, `metrics`, `logger`, `manifest`. Worker-side host APIs are capability-gated; declare capabilities in the manifest.
 
-**Agents:** `ctx.agents.invoke(agentId, companyId, opts)` for one-shot invocation. `ctx.agents.sessions` for two-way chat: `create`, `list`, `sendMessage` (with streaming `onEvent` callback), `close`. See the [Plugin Authoring Guide](../../doc/plugins/PLUGIN_AUTHORING_GUIDE.md#agent-sessions-two-way-chat) for details.
+**Issue documents:** `ctx.issues.documents.list/get/upsert/delete`, gated by `issue.documents.read` and `issue.documents.write`.
+
+**Agents:** `ctx.agents.invoke(agentId, companyId, opts)` for one-shot invocation. `ctx.agents.sessions` for two-way chat: `create`, `list`, `sendMessage` (with streaming `onEvent` callback), `close`. See [Agent sessions](#agent-sessions-two-way-chat) below.
 
 **Jobs:** Declare in `manifest.jobs` with `jobKey`, `displayName`, `schedule` (cron). Register handler with `ctx.jobs.register(jobKey, fn)`. **Webhooks:** Declare in `manifest.webhooks` with `endpointKey`; handle in `onWebhook(input)`. **State:** `ctx.state.get/set/delete(scopeKey)`; scope kinds: `instance`, `company`, `project`, `project_workspace`, `agent`, `issue`, `goal`, `run`.
 
@@ -224,7 +226,7 @@ The same set of values is used as **slot types** (where a component mounts) and 
 
 #### `page`
 
-A full-page extension mounted at `/plugins/:pluginId` (global) or `/:company/plugins/:pluginId` (company-context route). Use this for rich, standalone plugin experiences such as dashboards, configuration wizards, or multi-step workflows. Receives `PluginPageProps` with `context.companyId` set to the active company. Requires the `ui.page.register` capability.
+A full-page extension mounted at `/:companyPrefix/plugins/:pluginId` (there is no unprefixed global route). Use this for rich, standalone plugin experiences such as dashboards, configuration wizards, or multi-step workflows. Receives `PluginPageProps` with `context.companyId` set to the active company. Requires the `ui.page.register` capability.
 
 #### `sidebar`
 
@@ -301,6 +303,7 @@ Declare in `manifest.capabilities`. Grouped by scope:
 | | `project.workspaces.read` |
 | | `issues.read` |
 | | `issue.comments.read` |
+| | `issue.documents.read` |
 | | `agents.read` |
 | | `goals.read` |
 | | `goals.create` |
@@ -310,6 +313,7 @@ Declare in `manifest.capabilities`. Grouped by scope:
 | | `issues.create` |
 | | `issues.update` |
 | | `issue.comments.create` |
+| | `issue.documents.write` |
 | | `activity.log.write` |
 | | `metrics.write` |
 | **Instance** | `instance.settings.register` |
@@ -323,6 +327,8 @@ Declare in `manifest.capabilities`. Grouped by scope:
 | | `secrets.read-ref` |
 | **Agent** | `agent.tools.register` |
 | | `agents.invoke` |
+| | `agents.pause` |
+| | `agents.resume` |
 | | `agent.sessions.create` |
 | | `agent.sessions.list` |
 | | `agent.sessions.send` |
@@ -432,8 +438,8 @@ Reads the active company, project, entity, and user context. Use this to scope d
 import { useHostContext, usePluginData } from "@paperclipai/plugin-sdk/ui";
 import type { PluginDetailTabProps } from "@paperclipai/plugin-sdk/ui";
 
-export function IssueLinearLink({ context }: PluginDetailTabProps) {
-  const { companyId, entityId, entityType } = context;
+export function IssueLinearLink(_props: PluginDetailTabProps) {
+  const { companyId, entityId } = useHostContext();
   const { data } = usePluginData<{ url: string }>("linear-link", {
     companyId,
     issueId: entityId,
@@ -442,6 +448,15 @@ export function IssueLinearLink({ context }: PluginDetailTabProps) {
   if (!data?.url) return <p>No linked Linear issue.</p>;
   return <a href={data.url} target="_blank" rel="noopener">View in Linear</a>;
 }
+```
+
+#### `usePluginToast()`
+
+Returns a function that shows a host toast. It takes `{ title, body?, tone?, ttlMs?, action?: { label, href }, id?, dedupeKey? }`, where `tone` is `"info" | "success" | "warn" | "error"`, and returns the toast id, or `null` if the host dropped it.
+
+```tsx
+const toast = usePluginToast();
+toast({ title: "Synced", tone: "success" });
 ```
 
 #### `usePluginStream<T>(channel, options?)`
@@ -486,9 +501,9 @@ Each slot type receives a typed props object with `context: PluginHostContext`. 
 | `sidebar` | `PluginSidebarProps` | — |
 | `settingsPage` | `PluginSettingsPageProps` | — |
 | `dashboardWidget` | `PluginWidgetProps` | — |
-| `globalToolbarButton` | `PluginGlobalToolbarButtonProps` | — |
+| `globalToolbarButton` | none exported; receives `context` | — |
 | `detailTab` | `PluginDetailTabProps` | `entityId: string`, `entityType: string` |
-| `toolbarButton` | `PluginToolbarButtonProps` | `entityId: string`, `entityType: string` |
+| `toolbarButton` | none exported; receives `context` | `entityId: string`, `entityType: string` |
 | `commentAnnotation` | `PluginCommentAnnotationProps` | `entityId: string`, `entityType: "comment"`, `parentEntityId: string`, `projectId`, `companyPrefix` |
 | `commentContextMenuItem` | `PluginCommentContextMenuItemProps` | `entityId: string`, `entityType: "comment"`, `parentEntityId: string`, `projectId`, `companyPrefix` |
 | `projectSidebarItem` | `PluginProjectSidebarItemProps` | `entityId: string`, `entityType: "project"` |
@@ -600,7 +615,7 @@ export function FilesLink({ context }: PluginProjectSidebarItemProps) {
 }
 ```
 
-Use optional `order` in the slot to sort among other project sidebar items. See §19.5.1 in the plugin spec and project detail plugin tabs (§19.3) for the full flow.
+Use optional `order` in the slot to sort among other project sidebar items. See §19.5 (sidebar entries) and §19.3 (detail tabs) in the plugin spec for the full flow.
 
 ## Toolbar launcher with a local modal
 
@@ -777,7 +792,7 @@ ctx.actions.register("ask-agent", async (params) => {
     prompt,
     onEvent: (event) => {
       ctx.streams.emit(channel, {
-        type: event.eventType,       // "chunk" | "done" | "error"
+        type: event.eventType,       // "chunk" | "status" | "done" | "error"
         text: event.message ?? "",
       });
     },

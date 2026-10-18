@@ -1,128 +1,235 @@
 # Pipeline Roles
 
-Cross-role contract reference for the game project's agent pipeline. Each role's full spec lives in `{role}/INSTRUCTIONS.md`; this file is the matrix of who does what so they can't drift.
+This is the cross-role contract for the agent pipeline: who does what, so the role
+specs can't drift apart. Each role's full procedure is in `{role}/INSTRUCTIONS.md`.
+The reasons behind individual rules are in `{role}/rationale/`. The Dispatcher has
+no INSTRUCTIONS file because it runs no model; its contract is the docstring at the
+top of `dispatcher/dispatch.py`. <!-- privacy-ok: the pipeline's own scripts, not project source -->
 
-## Pipeline
+The pipeline runs against one target repository, read from `PAPERCLIP_PROJECT`.
+Task work happens in per-task worktrees under
+`$PAPERCLIP_PROJECT/.paperclip/worktrees/{id}`, each on branch `task/{id}`.
+
+## Roles
 
 ```
-Operator (human; commits to main, sets direction, merges PRs)
-  Planner           — daily 20:10 — owns roadmap; identifies gaps; updates docs/ROADMAP.md
-    Coordinator     — daily 20:15 — promotes roadmap → tasks; allocates worktrees; advances stages; tears down on merge
-      Worker        — wake on assignment — implements task; commits to task/{id}; never pushes
-      Reviewer      — wake on assignment — optimizes Worker's changed files; commits polish; never pushes
-      Architect     — wake on assignment — runs cargo; fixes errors; pushes; opens PR
-  Facilitator       — daily 20:45 — pipeline health; blocked-task clearing; stale-branch sweep; comment-without-PATCH
-  Tester            — nightly 02:00 — clippy -D warnings (both feature sets) + every test target on origin/main; files each failure as a `test-failure` GitHub issue for Planner intake
+Operator (human: sets direction, reviews and merges task PRs)
+  Planner       — on assignment   — owns the roadmap; files backlog; triages GitHub issues; tunes agent configs
+  Coordinator   — :15 and :45     — promotes backlog, allocates worktrees, advances what needs judgment, landing and merge sweeps
+  Dispatcher    — :10 and :40, and every stage-completion or sentinel wake — no model; advances the board mechanically
+    Worker      — on assignment   — implements the task; commits to task/{id}; never pushes
+    Reviewer    — on assignment   — correctness review of the Worker's diff; commits fixes; never pushes
+    Architect   — on assignment   — the build gate: builds, fixes what its task broke, lands
+  Tester        — 02:00           — clippy -D warnings (both feature sets) and every test target on origin/main
+  Facilitator   — 20:45           — pipeline health; missed wakes, stuck tasks, stale branches
 ```
 
-Nightly fires run just *after* the 8 PM America/Denver Claude weekly-limit
-reset (Planner 20:10 → Coordinator 20:15 → Facilitator 20:45), so they draw the
-freshest quota of the cycle. Do NOT move them back before 20:00 — firing into
-the pre-reset window is the most-depleted slot of the week and silently
-hard-failed three nights running.
+Times are America/Denver. The routine triggers in Paperclip are the source of
+truth (`PATCH /api/routine-triggers/{id}`), and the target project's `CLAUDE.md`
+records why each is set where it is. The Facilitator's nightly fire runs just after
+the weekly usage-limit reset, because the slot before the reset has the least quota
+left in the week.
 
-Wake mechanism: scheduled cron for orchestrators (Planner/Coordinator/Facilitator) and the Tester, which is woken a second time by its own build's callback; assignment-fire `wakeOnDemand` for Worker/Reviewer/Architect (no scheduled routine — they only run when given a task).
+**How each role is woken:**
 
-## Matrix — who does what
+- **Worker, Reviewer and Architect** have no routine. Setting the assignee is the
+  wake (`wakeOnDemand`). A comment never re-fires one. To re-dispatch, toggle the
+  assignee through `null`.
+- **The Planner** is woken by assignment only. Its demand signal is the
+  Coordinator's `Backlog low` task.
+- **The Dispatcher** has a routine. The server also routes every stage-completion
+  wake to the agent with role `dispatcher`, falling back to the Coordinator only
+  while the Dispatcher is paused, terminated or awaiting approval.
+  `architect/sentinel-callback.sh` wakes the Dispatcher when a build result is
+  readable.
+- **The Coordinator** has a routine. Between fires, the Dispatcher wakes it with a
+  `dispatcher_handoff` wake listing only the tasks that need judgment.
+- **The Tester's** routine fire launches `tester/run-nightly.sh` detached and exits.
+  The script wakes it a second time when the result is ready.
 
-| Action | Worker | Reviewer | Architect | Tester | Coordinator | Planner | Facilitator |
-|---|---|---|---|---|---|---|---|
-| Read codebase | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Edit game code (`src/`, `assets/`) | ✓ | ✓ | ✓ | — | — | — | — |
-| Edit `docs/ROADMAP.md` | — | — | — | — | — | ✓ | — |
-| Edit subsystem `CLAUDE.md` | — | — | — | — | — | ✓ | — |
-| Edit other agents' `INSTRUCTIONS.md` / `adapterConfig` | — | — | — | — | — | ✓ | file-only¹ |
-| Run `cargo` | — | — | **✓** | ✓ ³ | — | — | — |
-| `git commit` to `task/{id}` | ✓ | ✓ | ✓ | — | — | — | — |
-| `git commit` to `main` | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER |
-| `git push origin task/{id}` | — | — | **✓** | — | — | — | — |
-| `git push origin --delete task/{id}` | — | — | — | — | ✓ | — | ✓ ² |
-| `gh pr create` | — | — | **✓** | — | — | — | — |
-| Merge PR to `main` | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER | NEVER (operator only) |
-| `git worktree add` | — | — | — | ✓ ³ | ✓ | — | — |
-| `git worktree remove` | — | — | — | — | ✓ | — | — |
-| Create paperclip task | — | — | — | — | ✓ | — | — |
-| `PATCH /issues/{id}` (status / assignee) | — | own task | own task | own | any | own | any (when unsticking) |
-| Comment on a paperclip task | own | own | own | own | any | any | any |
-| Use `paperclip` skill (API) | NO | ✓ | NO | ✓ | ✓ | ✓ | ✓ |
-| `gh` for GitHub CLI | — | — | ✓ | ✓ (issues only) | ✓ | — | ✓ |
-| Network egress | NO | NO | ✓ (gh only) | ✓ | ✓ | ✓ | ✓ |
+## Matrix: who does what
 
-¹ Facilitator can file followup issues against any agent's config; only Planner edits the actual files.
-² Facilitator deletes branches that are already-merged or empty-diff vs main (cases 1 & 2 of its stale-branch sweep); Coordinator deletes branches as part of the post-merge teardown.
-³ Tester only, and only through `agents/tester/run-nightly.sh`: two clippy runs and one `cargo test --tests` a night against its own detached worktree of `origin/main`, under `cargo-sem.sh`. It never builds a task branch.
+| Action | Worker | Reviewer | Architect | Dispatcher | Coordinator | Planner | Tester | Facilitator |
+|---|---|---|---|---|---|---|---|---|
+| Edit project code | ✓ | ✓ | ✓ ¹ | — | — | — | — | — |
+| Edit the roadmap | — | — | — | — | — | ✓ ² | — | — |
+| Edit subsystem `CLAUDE.md` | — | — | — | — | — | ✓ | — | — |
+| Edit `agents/**` specs | — | — | — | — | — | ✓ ³ | — | files a followup |
+| Run cargo | — | — | ✓ | via scripts ⁴ | — | — | ✓ ⁵ | — |
+| Commit to `task/{id}` | ✓ | ✓ | ✓ | — | merge commit only ⁶ | — | — | — |
+| Push `task/{id}` and open its PR | — | — | ✓ | ✓ (`land.sh`) | ✓ (landing sweep) | — | — | — |
+| Merge a task PR | — | — | — | — | — | — | — | — |
+| Merge `planner/roadmap` | — | — | — | — | — | ✓ | — | — |
+| Delete a remote `task/*` branch | — | — | — | — | ✓ (after merge) | — | — | ✓ ⁷ |
+| `git worktree add` / `remove` | — | — | — | ✓ (`promote.py`) | ✓ | own worktree | own worktree | — | <!-- privacy-ok: the pipeline's own scripts, not project source -->
+| Create Paperclip tasks | — | files issues | — | ✓ ⁸ | ✓ | ✓ (backlog) | — | ✓ (followups) |
+| PATCH status or assignee | — | own task | — ⁹ | any, mechanically | any | own task | own task | any, to unstick |
+| Paperclip API | none | `paperclip` skill | none | direct HTTP | `paperclip` skill | `paperclip` skill | `paperclip` skill | `paperclip` skill |
+| `gh` | — | — | ✓ | ✓ | ✓ | ✓ | issues only | ✓ |
+| Network | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Only the operator merges task PRs, and nobody commits to `main` directly.
+
+1. Only to fix errors its own task caused, or anything on `main` for a main-repair task.
+2. The roadmap has exactly one writer, the `planner/roadmap` branch. The target project's guards fail any task branch, or any other `planner/*` branch, that touches it. The Planner merges its own roadmap PR once the landing gate passes, because the Coordinator promotes from `main` and an unmerged roadmap restocks nothing. This is the only self-merge, and it never extends to a branch carrying code.
+3. Only through its own `planner/agents` worktree of this repo. The operator merges that PR; the Planner never self-merges it.
+4. The Dispatcher runs no cargo itself. It starts builds through `architect/relaunch-verify.sh` (cloud launches) and lands through `architect/land.sh`, whose push runs the pre-push hook.
+5. Only through `tester/run-nightly.sh`, against its own detached worktree of `origin/main`, under `cargo-sem.sh`. It never builds a task branch.
+6. The merge commit for a diverged PR in its landing sweep, plus the commits `coordinator/train-sync.sh` and `coordinator/merge-sweep.py` make. <!-- privacy-ok: the pipeline's own scripts, not project source -->
+7. Only branches that are already merged, or have no diff against `main`.
+8. Review and Verify subtasks, rebase tasks, one main-repair task when several verifies see the same red `main`, and the cancellation of tasks filed twice.
+9. The Architect has no API access. It escalates by ending its run with `PAPERCLIP-ESCALATE: <reason>`, which the server turns into `blocked`.
 
 ## Task lifecycle
 
 ```
-backlog                                    ← Coordinator promotes from ROADMAP
-  → todo (Worker assigned)                 ← Coordinator promotes on capacity
-  → in_progress                            ← Worker auto-advances on assignment-wake
-  → done (Worker exits)                    ← server marks done on Worker exit
-    → in_review subtask (Reviewer)         ← Coordinator advances stage
-      → done (Reviewer exits)
-        → assign Architect (needs-build)   ← Coordinator advances stage (needs-build only)
-          → Architect runs cargo
-          → if fixes needed: commit, re-run cargo (3-cycle hard stop)
-          → push, open PR, exit
-        → done (data-only label)           ← Coordinator advances stage (no Architect step)
-          → Architect opens PR (no cargo)
-        → operator merges PR
-          → Coordinator tears down worktree + remote branch on merge
+backlog, unassigned                     ← Planner files it from the roadmap's active fronts on main
+  → todo, Worker assigned               ← promote.py / Coordinator: worktree first, assignee last (the assignee write is the wake) <!-- privacy-ok: the pipeline's own scripts, not project source -->
+  → blocked, unassigned, "Held: …"      ← when it can't be dispatched yet
+  → in_progress                         ← server, on the Worker's wake
+  → in_review                           ← server, when the Worker exits
+      Review subtask (in_review, Reviewer)   ← Dispatcher
+        → done                               ← Reviewer
+      Verify subtask (in_review, Architect)  ← Dispatcher, for needs-build work or data changes
+        → build: cloud lane, or local chain under cargo-sem.sh
+        → {parent}.exit sentinel → sentinel-callback.sh wakes the Dispatcher
+        → green: land.sh in the background, or the Architect's Landing block, or the Coordinator's landing sweep
+             push (pre-push hook is the gate) → PR → {parent}.landed
+        → Verify done once the open PR carries the landed head
+  → operator merges the PR
+  → done                                ← merge-sweep.py, gated on every branch commit being on origin/main; reaps the build, removes worktree and branches <!-- privacy-ok: the pipeline's own scripts, not project source -->
 ```
 
-States: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `cancelled`, `blocked`.
+States are `backlog`, `todo`, `in_progress`, `in_review`, `blocked`, `done` and
+`cancelled`. A closed, unmerged PR is the operator's decision, and the Coordinator
+treats it as one.
 
-## Skills + permissions
+**Holds.** A task that can't be dispatched yet is `blocked` with a null assignee,
+written in the same PATCH as a `Held:` comment that names what releases it:
 
-| Role | Skills | `dangerouslySkipPermissions` | `maxConcurrentRuns` (default) |
+- `Held: until <id> merges`
+- `Held: until <id> opens its PR`
+- `Held: operator`
+- `Held: worktree allocation failed`
+
+The Dispatcher releases the first two once their condition holds, and never
+re-releases a hold the Coordinator wrote back. `dispatcher/hold_of_record.py` prints <!-- privacy-ok: the pipeline's own scripts, not project source -->
+the hold currently in force.
+
+**Build results** are sentinel files in `~/.cache/paperclip-verify/`, keyed by the
+parent task id. In `{parent}.exit`:
+
+| Code | Meaning |
+|---|---|
+| `0` | green |
+| `1` | red |
+| `64` | `cargo-sem.sh` refused a chained cargo call |
+| `75` | the worktree lock timed out |
+| `94` | superseded: the work is already on `main` |
+| `95` | the cloud result was rejected at the trust boundary |
+| `96` | environment fault |
+| `97` | worktree missing |
+| `98` | the base sync failed |
+| `99` | inconclusive |
+| `100` | the build was reaped |
+| `137` | out of memory |
+
+Each code has a rationale file under `architect/rationale/`.
+
+**The Dispatcher acts on these without a model:**
+
+- it relaunches a first `99` or `75`
+- it resumes a dead cloud watcher
+- it rebuilds when the freshness check says `main`'s advance reaches the branch
+- it lands a green cloud build with `land.sh`, at most `DISPATCH_LAND_MAX_RUNNING` at a time
+
+It wakes the Architect once per sentinel for anything else.
+
+## Builds
+
+- **One semaphore.** Every cargo call goes through `architect/cargo-sem.sh`, a FIFO
+  slot semaphore. Its slot count is `min(physical cores − 1, memory slots)`, unless
+  `CARGO_SEM_SLOTS` is set, and it publishes the ceiling to `/tmp/cargo-sem.slots`.
+  The Architect's `maxConcurrentRuns` is deliberately higher than the slot count,
+  so model work (reading errors, fixing, committing) overlaps the builds. To add
+  build parallelism, raise the slots, not the run count.
+- **Detached, never waited on.** Builds run detached and write a sentinel when they
+  finish. No model run polls a build.
+- **The cloud lane** is on when `ARCHITECT_CLOUD_LANE=1` is set on the Architect.
+  It is open while `architect/cloud-pace.py` prints `1`, which means session and <!-- privacy-ok: the pipeline's own scripts, not project source -->
+  weekly usage are under their ceilings; an unreadable meter counts as closed. The
+  VM publishes only to `cloud-verify/<task>/<sha>`. This box accepts the work only
+  if it:
+  - descends from the launched head
+  - stays inside the task's files or generated schemas
+  - adds no suppressions and deletes nothing
+  - passes the local gate
+
+  The VM never pushes a task branch or opens a PR.
+- **Freshness.** When `main` moves under a green branch,
+  `architect/freshness_interaction.py` decides whether to rebuild. It rebuilds only <!-- privacy-ok: the pipeline's own scripts, not project source -->
+  if the two changes interact through a build-wide file, a shared file, a shared
+  data set, the code that reads that data, or a shared symbol. Any error counts as
+  "rebuild".
+- **Worker and Reviewer concurrency** is set by `coordinator/pace-scale.py --apply` <!-- privacy-ok: the pipeline's own scripts, not project source -->
+  on every Coordinator fire. Never set it by hand.
+
+## Skills and permissions
+
+| Role | Adapter | Skills | `dangerouslySkipPermissions` |
 |---|---|---|---|
-| Worker | none | true | 4 |
-| Reviewer | `paperclip` | true | 4 |
-| Architect | none | true (needs shell for cargo + gh) | **8** |
-| Coordinator | `paperclip`, `paperclip-create-agent` | true | 1 |
-| Planner | `paperclip` | true | 1 |
-| Facilitator | `paperclip` | true | 1 |
-| Tester | `paperclip` | true | 1 |
+| Worker | `claude_local` | none | true |
+| Reviewer | `claude_local` | `paperclip` | true |
+| Architect | `claude_local` | none | true |
+| Coordinator | `claude_local` | `paperclip`, `paperclip-create-agent` | true |
+| Planner | `claude_local` | `paperclip` | true |
+| Facilitator | `claude_local` | `paperclip` | true |
+| Tester | `claude_local` | `paperclip` | true |
+| Dispatcher | `process` (`python3 dispatch.py`) | n/a | n/a | <!-- privacy-ok: the pipeline's own scripts, not project source -->
 
-One agent instance per role; concurrency comes from `maxConcurrentRuns`. Architect's cap above 1 is intentional — the cargo *build* step is bounded independently by the `cargo-sem.sh` FIFO slot semaphore (`CARGO_SEM_SLOTS`, default physical cores − 1), **not** by run count (per-worktree `target/`s share no build lock), so extra runs just queue on the semaphore for cargo while parallelizing everything cheap (analyzing output, applying fixes, committing, pushing, opening PR) — the bottleneck-around-cargo flow you want. To add *build* parallelism you raise `CARGO_SEM_SLOTS`, not `maxConcurrentRuns`.
+There is one agent per role; concurrency comes from `maxConcurrentRuns`. Workers
+have no skills because the adapter puts the task into their prompt, and
+`PAPERCLIP_API_URL`/`PAPERCLIP_API_KEY` are injected only for agents that hold the
+`paperclip` skill.
 
-Workers have no skills because the adapter injects task context directly into their prompt; agents that hit the API need the `paperclip` skill (which uses `curl`, hence skip-permissions).
+Every model role runs with skip-permissions, the Worker included. A headless run
+that raises a permission prompt stalls until it times out and the task fails, and
+that is true whether or not the agent holds a skill. Sandboxing the Worker would be
+a change to how the pipeline runs, not a correction to this table.
 
-Every role runs with `dangerouslySkipPermissions: true`, Worker included. The table read
-`false` for Worker on the reasoning above — no skills, so no `curl`, so no need — but that
-argument is about *API access*, not about prompts. A Worker runs headless, so anything that
-raises a permission prompt stalls until the run times out and the task fails. Skip-permissions
-is what keeps a headless run from hanging, and it is needed whether or not the agent holds a
-skill. If the Worker should be genuinely sandboxed, that is a change to how the pipeline runs
-and belongs in its own decision, not in this table.
+## Rules for every role
 
-## Cadence
+- Never commit directly to `main`, and never merge a task PR.
+- Never force-push, and never skip git hooks. `architect/cloud-verify.sh` has the
+  only exceptions, and both are leased on the head this box launched:
+  - The offload push is `--no-verify`, because it is only the VM's input. The VM
+    runs the guards, and acceptance re-runs them here.
+  - A resolve-mode result is published with `--force-with-lease`, because it
+    rewrites the branch.
+- Run cargo only as the matrix allows.
+- Never edit another role's `INSTRUCTIONS.md`. The Planner edits them through its own worktree; everyone else files a followup.
+- No raw `curl` against the Paperclip API from a model role. Use the `paperclip` skill.
+- Pair every status PATCH with a comment saying why. Never revert a block someone else wrote, except to release a `Held:` line whose condition has been met.
+- "Landed" means merged into `origin/main`, checked with `git merge-base --is-ancestor`. A pushed branch is not landed.
+- A claim that something doesn't exist must cite `origin/main`, not the task branch.
 
-All times America/Denver.
+## Authoring these specs
 
-| Role | Daily | Weekly | On-demand |
-|---|---|---|---|
-| Planner | 20:10 | — | — |
-| Coordinator | 20:15 | — | — |
-| Facilitator | 20:45 | Sun 20:50 | — |
-| Worker | — | — | assignment-wake |
-| Reviewer | — | — | assignment-wake |
-| Architect | — | — | assignment-wake |
-| Tester | 02:00 | — | its own build's callback |
-
-Heartbeat timers are disabled across the board; `wakeOnDemand` fires assignment wakes instantly. The one-shot-per-day cadence keeps the pipeline out of working hours — operator edits during the day land overnight.
-
-## Hard never-do rules (any role)
-
-- Commit directly to `main`
-- Force-push to any branch
-- Skip git hooks (`--no-verify`, `--no-gpg-sign`)
-- Merge PRs (operator-only)
-- `cargo` (Architect, plus the Tester's nightly `main` run)
-- Edit another agent's `INSTRUCTIONS.md` (Planner-only via files; everyone else files followups)
-- `curl` against the paperclip API (use the `paperclip` skill — it handles auth, retry, run-id headers)
-
-## Authoring these specs (Planner)
-
-When editing any `INSTRUCTIONS.md` or this file, **reference another section or step by name, never by number.** Write "Coordinator's roadmap-intake step", not "Coordinator §9"; "when the PR merges", not "(step 8)". Numeric pointers carry no instruction, force the reader to jump, and rot silently the moment a list is reordered — they have repeatedly drifted out of sync. A numbered list that *defines* a procedure keeps its numbers (the numbers are the ordering); a *pointer* at one of those numbers from elsewhere must use the self-describing condition instead. Exceptions: the stable `Step 0` precondition-gate convention and references into the external `docs/specs/*.md` (versioned, won't renumber under you).
+- **Reference another section or step by name, never by number.** Write
+  "Coordinator's landing sweep", not "Coordinator step 3". Numeric pointers carry
+  no instruction, and they rot silently the moment a list is reordered. A numbered
+  list that *defines* a procedure keeps its numbers. The exceptions are the stable
+  `Step 0` precondition-gate convention, and references into versioned external
+  specs.
+- **No private references.** This directory is public and ships in the npm
+  package. Don't write tracker ids, PR or issue numbers from the target project,
+  its repository name, or its module filenames. Keep the lesson and drop the
+  identifier. `pnpm check:agent-privacy` enforces this by shape. A line that is
+  genuinely generic opts out with `<!-- privacy-ok: why -->`.
+- **Rules go in INSTRUCTIONS; reasons go in rationale.** Each rationale file quotes
+  the rule it justifies under `**Justifies:**`. `pnpm check:agent-rationale` fails
+  on a broken link, an orphan file, or a quote that no longer appears in the
+  INSTRUCTIONS.
+- **Check ancestry with `git merge-base --is-ancestor`.** `git branch --contains`
+  with a remote ref as its pattern matches only local branch names, so it always
+  comes back empty. `pnpm check:agent-git` fails on that shape.
