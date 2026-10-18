@@ -111,13 +111,13 @@ if [ "$old" != "$main" ]; then
          git merge -q --no-edit origin/main >/dev/null 2>&1 \
            || { git merge --abort >/dev/null 2>&1; resolve; }; }
   echo "$main" > "$S/$task.base"
-  # relaunch-verify.sh said land, so main moved either only in documentation
+  # relaunch-verify.sh said land, so main's advance either cannot reach this branch
   # or past the freshness cap. Say which: the cap lands an unbuilt advance.
   if "$FRESHNESS" "$old" "$main"; then
     note="cargo green on an older main; rebased onto main unbuilt (freshness cap)"
     say "FRESHNESS CAP HIT: landing on ${main:0:9} without re-verifying the latest advance"
   else
-    note="cargo green; main advanced in docs only since"
+    note="cargo green; main advanced since, sharing no file, data directory, data reader or symbol with this branch"
   fi
 fi
 

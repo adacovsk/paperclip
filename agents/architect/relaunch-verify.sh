@@ -9,7 +9,7 @@
 #          never freed). The code was not judged, so the same head goes out again.
 #   fresh  `0`, but origin/main moved past the verified base: §Landing's freshness
 #          gate would re-verify. This runs that gate's re-verify branch and leaves
-#          its landing branches (docs-only advance, cap reached) to Landing.
+#          its landing branches (an advance that cannot reach the branch, cap reached) to Landing.
 #
 # WHY. The Dispatcher reads every sentinel, and these two outcomes used to wake
 # the Architect only for it to run these same commands: a full context load per
@@ -96,7 +96,7 @@ case "$mode" in
     # Landing re-checks both of these itself, after its own sync. Deciding them
     # before touching the branch keeps its past-the-cap flag intact: writing the
     # base here would make Landing see a fresh branch and land without saying so.
-    "$FRESHNESS" "$old" "$main" || { say "origin/main moved only in documentation; land"; exit 3; }
+    "$FRESHNESS" "$old" "$main" || { say "origin/main's advance does not reach this branch (freshness-reverify-needed.sh); land"; exit 3; }
     n="$(cat "$S/$task.freshness" 2>/dev/null || echo 0)"
     [ "$n" -lt "$CAP" ] || { say "freshness cap $CAP reached; land and flag"; exit 3; }
     sync || { say "neither rebase nor merge onto origin/main succeeds"; exit 1; }
