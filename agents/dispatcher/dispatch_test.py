@@ -465,7 +465,7 @@ class SentinelSweep(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch)
+        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.land)
         dispatch.VERIFY_DIR, dispatch.STATE_DIR = root / "verify", root / "state"
         dispatch.VERIFY_DIR.mkdir()
         dispatch.STATE_DIR.mkdir()
@@ -478,9 +478,16 @@ class SentinelSweep(unittest.TestCase):
             self.relaunched.append((parent, mode))
             return self.relaunch_ok
         dispatch.relaunch = fake_relaunch
+        self.landed = []
+        self.land_result = True
+
+        def fake_land(api, verify, parent):
+            self.landed.append(parent["identifier"])
+            return self.land_result
+        dispatch.land = fake_land
 
     def tearDown(self):
-        dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch = self.saved
+        dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.land = self.saved
         self.tmp.cleanup()
 
     def sentinel(self, code, base=None):
@@ -490,10 +497,51 @@ class SentinelSweep(unittest.TestCase):
         if base:
             (dispatch.VERIFY_DIR / "T-1.base").write_text(base + "\n")
 
-    def sweep(self):
-        api = SweepApi()
+    def sweep(self, parent=None):
+        api = SweepApi(parent=parent)
         dispatch.route_sentinels(api, {"Architect": "arch"}, Path(self.tmp.name))
         return [w for w in api.writes if w[0] == "POST" and w[1].endswith("/wakeup")]
+
+    def verdict(self):
+        (dispatch.VERIFY_DIR / "T-1.cloud.verdict").write_text("CLOUD-VERIFY-V2\nresult: PASS\n")
+
+    def test_a_green_cloud_verify_lands_without_a_model(self):
+        self.verdict()
+        self.sentinel("0", base=self.MAIN)
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual(self.landed, ["T-1"])
+
+    def test_a_green_on_an_older_main_goes_to_land_not_relaunch(self):
+        self.verdict()
+        self.sentinel("0", base="b" * 40)
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual((self.landed, self.relaunched), (["T-1"], []))
+
+    def test_a_landing_handed_back_wakes_the_architect(self):
+        self.verdict()
+        self.land_result = False
+        self.sentinel("0", base=self.MAIN)
+        self.assertEqual(len(self.sweep()), 1)
+
+    def test_an_unfinished_landing_is_retried_next_sweep(self):
+        self.verdict()
+        self.land_result = None
+        self.sentinel("0", base=self.MAIN)
+        self.assertEqual(self.sweep(), [])
+        self.land_result = True
+        self.sweep()
+        self.assertEqual(self.landed, ["T-1", "T-1"])
+
+    def test_a_local_green_is_not_landed_by_script(self):
+        self.sentinel("0", base=self.MAIN)
+        self.assertEqual(len(self.sweep()), 1)
+        self.assertEqual(self.landed, [])
+
+    def test_a_main_repair_parent_is_not_landed_by_script(self):
+        self.verdict()
+        self.sentinel("0", base=self.MAIN)
+        self.assertEqual(len(self.sweep(parent={"identifier": "T-1", "title": "ci-fix: x", "labels": []})), 1)
+        self.assertEqual(self.landed, [])
 
     def test_a_relaunch_wakes_no_one(self):
         self.sentinel("99")
@@ -581,6 +629,12 @@ class MainRepairSentinel(SentinelSweep):
     test_the_same_inconclusive_code_twice_wakes_the_second_time = None
     test_a_relaunch_past_the_time_budget_waits_for_the_next_sweep = None
     test_a_real_result_between_clears_the_strike = None
+    test_a_green_cloud_verify_lands_without_a_model = None
+    test_a_green_on_an_older_main_goes_to_land_not_relaunch = None
+    test_a_landing_handed_back_wakes_the_architect = None
+    test_an_unfinished_landing_is_retried_next_sweep = None
+    test_a_local_green_is_not_landed_by_script = None
+    test_a_main_repair_parent_is_not_landed_by_script = None
 
 
 class MainRepairDedupe(unittest.TestCase):
@@ -690,13 +744,33 @@ class DispatcherLaunch(unittest.TestCase):
         self.assertEqual(self.sweep("arch").writes, [])
 
 
+class CloudLaneFlag(unittest.TestCase):
+    """The Dispatcher offloads under the Architect's switch, not its own env."""
+
+    def tearDown(self):
+        os.environ.pop("ARCHITECT_CLOUD_LANE", None)
+
+    def roster(self, env):
+        return [{"name": "Architect", "adapterConfig": {"env": env}}, {"name": "Dispatcher", "adapterConfig": {"env": {}}}]
+
+    def test_the_architect_s_flag_is_inherited(self):
+        dispatch.inherit_cloud_lane(self.roster({"ARCHITECT_CLOUD_LANE": {"type": "plain", "value": "1"}}))
+        self.assertEqual(os.environ.get("ARCHITECT_CLOUD_LANE"), "1")
+
+    def test_the_architect_s_rollback_clears_it(self):
+        os.environ["ARCHITECT_CLOUD_LANE"] = "1"
+        dispatch.inherit_cloud_lane(self.roster({}))
+        self.assertIsNone(os.environ.get("ARCHITECT_CLOUD_LANE"))
+
+
 class SweepApi:
     dry_run = False
 
-    def __init__(self, owner="arch", issues=None):
+    def __init__(self, owner="arch", issues=None, parent=None):
         self.writes = []
         self.owner = owner
         self.listed = issues
+        self.parent = parent or {"identifier": "T-1", "title": "Add a feat", "labels": []}
 
     def issues(self, **query):
         if query.get("assigneeAgentId", self.owner) != self.owner:
@@ -707,7 +781,7 @@ class SweepApi:
                  "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": self.owner}]
 
     def get(self, path):
-        return {"identifier": "T-1"}
+        return self.parent
 
     def write(self, method, path, body, what):
         self.writes.append((method, path, body))
