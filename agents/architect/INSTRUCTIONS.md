@@ -562,12 +562,13 @@ if [ ! -f "$BASE" ] || [ "$(git rev-parse origin/main)" != "$(cat "$BASE")" ]; t
            || { git merge --abort 2>/dev/null; echo "neither rebase nor merge onto current origin/main succeeds — comment + escalate to operator (§Final message)"; exit 1; }
          echo "NOTE: branch already on origin, or the rebase replay conflicted; continuing on a merge commit"; }
   git rev-parse origin/main > "$BASE"
-  # A docs-only advance (the Planner's roadmap merges, about half of all merges)
-  # changes nothing a build reads, so the green build still stands: land it, and
-  # do not spend a capped re-verify on it. The script fails closed.
+  # An advance that cannot reach the branch (documentation, or code sharing no
+  # file, data directory, data reader or symbol with it; the script's rules)
+  # leaves the green build standing: land it, and do not spend a capped
+  # re-verify on it. The script fails closed.
   if [ -n "$OLD_BASE" ] && ! "$HOME/code/paperclip/agents/architect/freshness-reverify-needed.sh" "$OLD_BASE" origin/main; then
-    echo "origin/main advanced only in documentation since the verified base — the green build stands; landing without a re-verify"
-    VERIFY_NOTE="cargo green; main advanced in docs only since"
+    echo "origin/main advanced, but not into anything this branch changed or reads — the green build stands; landing without a re-verify"
+    VERIFY_NOTE="cargo green; main advanced since, sharing no file, data directory, data reader or symbol with this branch"
   elif [ "$N" -lt "$FRESHNESS_CAP" ]; then
     # Under the cap → re-verify: bump the counter, drop the sentinel, relaunch
     # the detached build, exit. A later wake re-evaluates the sentinel.

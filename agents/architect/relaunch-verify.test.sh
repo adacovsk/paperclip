@@ -60,7 +60,7 @@ check "fresh with main unmoved lands" "$(run fresh)" 3
 check "  without offloading" "$(offloads)" 0
 
 advance base.txt
-check "fresh after a docs-only advance lands" "$(CODE_MOVED=1 run fresh)" 3
+check "fresh after an advance that cannot reach the branch lands" "$(CODE_MOVED=1 run fresh)" 3
 check "  and leaves the base for Landing" "$(cat "$S/T-1.base")" "$OLD"
 
 check "fresh after a code advance re-verifies" "$(run fresh)" 0

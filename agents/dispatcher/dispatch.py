@@ -35,7 +35,7 @@ whole instruction set. This script runs those rows directly:
                                              re-verify, resolve-mode offload on a
                                              conflict, or push + PR; the rest wakes
   sentinel 0, local build, main moved       -> freshness re-verify (relaunch-verify.sh);
-                                             a docs-only move or the cap wakes it to land
+                                             a move that cannot reach the branch, or the cap, wakes it to land
   main-repair sentinel (own identifier)     -> wake the Architect; never base-red, never
                                              a freshness rebuild
   its own routine fire, sweep finished      -> close the routine's issue
