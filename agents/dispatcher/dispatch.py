@@ -514,18 +514,32 @@ def iso_ts(stamp: str) -> float:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
 
 
-def overruled(comments: list[dict], blocker_id: str) -> bool:
+def released_hold(comment: str) -> tuple[str, str] | None:
+    """The (blocker id, kind) of the hold a `Released:` comment quotes, or None."""
+    if not comment.startswith("Released:"):
+        return None
+    for line in comment.splitlines():
+        if line.startswith("> "):
+            quoted = line[2:]
+            return held_until(quoted) or held_closed(quoted)
+    return None
+
+
+def overruled(comments: list[dict], hold: tuple[str, str]) -> bool:
     """Whether the Coordinator already re-held this task after we released it.
 
     The hold names its release condition, so a wrong release means the hold
     was written in the wrong form. The Coordinator's re-hold is the correction;
     releasing again would only buy another Coordinator run to re-hold it.
+
+    Only a release of this same hold -- same blocker, same condition -- counts.
+    Matching the blocker id anywhere in a `Released:` comment would also match
+    an id the quoted hold merely mentions, and a re-hold that tightens `opens
+    its PR` to `merges` on the same blocker; either would then sit blocked with
+    nothing left to release it.
     """
     *earlier, _latest = sorted(comments, key=lambda c: c["createdAt"]) or [None]
-    return any(
-        (c.get("body") or "").startswith("Released:") and blocker_id in (c.get("body") or "")
-        for c in earlier
-    )
+    return any(released_hold(c.get("body") or "") == hold for c in earlier)
 
 
 def handoff_signature(parent: dict, children: list[dict], git: GitState) -> str:
@@ -1788,7 +1802,7 @@ def release_holds(api: Api, pr_heads: dict[str, str]) -> int:
     legacy = 0
     for issue, body, comments in triples:
         parsed = held_until(body) or held_closed(body)
-        if parsed and not overruled(comments, parsed[0]):
+        if parsed and not overruled(comments, parsed):
             waiting.append((issue, body, parsed))
         legacy += body.startswith(LEGACY_HOLD) and not parsed
     if legacy:
