@@ -2,6 +2,7 @@
 
 Example Paperclip plugin that demonstrates:
 
+- **commentAnnotation** and **commentContextMenuItem** — File links on comments that mention workspace paths, and a comment menu action that opens them. Both are controlled by the `Comment File Links` setting.
 - **projectSidebarItem** — An optional "Files" link under each project in the sidebar that opens the project detail with this plugin’s tab selected. This is controlled by plugin settings and defaults to off.
 - **detailTab** (entityType project) — A project detail tab with a workspace-path selector, a desktop two-column layout (file tree left, editor right), and a mobile one-panel flow with a back button from editor to file tree, including save support.
 
@@ -13,6 +14,8 @@ This is a repo-local example plugin for development. It should not be assumed to
 |---------------------|---------------------|--------------------------------------------------|
 | Files (sidebar)     | `projectSidebarItem`| Optional link under each project → project detail + tab. |
 | Files (tab)         | `detailTab`         | Responsive tree/editor layout with save support.|
+| File links          | `commentAnnotation` | Links file paths mentioned in a comment to the Files tab. |
+| Open files          | `commentContextMenuItem` | Comment menu action that opens the files a comment mentions. |
 
 ## Settings
 
@@ -25,12 +28,18 @@ This is a repo-local example plugin for development. It should not be assumed to
 - `ui.detailTab.register` — project detail tab
 - `projects.read` — resolve project
 - `project.workspaces.read` — list workspaces and read paths for file access
+- `ui.commentAnnotation.register` — comment file links
+- `ui.action.register` — comment context-menu action
+- `issue.comments.read` — read the comment being annotated
+- `plugin.state.read` — read the plugin's settings
 
 ## Worker
 
 - **getData `workspaces`** — `ctx.projects.listWorkspaces(projectId, companyId)` (ordered, primary first).
 - **getData `fileList`** — `{ projectId, workspaceId, directoryPath? }` → list directory entries for the workspace root or a subdirectory (Node `fs`).
 - **getData `fileContent`** — `{ projectId, workspaceId, filePath }` → read file content using workspace-relative paths (Node `fs`).
+- **getData `plugin-config`** — the plugin's settings, for the UI to read.
+- **getData `comment-file-links`** — `{ commentId, issueId, companyId }` → the file paths extracted from that comment's body.
 - **performAction `writeFile`** — `{ projectId, workspaceId, filePath, content }` → write the current editor buffer back to disk.
 
 ## Local Install (Dev)
@@ -57,6 +66,6 @@ pnpm paperclipai plugin uninstall paperclip-file-browser-example --force
 
 ## Structure
 
-- `src/manifest.ts` — manifest with `projectSidebarItem` and `detailTab` (entityTypes `["project"]`).
-- `src/worker.ts` — data handlers for workspaces, file list, file content.
-- `src/ui/index.tsx` — `FilesLink` (sidebar) and `FilesTab` (workspace path selector + two-panel file tree/editor).
+- `src/manifest.ts` — manifest with `projectSidebarItem` and `detailTab` (entityTypes `["project"]`), `commentAnnotation` and `commentContextMenuItem`.
+- `src/worker.ts` — data handlers for plugin config, comment file links, workspaces, file list and file content, plus the `writeFile` action.
+- `src/ui/index.tsx` — `FilesLink` (sidebar), `FilesTab` (workspace path selector + two-panel file tree/editor), `CommentFileLinks` and `CommentOpenFiles`.

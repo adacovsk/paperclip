@@ -36,7 +36,7 @@ By default the adapter sends a signed `device` payload in `connect` params.
 
 ## Session Strategy
 
-The adapter supports the same session routing model as HTTP OpenClaw mode:
+Session routing:
 
 - `sessionKeyStrategy=issue|fixed|run`
 - `sessionKey` is used when strategy is `fixed`

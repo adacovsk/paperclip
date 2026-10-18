@@ -12,7 +12,7 @@ It is intentionally broad:
 - settings page
 - worker bridge data/actions
 - events, jobs, webhooks, tools, streams
-- state, entities, assets, metrics, activity
+- state, entities, metrics, activity
 - local workspace and process demos
 
 This plugin is for local development, contributor onboarding, and runtime regression testing. It is not meant as a production plugin template to ship unchanged.

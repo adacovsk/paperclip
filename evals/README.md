@@ -8,9 +8,7 @@ See [the evals framework plan](../doc/plans/2026-03-13-agent-evals-framework.md)
 
 ### Prerequisites
 
-```bash
-pnpm add -g promptfoo
-```
+`pnpm evals:smoke` runs a pinned promptfoo through `npx`, so nothing needs installing. To run `promptfoo` directly, install it first (`pnpm add -g promptfoo`).
 
 You need an API key for at least one provider. Set one of:
 
@@ -51,9 +49,9 @@ Phase 0 covers narrow behavior evals for the Paperclip heartbeat skill:
 
 ### Adding new cases
 
-1. Add a YAML file to `evals/promptfoo/cases/`
-2. Follow the existing case format (see `core-assignment-pickup.yaml` for reference)
-3. Run `promptfoo eval` to test
+1. Add an entry to `evals/promptfoo/tests/core.yaml` or `evals/promptfoo/tests/governance.yaml` (the config loads `tests/*.yaml`, so a new file there works too)
+2. Follow the existing entries' format (`core.assignment_pickup` is a short one)
+3. Run `pnpm evals:smoke` to test
 
 ### Phases
 

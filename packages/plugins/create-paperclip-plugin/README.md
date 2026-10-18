@@ -31,7 +31,7 @@ The scaffold intentionally uses plain React elements rather than host-provided U
 
 Inside this repo, the generated package uses `@paperclipai/plugin-sdk` via `workspace:*`.
 
-Outside this repo, the scaffold snapshots `@paperclipai/plugin-sdk` from your local Paperclip checkout into a `.paperclip-sdk/` tarball and points the generated package at that local file by default. You can override the SDK source explicitly:
+Outside this repo, the scaffold snapshots `@paperclipai/plugin-sdk` and `@paperclipai/shared` from your local Paperclip checkout into `.paperclip-sdk/` tarballs and points the generated package at those local files by default. You can override the SDK source explicitly:
 
 ```bash
 node packages/plugins/create-paperclip-plugin/dist/index.js @acme/my-plugin \
