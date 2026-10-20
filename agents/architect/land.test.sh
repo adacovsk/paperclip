@@ -26,6 +26,7 @@ stub status "echo \"status \$*\" >> $CALLS"
 stub gate "echo \"gate \$*\" >> $CALLS; exit \${GATE_RC:-0}"
 stub body 'printf "## What changed\n- work\n\n## Verification\n- cargo sentinel: 0\n"'
 stub check 'exit 0'
+stub local 'echo "local-landable $1: ${LOCAL_SAYS:-commit abc is stamped architect}"; exit ${LOCAL_RC:-1}'
 stub gh "case \"\$1 \$2\" in
   'auth switch') exit 0 ;;
   'pr create') echo \"pr-create \$*\" >> $CALLS; echo https://example/pr/1 > $DIR/open-pr ;;
@@ -35,7 +36,8 @@ stub gh "case \"\$1 \$2\" in
     esac ;;
 esac"
 export LAND_RELAUNCH="$DIR/relaunch" LAND_FRESHNESS="$DIR/fresh" LAND_CV="$DIR/cv" LAND_STATUS="$DIR/status" \
-       LAND_GH="$DIR/gh" LAND_GATE="$DIR/gate" LAND_BODY="$DIR/body" LAND_BODY_CHECK="$DIR/check"
+       LAND_GH="$DIR/gh" LAND_GATE="$DIR/gate" LAND_BODY="$DIR/body" LAND_BODY_CHECK="$DIR/check" \
+       LAND_LOCAL="$DIR/local"
 
 git init -q --bare -b main "$DIR/remote.git"
 git clone -q "$DIR/remote.git" "$PAPERCLIP_PROJECT" 2>/dev/null
@@ -59,7 +61,8 @@ called() { grep -c "^$1" "$CALLS" | tr -d ' '; }
 
 echo "refusals hand the verify to a model"
 green; rm "$S/T-1.cloud.verdict"
-check "no cloud verdict -> 1" "$(run)" 1
+check "local build local-landable refuses -> 1" "$(run)" 1
+check "  says why" "$(grep -c 'local build: local-landable T-1: commit abc is stamped architect' "$DIR/out")" 1
 green; echo 1 > "$S/T-1.exit"
 check "red sentinel -> 1" "$(run)" 1
 green; sed -i 's/PASS/FAIL/' "$S/T-1.cloud.verdict"
@@ -100,6 +103,11 @@ check "  landed marker is the head" "$(cat "$S/T-1.landed")" "$(git -C "$WT" rev
 check "  sentinel cleared" "$([ -e "$S/T-1.exit" ] && echo present || echo gone)" gone
 check "  out-of-scope fix in the body" "$(grep -c '^- out-of-scope: src/x.rs E0004' "$S/T-1.pr-body.md")" 1
 check "  skip-schema-regen token in the body" "$(grep -c 'skip-schema-regen' "$S/T-1.pr-body.md")" 1
+green; rm "$S/T-1.cloud.verdict"; r=$(LOCAL_RC=0 run)
+check "local build with no Architect commit -> 0" "$r" 0
+check "  PR created" "$(called pr-create)" 1
+check "  body says it was a local build" "$(grep -c '^- local build: .*no Architect fix' "$S/T-1.pr-body.md")" 1
+check "  no out-of-scope or skip token" "$(grep -cE 'out-of-scope|skip-schema-regen' "$S/T-1.pr-body.md")" 0
 green not-relevant; echo https://example/pr/1 > "$DIR/open-pr"
 r=$(PRS="1 OPEN" run)
 check "open PR -> 0 without a second" "$r" 0

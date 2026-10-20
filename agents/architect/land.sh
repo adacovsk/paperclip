@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# §Landing for an accepted green cloud verify, without a model run.
+# §Landing for an accepted green cloud verify, or a local green the Architect
+# added nothing to, without a model run.
 #
 # WHY. A green sentinel woke the Architect, which loaded its whole instruction
 # set to type out the §Landing block: sync onto main, run the freshness gate,
@@ -11,8 +12,8 @@
 #
 # What still needs a model exits 1 and the caller wakes the Architect exactly
 # as before, so a refusal here costs today's behaviour, never a dropped verify:
-# no cloud verdict (a local build may carry the Architect's own fixes, which its
-# PR body has to list), a dirty tree, a red landing gate, a conflict a resolve
+# a local build that local-landable.sh refuses (it may carry the Architect's
+# own fixes, which its PR body has to list), a dirty tree, a red landing gate, a conflict a resolve
 # verify already failed on, or a PR already closed or merged for the branch.
 #
 # Usage:  land.sh <task-id> <verify-task-id> <task-title>
@@ -22,7 +23,7 @@
 #         1  a model has to look; the last line of output says why
 # Env:    PAPERCLIP_PROJECT, PAPERCLIP_GH_USER (required), XDG_CACHE_HOME,
 #         LAND_RELAUNCH / LAND_FRESHNESS / LAND_CV / LAND_STATUS / LAND_GH /
-#         LAND_GATE / LAND_BODY / LAND_BODY_CHECK (test seams; LAND_GATE stands in
+#         LAND_GATE / LAND_BODY / LAND_BODY_CHECK / LAND_LOCAL (test seams; LAND_GATE stands in
 #         for the explicit gate only, never for the pre-push hook).
 set -uo pipefail
 
@@ -32,6 +33,7 @@ RELAUNCH="${LAND_RELAUNCH:-$HERE/relaunch-verify.sh}"
 FRESHNESS="${LAND_FRESHNESS:-$HERE/freshness-reverify-needed.sh}"
 CV="${LAND_CV:-$HERE/cloud-verify.sh}"
 STATUS="${LAND_STATUS:-$HERE/post-verify-status.sh}"
+LOCAL="${LAND_LOCAL:-$HERE/local-landable.sh}"
 GH="${LAND_GH:-gh}"
 PROJECT="${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}"
 S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"
@@ -58,11 +60,15 @@ WORKTREE="$PROJECT/.paperclip/worktrees/$task"
 cd "$WORKTREE" 2>/dev/null || model "no worktree"
 [ "$(git branch --show-current)" = "$branch" ] || model "worktree is not on $branch"
 [ "$(cat "$S/$task.exit" 2>/dev/null)" = "0" ] || model "the sentinel is not 0"
-[ -f "$S/$task.cloud.verdict" ] || model "no cloud verdict: a local build's PR body has to list the Architect's own fixes"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || model "uncommitted changes in the worktree"
 [ -s "$S/$task.base" ] || model "no recorded base for the green build"
-verdict="$(cat "$S/$task.cloud.verdict")"
-[ "$(sed -n 's/^result: *//p' <<< "$verdict" | head -1)" = "PASS" ] || model "the cloud verdict is not PASS"
+if [ -f "$S/$task.cloud.verdict" ]; then
+  verdict="$(cat "$S/$task.cloud.verdict")"
+  [ "$(sed -n 's/^result: *//p' <<< "$verdict" | head -1)" = "PASS" ] || model "the cloud verdict is not PASS"
+else
+  verdict=""
+  why="$("$LOCAL" "$task" 2>&1)" || model "local build: ${why##*$'\n'}"
+fi
 
 "$GH" auth switch --user "${PAPERCLIP_GH_USER:?set PAPERCLIP_GH_USER}" >/dev/null 2>&1 || true
 
@@ -147,6 +153,7 @@ if [ -z "$prs" ]; then
   body > "$B" || model "generate_pr_body.py could not build a reviewable body"
   {
     grep -E '^out-of-scope:' <<< "$verdict" | sed 's/^/- /'
+    [ -n "$verdict" ] || echo "- local build: clippy --all-targets -D warnings and cargo test --lib green; every commit is the Worker's or the Reviewer's, no Architect fix"
     [ -z "$note" ] || echo "- note: $note"
     if grep -qE '^schemas: *proved-empty' <<< "$verdict"; then
       echo "- [skip-schema-regen] the cloud verify regenerated schemas and the diff was empty"
@@ -164,7 +171,7 @@ url="$("$GH" pr list --head "$branch" --state open --json url -q '.[0].url // em
 
 # The Dispatcher closes this Verify when the open PR carries this head.
 echo "$head" > "$S/$task.landed"
-rm -f "$S/$task.exit" "$S/$task.base" "$S/$task.base-red" "$S/$task.freshness" "$S/$task.pid" "$S/$task".cloud.*
+rm -f "$S/$task.exit" "$S/$task.base" "$S/$task.head" "$S/$task.base-red" "$S/$task.freshness" "$S/$task.pid" "$S/$task".cloud.*
 git for-each-ref --format='%(refname)' "refs/heads/cloud-verify/$task/" | xargs -r -n1 git update-ref -d
 [ "$verify" = "$task" ] || rm -f "$S/$verify".{pid,exit,base,log}
 say "PR confirmed: $url"
