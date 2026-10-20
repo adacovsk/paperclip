@@ -62,6 +62,9 @@ BODY="${BODY//@SEM@/$SEM}"
 BODY="${BODY//@CALLBACK@/$CALLBACK}"
 
 [ "${LOCAL_VERIFY_PRINT:-0}" = 0 ] || { printf '%s\n' "$BODY"; exit 0; }
+# Written before the spawn, so the launch is visible on disk the moment this
+# returns: the Dispatcher's tend_launch reads a fresh log as a build starting.
+echo "local-verify: launching $task for $verify${express:+ (express)} at $(date -u +%FT%TZ)" >> "$S/$task.log"
 if [ -n "$express" ]; then export CARGO_SEM_PRIORITY=1; else unset CARGO_SEM_PRIORITY; fi
 if [ "${LOCAL_VERIFY_SCOPE:-1}" != 0 ] && systemd-run --user --scope --collect --quiet true >/dev/null 2>&1; then
   systemd-run --user --scope --collect --quiet --unit="verifyrun-$task" \

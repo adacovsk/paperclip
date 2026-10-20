@@ -1585,11 +1585,13 @@ def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:
     signalled. A recorded cloud launch whose watcher died is resumed, exactly as
     the Architect's state machine does, never offloaded again (that would start a
     second VM). Neither on record means the launch never completed, or a local
-    build died without a sentinel; the Architect takes it from Step 0. A launch
-    under ten minutes old is left alone while its watcher writes its pid.
+    build died without a sentinel; the Architect takes it from Step 0. A cloud
+    launch under ten minutes old is left alone while its watcher writes its pid,
+    and a local one under two minutes old (its log) while its chain starts.
     """
-    if local_build_alive(parent):
-        return
+    log = VERIFY_DIR / f"{parent}.log"
+    if local_build_alive(parent) or (log.exists() and time.time() - log.stat().st_mtime < 120):
+        return  # a fresh log is a local launch the census may not see yet
     launched = VERIFY_DIR / f"{parent}.cloud.launched"
     if not launched.exists():
         hand_to_architect(api, agents, verify, "no live local build and no cloud launch is recorded for it")

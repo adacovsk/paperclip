@@ -49,6 +49,7 @@ check "  clippy then test, one cargo per slot" "$(grep -c '^sem env CARGO_INCREM
 check "  normal lane" "$(grep -c '^prio=none' "$DIR/calls")" 2
 check "  called back for the verify" "$(grep '^callback' "$DIR/calls")" "callback V-2"
 check "  verify-id aliases" "$(readlink "$S/V-2.exit")" "$S/T-1.exit"
+check "  the launch is on disk before the chain runs" "$(grep -c '^local-verify: launching T-1 for V-2' "$S/T-1.log")" 1
 check "--express -> express lane" "$(launch --express >/dev/null; settle; grep -c '^prio=1' "$DIR/calls")" 2
 r=$(SEM_RC=101 launch); settle
 check "a red build -> launched, sentinel 101" "$r $(cat "$S/T-1.exit")" "0 101"

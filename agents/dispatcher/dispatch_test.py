@@ -812,7 +812,16 @@ class DispatcherLaunch(unittest.TestCase):
         dispatch.tend_launch(api, self.agents, self.verify(), "T-1")
         self.assertEqual(api.writes, [])
 
+    def test_a_held_verify_launched_moments_ago_is_left_alone(self):
+        (dispatch.VERIFY_DIR / "T-1.log").write_text("local-verify: launching T-1 for V-1\n")
+        api = SweepApi()
+        dispatch.tend_launch(api, self.agents, self.verify(), "T-1")
+        self.assertEqual(api.writes, [])
+
     def test_a_held_verify_whose_local_build_died_goes_to_the_architect(self):
+        log = dispatch.VERIFY_DIR / "T-1.log"
+        log.write_text("an old build\n")
+        os.utime(log, (time.time() - 3600,) * 2)
         api = SweepApi()
         dispatch.tend_launch(api, self.agents, self.verify(), "T-1")
         self.assertEqual(self.assignees(api), ["arch"])
