@@ -493,7 +493,10 @@ class SentinelSweep(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.start_landing)
+        self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.start_landing,
+                      dispatch.local_landable)
+        self.local_ok = False
+        dispatch.local_landable = lambda parent: self.local_ok
         dispatch.VERIFY_DIR, dispatch.STATE_DIR = root / "verify", root / "state"
         dispatch.VERIFY_DIR.mkdir()
         dispatch.STATE_DIR.mkdir()
@@ -514,7 +517,8 @@ class SentinelSweep(unittest.TestCase):
         dispatch.start_landing = fake_start
 
     def tearDown(self):
-        dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.start_landing = self.saved
+        (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.relaunch, dispatch.start_landing,
+         dispatch.local_landable) = self.saved
         self.tmp.cleanup()
 
     def sentinel(self, code, base=None):
@@ -543,6 +547,18 @@ class SentinelSweep(unittest.TestCase):
         self.sentinel("0", base=self.MAIN)
         self.assertEqual(self.sweep(), [])
         self.assertEqual(self.landed, ["T-1"])
+
+    def test_a_local_green_with_no_architect_commit_lands_without_a_model(self):
+        self.local_ok = True
+        self.sentinel("0", base=self.MAIN)
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual(self.landed, ["T-1"])
+
+    def test_a_local_green_on_an_older_main_with_no_architect_commit_goes_to_land(self):
+        self.local_ok = True
+        self.sentinel("0", base="b" * 40)
+        self.assertEqual(self.sweep(), [])
+        self.assertEqual((self.landed, self.relaunched), (["T-1"], []))
 
     def test_a_green_on_an_older_main_goes_to_land_not_relaunch(self):
         self.verdict()
@@ -599,7 +615,7 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual(api.writes, [])
         self.assertTrue(dispatch.landing_files("T-1")[2].exists())
 
-    def test_a_local_green_is_not_landed_by_script(self):
+    def test_a_local_green_local_landable_refuses_is_not_landed_by_script(self):
         self.sentinel("0", base=self.MAIN)
         self.assertEqual(len(self.sweep()), 1)
         self.assertEqual(self.landed, [])
@@ -704,7 +720,9 @@ class MainRepairSentinel(SentinelSweep):
     test_another_verifys_refusal_does_not_wake_this_one = None
     test_a_finished_landing_is_reported_and_cleared = None
     test_a_refused_landing_is_left_for_the_sweep = None
-    test_a_local_green_is_not_landed_by_script = None
+    test_a_local_green_local_landable_refuses_is_not_landed_by_script = None
+    test_a_local_green_with_no_architect_commit_lands_without_a_model = None
+    test_a_local_green_on_an_older_main_with_no_architect_commit_goes_to_land = None
     test_a_main_repair_parent_is_not_landed_by_script = None
 
 

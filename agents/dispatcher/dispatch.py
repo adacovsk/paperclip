@@ -34,6 +34,8 @@ whole instruction set. This script runs those rows directly:
                                              next sweep reads its result): freshness
                                              re-verify, resolve-mode offload on a
                                              conflict, or push + PR; the rest wakes
+  sentinel 0, local build, no Architect     -> land it the same way (local-landable.sh
+    commit                                   decides: worker/reviewer commits only)
   sentinel 0, local build, main moved       -> freshness re-verify (relaunch-verify.sh);
                                              a move that cannot reach the branch, or the cap, wakes it to land
   main-repair sentinel (own identifier)     -> wake the Architect; never base-red, never
@@ -1229,8 +1231,9 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
             # Rebuilding a repair rooted at an older `main` just verifies the old
             # break again; whether a later merge already fixed it is the Architect's call.
             action = "wake"
-        if code == "0" and action in ("fresh", "wake") and not repair and verdict \
-                and not needs_architect(parent_issue) and not DEPENDENCY_BUMP.match(verify["title"]):
+        if code == "0" and action in ("fresh", "wake") and not repair \
+                and not needs_architect(parent_issue) and not DEPENDENCY_BUMP.match(verify["title"]) \
+                and (verdict or local_landable(parent)):
             said = landing_handed_back(parent, verify)
             if said is None:
                 start_landing(api, verify, parent_issue)
@@ -1504,8 +1507,23 @@ def landing_handed_back(parent: str, verify: dict) -> str | None:
     return result[3]
 
 
+def local_landable(parent: str) -> bool:
+    """A green local build with no Architect commit, which land.sh lands like a cloud verify.
+
+    The rule lives in `local-landable.sh`, which land.sh also runs, so the two
+    cannot disagree about which builds skip the model.
+    """
+    try:
+        return subprocess.run(
+            [str(HERE.parent / "architect" / "local-landable.sh"), parent],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=60,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def start_landing(api: Api, verify: dict, parent: dict) -> bool:
-    """Start `land.sh` detached on a green cloud verify; False when it was not started."""
+    """Start `land.sh` detached on a green verify; False when it was not started."""
     running = sum(1 for f in VERIFY_DIR.glob("*.land.pid") if landing_running(f.name[: -len(".land.pid")]))
     if running >= LAND_MAX_RUNNING:
         print(f"sentinel {verify['identifier']}: landing deferred, {running} already running", flush=True)
