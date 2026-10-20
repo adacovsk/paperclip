@@ -21,7 +21,9 @@ printf '#!/bin/sh\necho "$*" >> %s\nexit ${CV_RC:-0}\n' "$CALLS" > "$DIR/cv"; ch
 printf '#!/bin/sh\nexit ${CODE_MOVED:-0}\n' > "$DIR/fresh"; chmod +x "$DIR/fresh"
 printf '#!/bin/sh\nexit ${BUILD_LIVE:-1}\n' > "$DIR/census"; chmod +x "$DIR/census"
 printf '#!/bin/sh\necho "${CLOUD_VERIFY_RESOLVE:-0} $*" >> %s\nexit ${CV_RC:-0}\n' "$CALLS" > "$DIR/cv"; chmod +x "$DIR/cv"
-export RELAUNCH_CV="$DIR/cv" RELAUNCH_FRESHNESS="$DIR/fresh" RELAUNCH_CENSUS="$DIR/census"
+LOCALS="$DIR/locals"
+printf '#!/bin/sh\necho "$*" >> %s\necho "local-verify $1: ${LOCAL_SAYS:-launched locally}"\nexit ${LOCAL_RC:-0}\n' "$LOCALS" > "$DIR/local"; chmod +x "$DIR/local"
+export RELAUNCH_CV="$DIR/cv" RELAUNCH_FRESHNESS="$DIR/fresh" RELAUNCH_CENSUS="$DIR/census" RELAUNCH_LOCAL="$DIR/local"
 
 git init -q --bare -b main "$DIR/remote.git"
 git clone -q "$DIR/remote.git" "$PAPERCLIP_PROJECT" 2>/dev/null
@@ -34,13 +36,17 @@ OLD=$(git rev-parse main)
 
 advance() { (cd "$PAPERCLIP_PROJECT" && git checkout -q main && echo "$RANDOM" >> "$1" && git add "$1" \
              && git commit -qm "main $1" && git push -q origin main); }
-run() { : > "$CALLS"; bash "$SUT" T-1 T-9 "$1" >/dev/null; echo $?; }
+run() { : > "$CALLS"; : > "$LOCALS"; bash "$SUT" T-1 T-9 "$1" > "$DIR/out"; echo $?; }
+locals() { cat "$LOCALS"; }
 offloads() { wc -l < "$CALLS" | tr -d ' '; }
 
 advance base.txt
 check "launch syncs and offloads" "$(run launch)" 0
 check "  on top of current main" "$(cd "$WT" && git merge-base --is-ancestor origin/main HEAD && echo yes)" yes
 check "  in normal mode" "$(cut -c1 "$CALLS")" 0
+rm -f "$S/T-1.exit"
+check "launch with the lane closed launches locally" "$(CV_RC=1 run launch)" 0
+check "  in the normal lane" "$(locals)" "T-1 T-9"
 echo 0 > "$S/T-1.exit"
 check "launch over an unread result hands it to a model" "$(run launch)" 1
 rm -f "$S/T-1.exit"
@@ -53,7 +59,16 @@ check "retry offloads the same head" "$(run retry)" 0
 check "retry removed the stale sentinel" "$([ -f "$S/T-1.exit" ] && echo kept || echo gone)" gone
 check "retry passes task, branch and verify id" "$(cat "$CALLS")" "0 offload T-1 task/T-1 T-9"
 
-check "a refused offload hands the verify to a model" "$(CV_RC=1 run retry)" 1
+echo 99 > "$S/T-1.exit"
+check "a refused offload launches locally" "$(CV_RC=1 run retry)" 0
+check "  a retry in the normal lane" "$(locals)" "T-1 T-9"
+check "  and says so" "$(grep -c 'launched locally' "$DIR/out")" 1
+echo 99 > "$S/T-1.exit"
+check "  a priority task's retry in the express lane" "$(CV_RC=1 RELAUNCH_EXPRESS=1 run retry)" 0
+check "    with --express" "$(locals)" "T-1 T-9 --express"
+echo 99 > "$S/T-1.exit"
+check "both lanes refusing hands the verify to a model" "$(CV_RC=1 LOCAL_RC=1 LOCAL_SAYS='a local build is already running' run retry)" 1
+check "  naming the local refusal" "$(grep -c 'a local build is already running' "$DIR/out")" 1
 
 echo "$OLD" > "$S/T-1.base"
 check "fresh with main unmoved lands" "$(run fresh)" 3
@@ -67,6 +82,10 @@ check "fresh after a code advance re-verifies" "$(run fresh)" 0
 check "  on top of the new main" "$(cd "$WT" && git merge-base --is-ancestor origin/main HEAD && echo yes)" yes
 check "  recording the new base" "$(cat "$S/T-1.base")" "$(git -C "$PAPERCLIP_PROJECT" rev-parse origin/main)"
 check "  and counting the re-verify" "$(cat "$S/T-1.freshness")" 1
+advance base.txt
+check "fresh with the lane closed re-verifies locally" "$(CV_RC=1 run fresh)" 0
+check "  in the express lane" "$(locals)" "T-1 T-9 --express"
+check "  counting the re-verify" "$(cat "$S/T-1.freshness")" 2
 
 echo 2 > "$S/T-1.freshness"; advance base.txt
 check "fresh at the cap lands" "$(run fresh)" 3

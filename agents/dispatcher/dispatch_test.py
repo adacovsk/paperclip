@@ -505,7 +505,7 @@ class SentinelSweep(unittest.TestCase):
         self.relaunched = []
         self.relaunch_ok = True
 
-        def fake_relaunch(api, verify, parent, mode, why):
+        def fake_relaunch(api, verify, parent, mode, why, express=False):
             self.relaunched.append((parent, mode))
             return self.relaunch_ok
         dispatch.relaunch = fake_relaunch
@@ -756,20 +756,28 @@ class DispatcherLaunch(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.saved = (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.run_relaunch,
-                      dispatch.watcher_alive)
+                      dispatch.watcher_alive, dispatch.local_build_alive)
         dispatch.VERIFY_DIR, dispatch.STATE_DIR = root / "verify", root / "state"
         dispatch.VERIFY_DIR.mkdir()
         dispatch.STATE_DIR.mkdir()
         (dispatch.STATE_DIR / "sentinels.json").write_text('{"_seeded": "1"}')
         dispatch.git = lambda project, *args: "a" * 40
         self.rc = 0
-        dispatch.run_relaunch = lambda verify, parent, mode: subprocess.CompletedProcess([], self.rc, "relaunch-verify T-1: ok\n", "")
+        self.said = "relaunch-verify T-1: relaunched in the cloud lane (first launch)"
+        self.launches = []
+
+        def fake_run_relaunch(verify, parent, mode, express=False):
+            self.launches.append((parent, mode, express))
+            return subprocess.CompletedProcess([], self.rc, self.said + "\n", "")
+        dispatch.run_relaunch = fake_run_relaunch
         dispatch.watcher_alive = lambda parent: False
+        self.local_alive = False
+        dispatch.local_build_alive = lambda parent: self.local_alive
         self.agents = {"Architect": "arch", "Dispatcher": "disp"}
 
     def tearDown(self):
         (dispatch.VERIFY_DIR, dispatch.STATE_DIR, dispatch.git, dispatch.run_relaunch,
-         dispatch.watcher_alive) = self.saved
+         dispatch.watcher_alive, dispatch.local_build_alive) = self.saved
         self.tmp.cleanup()
 
     def verify(self, owner="disp"):
@@ -783,6 +791,31 @@ class DispatcherLaunch(unittest.TestCase):
         api = SweepApi()
         self.assertTrue(dispatch.launch_verify(api, self.agents, self.verify(), {"identifier": "T-1"}))
         self.assertEqual(self.assignees(api), [])
+
+    def test_a_local_launch_keeps_the_verify_off_the_architect_and_says_where(self):
+        self.said = "relaunch-verify T-1: the cloud lane refused the offload; launched locally (first launch)"
+        api = SweepApi()
+        self.assertTrue(dispatch.launch_verify(api, self.agents, self.verify(), {"identifier": "T-1"}))
+        self.assertEqual(self.assignees(api), [])
+        comments = [w[2]["body"] for w in api.writes if w[0] == "POST" and w[1].endswith("/comments")]
+        self.assertIn("this machine is building it", comments[0])
+
+    def test_a_priority_task_launches_in_the_express_lane(self):
+        dispatch.launch_verify(SweepApi(), self.agents, self.verify(),
+                               {"identifier": "T-1", "description": "Priority-verify: unblocks three branches"})
+        dispatch.launch_verify(SweepApi(), self.agents, self.verify(), {"identifier": "T-1", "description": "x"})
+        self.assertEqual([l[2] for l in self.launches], [True, False])
+
+    def test_a_held_verify_with_a_live_local_build_is_left_alone(self):
+        self.local_alive = True
+        api = SweepApi()
+        dispatch.tend_launch(api, self.agents, self.verify(), "T-1")
+        self.assertEqual(api.writes, [])
+
+    def test_a_held_verify_whose_local_build_died_goes_to_the_architect(self):
+        api = SweepApi()
+        dispatch.tend_launch(api, self.agents, self.verify(), "T-1")
+        self.assertEqual(self.assignees(api), ["arch"])
 
     def test_a_refused_launch_assigns_the_architect(self):
         self.rc = 1
