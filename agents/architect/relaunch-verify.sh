@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Launch or relaunch a verify in the cloud lane without a model run, for the
-# first launch and the two sentinel results whose next step is fixed by rule:
+# Launch or relaunch a verify without a model run, in the cloud lane when it
+# admits the build and on this machine (local-verify.sh) when it does not, for
+# the first launch and the two sentinel results whose next step is fixed by rule:
 #
 #   launch the first build of a Verify: Step 0's checks, sync onto origin/main,
 #          offload. A branch that conflicts goes out in resolve mode, as Step 0
@@ -18,20 +19,25 @@
 # the fallback is today's behaviour, never a dropped verify.
 #
 # Usage:  relaunch-verify.sh <task-id> <verify-task-id> launch|retry|fresh
-# Exit:   0  relaunched in the cloud lane; the next sentinel arrives as usual
+# Exit:   0  relaunched, in the cloud lane or locally; the next sentinel arrives as usual
 #         3  fresh only: nothing to re-verify, Landing should run (main has not
 #            moved in code, or the freshness cap is reached)
 #         1  a model has to look: no worktree, wrong branch, dirty tree, a sync
-#            conflict, the lane refused the offload, or (launch) no commits to
+#            conflict, both lanes refused the build, or (launch) no commits to
 #            verify, a result or build already present, a resolve already tried
 # Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME, FRESHNESS_CAP (default 2,
-#         as in §Landing), RELAUNCH_CV / RELAUNCH_FRESHNESS (test seams).
+#         as in §Landing), RELAUNCH_EXPRESS=1 (the task qualifies for the express
+#         lane: a first launch or retry passes it to the local build; a freshness
+#         re-verify always takes it), RELAUNCH_CV / RELAUNCH_FRESHNESS /
+#         RELAUNCH_LOCAL (test seams).
 set -uo pipefail
 
 task="${1:?task id}"; verify="${2:?verify task id}"; mode="${3:?launch|retry|fresh}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CV="${RELAUNCH_CV:-$HERE/cloud-verify.sh}"
 FRESHNESS="${RELAUNCH_FRESHNESS:-$HERE/freshness-reverify-needed.sh}"
+LOCAL="${RELAUNCH_LOCAL:-$HERE/local-verify.sh}"
+express="${RELAUNCH_EXPRESS:+--express}"
 S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"
 CAP="${FRESHNESS_CAP:-2}"
 
@@ -59,10 +65,14 @@ offload() {
   if "$CV" offload "$task" "task/$task" "$verify" >/dev/null 2>&1; then
     say "relaunched in the cloud lane ($1)"; exit 0
   fi
+  # A refused offload (the lane closed, or a build it does not take) is a local
+  # build, which is all the woken Architect would have done with it.
+  if out="$("$LOCAL" "$task" "$verify" ${2:-} 2>&1)"; then
+    say "the cloud lane refused the offload; launched locally ($1)"; exit 0
+  fi
   # The sentinel is already gone, so the woken Architect finds "absent + no
-  # build" and launches the local chain: the same path a refused offload takes
-  # inside its own run.
-  say "the cloud lane refused the offload ($1)"; exit 1
+  # build" and starts from Step 0.
+  say "the cloud lane refused the offload and the local launch did too ($1): ${out##*$'\n'}"; exit 1
 }
 
 case "$mode" in
@@ -74,7 +84,7 @@ case "$mode" in
     git fetch -q origin main || { say "cannot fetch origin/main"; exit 1; }
     [ -n "$(git rev-list -1 origin/main..HEAD)" ] || { say "no commits beyond origin/main"; exit 1; }
     if sync; then
-      offload "first launch"
+      offload "first launch" "$express"
     fi
     # Step 0: a conflict goes to the lane in resolve mode, from the un-rebased
     # head; only a resolve already tried makes it a model's (and the operator's).
@@ -86,7 +96,7 @@ case "$mode" in
     say "the cloud lane refused the resolve offload"; exit 1
     ;;
   retry)
-    offload "retry after an inconclusive build"
+    offload "retry after an inconclusive build" "$express"
     ;;
   fresh)
     git fetch -q origin main || { say "cannot fetch origin/main"; exit 1; }
@@ -102,7 +112,7 @@ case "$mode" in
     sync || { say "neither rebase nor merge onto origin/main succeeds"; exit 1; }
     echo "$main" > "$S/$task.base"
     echo "$((n + 1))" > "$S/$task.freshness"
-    offload "freshness re-verify $((n + 1))/$CAP"
+    offload "freshness re-verify $((n + 1))/$CAP" --express
     ;;
   *)
     say "unknown mode $mode"; exit 1

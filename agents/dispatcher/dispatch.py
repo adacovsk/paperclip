@@ -26,8 +26,9 @@ whole instruction set. This script runs those rows directly:
                                              needing judgment go to the Coordinator
   verify sentinel not yet routed            -> settle it without a model, or wake the
                                              Architect on that Verify once
-  Verify dispatched, cloud lane open        -> launch it here, the Verify assigned to the
-                                             Dispatcher until a model is needed
+  Verify dispatched                         -> launch it here, in the cloud lane or locally,
+                                             the Verify assigned to the Dispatcher until
+                                             a model is needed
   Dispatcher's Verify, watcher dead         -> resume it (cloud-verify.sh resume)
   sentinel 99/75, first in a row            -> relaunch the same head (relaunch-verify.sh)
   sentinel 0, accepted cloud verdict        -> land it (architect/land.sh, detached; the
@@ -995,12 +996,13 @@ def sweep(api: Api, project: Path) -> None:
     def self_launcher(parent_id: str | None) -> tuple[str, dict] | None:
         """(Dispatcher id, parent) when this Verify's first build launches here.
 
-        Only while the cloud lane is open: a closed lane means the local chain,
-        which is the Architect's to run. Assigning the Dispatcher wakes no one,
-        since an agent's own assignment is not a wake.
+        In either lane: relaunch-verify.sh offloads when the cloud lane admits
+        the build and falls back to local-verify.sh when it does not. Only called
+        once take_capacity() has granted a slot, so a closed lane's local cap
+        holds exactly as it did when the Architect launched. Assigning the
+        Dispatcher wakes no one, since an agent's own assignment is not a wake.
         """
-        if not (capacity is None and parent_id and agents.get("Dispatcher")
-                and launch_budget_left()):
+        if not (parent_id and agents.get("Dispatcher") and launch_budget_left()):
             return None
         parent = api.get(f"/issues/{parent_id}")
         why = needs_architect(parent)
@@ -1243,7 +1245,7 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
             if not launch_budget_left():
                 print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
                 continue  # not recorded, so the next sweep routes it again
-            relaunched = relaunch(api, verify, parent, action, why)
+            relaunched = relaunch(api, verify, parent, action, why, express=priority_verify(parent_issue))
             if relaunched:
                 state[verify["identifier"]] = key
                 if action == "retry":
@@ -1314,13 +1316,14 @@ def launch_verify(api: Api, agents: dict, verify: dict, parent: dict) -> bool:
     # this Dispatcher holds, and never beside a build that is still out.
     if verify.get("assigneeAgentId") != agents.get("Dispatcher") or watcher_alive(parent["identifier"]):
         return False
-    out = run_relaunch(verify, parent["identifier"], "launch")
+    out = run_relaunch(verify, parent["identifier"], "launch", express=priority_verify(parent))
     if out is not None and out.returncode == 0:
         note = (out.stdout.strip().splitlines() or [""])[-1]
+        where = "this machine is" if "launched locally" in note else "the cloud lane is"
         try:
             api.write(
                 "POST", f"/issues/{verify['id']}/comments",
-                {"body": "Launched by the Dispatcher, no model run: the cloud lane is building it. "
+                {"body": f"Launched by the Dispatcher, no model run: {where} building it. "
                          "The Verify stays assigned to the Dispatcher until a result needs the Architect."
                          f"\n\n`{note}`"},
                 f"verify  {verify['identifier']}: launched",
@@ -1343,6 +1346,17 @@ def hand_to_architect(api: Api, agents: dict, verify: dict, why: str) -> None:
     )
 
 
+def local_build_alive(parent: str) -> bool:
+    """Whether this task's local verify chain is running (verify-census.sh)."""
+    try:
+        return subprocess.run(
+            [str(HERE.parent / "architect" / "verify-census.sh"), parent],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=60,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def watcher_alive(parent: str) -> bool:
     """Whether `{parent}.pid` names a live cloud-verify process (INSTRUCTIONS §dead watcher)."""
     try:
@@ -1352,18 +1366,31 @@ def watcher_alive(parent: str) -> bool:
         return False
 
 
-def run_relaunch(verify: dict, parent: str, mode: str) -> subprocess.CompletedProcess | None:
+def priority_verify(parent: dict | None) -> bool:
+    """Whether the task qualifies for the express lane on a first launch or retry.
+
+    Qualifier 2 of the Architect's CARGO_SEM_PRIORITY rule; qualifier 1
+    (main-repair) never reaches a Dispatcher launch, and a freshness re-verify
+    (qualifier 3) is express inside relaunch-verify.sh itself.
+    """
+    return bool(parent) and "Priority-verify:" in (parent.get("description") or "")
+
+
+def run_relaunch(verify: dict, parent: str, mode: str, express: bool = False) -> subprocess.CompletedProcess | None:
+    env = {k: v for k, v in os.environ.items() if k != "RELAUNCH_EXPRESS"}
+    if express:
+        env["RELAUNCH_EXPRESS"] = "1"
     try:
         return subprocess.run(
             ["bash", str(HERE.parent / "architect" / "relaunch-verify.sh"), parent, verify["identifier"], mode],
-            capture_output=True, text=True, timeout=900,
+            capture_output=True, text=True, timeout=900, env=env,
         )
     except subprocess.SubprocessError as exc:
         print(f"verify  {verify['identifier']}: relaunch-verify.sh {mode} failed to run ({exc})", flush=True)
         return None
 
 
-def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
+def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str, express: bool = False) -> bool:
     """Run `relaunch-verify.sh`; True when the verify went back out with no model.
 
     Anything else (it lands, it conflicts, the lane refused) returns False and
@@ -1373,7 +1400,7 @@ def relaunch(api: Api, verify: dict, parent: str, mode: str, why: str) -> bool:
     if api.dry_run:
         print(f"sentinel {verify['identifier']}: would relaunch ({mode}: {why})", flush=True)
         return True
-    out = run_relaunch(verify, parent, mode)
+    out = run_relaunch(verify, parent, mode, express=express)
     if out is None:
         return False
     said = (out.stdout.strip().splitlines() or [""])[-1]
@@ -1554,15 +1581,20 @@ def start_landing(api: Api, verify: dict, parent: dict) -> bool:
 def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:
     """A Dispatcher-held Verify with no result yet: its build must still be out.
 
-    A recorded cloud launch whose watcher died is resumed, exactly as the
-    Architect's state machine does, never offloaded again (that would start a
-    second VM). No launch on record means the launch never completed; the
-    Architect takes it from Step 0. A launch under ten minutes old is left alone
-    while its watcher writes its pid.
+    A live local build is left to finish: its chain writes the sentinel even when
+    signalled. A recorded cloud launch whose watcher died is resumed, exactly as
+    the Architect's state machine does, never offloaded again (that would start a
+    second VM). Neither on record means the launch never completed, or a local
+    build died without a sentinel; the Architect takes it from Step 0. A cloud
+    launch under ten minutes old is left alone while its watcher writes its pid,
+    and a local one under two minutes old (its log) while its chain starts.
     """
+    log = VERIFY_DIR / f"{parent}.log"
+    if local_build_alive(parent) or (log.exists() and time.time() - log.stat().st_mtime < 120):
+        return  # a fresh log is a local launch the census may not see yet
     launched = VERIFY_DIR / f"{parent}.cloud.launched"
     if not launched.exists():
-        hand_to_architect(api, agents, verify, "no cloud launch is recorded for it")
+        hand_to_architect(api, agents, verify, "no live local build and no cloud launch is recorded for it")
         return
     if watcher_alive(parent) or time.time() - launched.stat().st_mtime < 600:
         return
