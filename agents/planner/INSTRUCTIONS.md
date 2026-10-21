@@ -19,6 +19,8 @@ Leaving fill undone is a normal fire (name it in the summary so the next fire st
 
 ## Run (every fire)
 
+**Every mutating Paperclip call carries both headers** — `-H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID"` (the `paperclip` skill's form). A bare `curl` succeeds on loopback but is attributed to the operator, so its comment wakes you again and the fire loops on its own summary.
+
 0. **Branch — one, reused, before reading anything.** Write the roadmap only from `planner/roadmap`; never mint a per-fire name.
 
     ```bash
