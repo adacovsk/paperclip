@@ -207,5 +207,36 @@ class Branches(unittest.TestCase):
             self.assertIn("refs/heads/unlanded", g("ls-remote", "--heads", "origin"))
 
 
+class Stranded(unittest.TestCase):
+    def test_only_old_unpushed_branches_with_unlanded_work_are_pushed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, work = Path(tmp, "origin.git"), Path(tmp, "work")
+
+            def g(*args):
+                return subprocess.run(["git", *args], cwd=work, check=True, capture_output=True, text=True).stdout
+
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True, capture_output=True)
+            g("config", "user.email", "t@t"), g("config", "user.name", "t")
+            g("checkout", "-q", "-b", "main")
+            Path(work, "a").write_text("a\n"), g("add", "a"), g("commit", "-qm", "a")
+            g("push", "-q", "origin", "main")
+            for name in ("task/AA-1", "task/AA-2", "task/AA-3", "other"):
+                g("checkout", "-q", "-b", name, "main")
+                Path(work, name.replace("/", "_")).write_text("x\n"), g("add", "-A"), g("commit", "-qm", name)
+            g("push", "-q", "origin", "task/AA-2")             # already has an origin copy
+            g("branch", "-q", "-f", "task/AA-3", "main")       # nothing main lacks
+            g("checkout", "-q", "main"), g("fetch", "-q", "origin")
+
+            self.assertEqual(m.stranded_branches(work, False, NOW - 365 * 24 * HOUR), [])  # all too young
+            self.assertEqual(m.stranded_branches(work, True, NOW + 365 * 24 * HOUR),
+                             [{"branch": "task/AA-1", "ahead": 1, "pushed": True}])
+            self.assertNotIn("task/AA-1", g("ls-remote", "--heads", "origin"))  # dry run pushed nothing
+            m.stranded_branches(work, False, NOW + 365 * 24 * HOUR)
+            heads = g("ls-remote", "--heads", "origin")
+            self.assertIn("refs/heads/task/AA-1", heads)
+            self.assertNotIn("refs/heads/other", heads)  # outside the task namespace
+
+
 if __name__ == "__main__":
     unittest.main()
