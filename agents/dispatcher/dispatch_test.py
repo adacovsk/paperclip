@@ -322,6 +322,61 @@ class Holds(unittest.TestCase):
 
 
 
+class PlannerHolds(unittest.TestCase):
+    """A `Held: planner` hold reaches the Planner as an assignment, never as a blocked row."""
+
+    class Api:
+        dry_run = False
+
+        def __init__(self, comments):
+            self.comments = comments
+            self.writes = []
+
+        def issues(self, **query):
+            return [{"id": i, "identifier": f"AA-{i}", "status": "blocked"} for i in self.comments]
+
+        def get(self, path):
+            _, _, ident, *rest = path.split("/")
+            return self.comments[ident] if rest else {"identifier": ident, "status": "in_review"}
+
+        def set_status(self, issue, body, comment, what):
+            self.writes.append((issue["identifier"], body, comment))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = dispatch.STATE_DIR
+        dispatch.STATE_DIR = Path(self.tmp.name)
+
+    def tearDown(self):
+        dispatch.STATE_DIR = self.saved
+        self.tmp.cleanup()
+
+    def test_parses_only_the_planner_form(self):
+        self.assertTrue(dispatch.held_planner("Held: planner — no panache state on main"))
+        self.assertFalse(dispatch.held_planner("Held: operator — paperclip source fix"))
+        self.assertFalse(dispatch.held_planner("Released: x.\n\n> Held: planner — y"))
+
+    def test_a_planner_hold_is_assigned_to_the_planner_as_todo(self):
+        api = self.Api({
+            "1": [{"createdAt": "1", "body": "Held: planner — no attacker-side seam\n\ndetail"}],
+            "2": [{"createdAt": "1", "body": "Held: operator — paperclip source fix"}],
+        })
+        self.assertEqual(dispatch.release_holds(api, {}, "planner-id"), 0)
+        self.assertEqual(len(api.writes), 1)
+        ident, body, comment = api.writes[0]
+        self.assertEqual(ident, "AA-1")
+        self.assertEqual(body, {"status": "todo", "assigneeAgentId": "planner-id"})
+        self.assertTrue(comment.startswith("Held: planner — no attacker-side seam\n"))
+
+    def test_a_planner_re_hold_in_an_until_form_is_not_routed_back(self):
+        api = self.Api({"1": [
+            {"createdAt": "1", "body": "Held: planner — no seam"},
+            {"createdAt": "2", "body": "Held: until AA-7 merges — files the seam"},
+        ]})
+        dispatch.release_holds(api, {}, "planner-id")
+        self.assertFalse(any(b.get("assigneeAgentId") for _, b, _ in api.writes))
+
+
 class RoutineFire(unittest.TestCase):
     FIRE = {"originKind": "routine_execution", "assigneeAgentId": "me", "status": "todo"}
 

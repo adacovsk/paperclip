@@ -244,12 +244,16 @@ line, in exactly this form**:
 ```
 Worker verdict: no-op — already satisfied: <what you verified>
 Worker verdict: no-op — false premise: <what the task assumes that isn't true>
+Worker verdict: no-op — missing prerequisite: <the mechanic or record values origin/main lacks>
 ```
 
-Use `already satisfied` when the done-when is met in the base commit, and
+Use `already satisfied` when the done-when is met in the base commit,
 `false premise` when the thing the task describes does not exist or does not
-behave as described. Coordinator closes the task on that line — `done` for the
-first, `cancelled` for the second — and re-dispatches when it is absent.
+behave as described, and `missing prerequisite` when the task is sound but
+builds on a mechanic, seam or data value that is not on `origin/main` and is
+too big to add in scope — never invent the values. Coordinator closes the task
+on that line — `done`, `cancelled`, or a hold for the Planner to file the
+prerequisite — and re-dispatches when it is absent.
 
 **An empty branch is not by itself a signal.** It is the same shape as a run
 that never started: `in_review`, clean tree, zero commits, no PR. Without the

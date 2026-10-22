@@ -11,7 +11,7 @@ You file `backlog` tasks from roadmap fronts (step 8a); the Coordinator dispatch
 
 A fire has a bounded wall clock and turn count, and the classic failure is dying after commit and before push. → [why](rationale/fire-budget.md)
 
-- **Spine — never skip, never defer:** step 0 (branch), step 1a (directed tasks), step 7 (prune) and the commit-push-merge checkpoint that closes it, then step 8a (keep the backlog). Finish the spine before any fill — an empty backlog idles every Worker slot, which costs more than any fill step buys.
+- **Spine — never skip, never defer:** step 0 (branch), steps 1a–1b (directed tasks, `Held: planner` decisions), step 7 (prune) and the commit-push-merge checkpoint that closes it, then step 8a (keep the backlog). Finish the spine before any fill — an empty backlog idles every Worker slot, which costs more than any fill step buys.
 - **Fill — bounded and resumable:** steps 4, 5, 8, 9. Take them in priority order; stop when the budget is spent, not when the list is.
 - **Always run** (a few turns each): 1–3, 6, 10, 11. **Run step 6's queue check before step 4** — it decides whether the expensive fill is worth starting.
 
@@ -42,6 +42,15 @@ Leaving fill undone is a normal fire (name it in the summary so the next fire st
 
 1. **Context** — `git log --oneline -10` and recent completed reviews (`paperclip` skill). Note what changed since last run.
 1a. **Directed tasks — the waking one first, then every open task assigned to you.** Read `$PAPERCLIP_TASK_ID` and `GET /api/companies/{companyId}/issues?assigneeAgentId={your id}&status=todo,in_progress`. A task asking for a specific roadmap edit (an `<!-- owns: -->` marker a landing gate is waiting on, a correction, a section the operator asked for) is spine: make the edit in this fire's commit and close the task in step 10. These are what verifies sit `blocked` on, so a fire that runs the loop and skips them leaves the block in place however much it restocks. The `Backlog low` task is not one of these — it is step 8a's demand signal. A task you cannot satisfy (premise wrong, not roadmap work) gets a comment saying why, never silence.
+1b. **`Held: planner` tasks — decide each one this fire** (spine; they are among step 1a's `todo` tasks, first comment line `Held: planner — …`). Each is a judgment the pipeline routed to you instead of the operator. Read the task, its comments and `origin/main`, then leave it in exactly one release form, with a comment quoting the `Held:` line and naming the decision:
+   - **Missing prerequisite** (the mechanic, seam or state it builds on is not on `origin/main`) → file the prerequisite as its own roadmap section and `backlog` task (step 8a's shape), then re-hold this one `blocked`, unassigned, `Held: until <new task> merges — <why>`. No such mechanic in the remaster rules (project `CLAUDE.md`, ruleset compliance) → `cancelled`.
+   - **Bad spec** (wrong premise, title/body mismatch, empty `Source:`) → restate What / Where / Done-when in the body and return it to `backlog`, unassigned; or `cancelled` if nothing true is left to do.
+   - **Claim ambiguity** (`section-claims.py` exit 1) → read the claiming task's diff on `origin/main`: a real follow-up → `backlog` with the slice it adds named in the body; a duplicate → `cancelled` naming the claimant. <!-- privacy-ok: the pipeline's own claim script, not project source -->
+   - **Data that would have to be invented** → look the values up in the reference rules data the project `CLAUDE.md` names (remaster records only) and write them into the body, then `backlog`; none exist → `cancelled`, leaving the allowlist line. An open gap is a correct outcome; an invented value is not.
+   - **Leftover commits after a merged PR** → land (file a follow-up task whose body names the branch as its source, then `cancelled` citing it) or drop (`cancelled` with tip SHA and diffstat).
+   - **A hold naming a roadmap section, not a task** → file the section as a task and rewrite the hold `Held: until <task> merges`, or `cancelled`.
+
+   Never leave one `Held: planner` again or bounce it to the operator unless it is one of the three operator classes (paperclip source, a rules/IP ruling, money/credentials/destructive remote change) — then `blocked`, unassigned, `Held: operator — <the ruling needed>`. A re-held `blocked` task carries no assignee, or a later assignment fires a wake that cannot succeed.
 2. **Read `docs/ROADMAP.md`** — the current phase and its open bullets.
 3. **Reviewer patterns** — completed review tasks' `## Patterns`. Recurring → roadmap items.
 4. **Codebase scan** (fill) — `find src -name '*.rs' | shuf | head -4`, read each **fully** (not grep). Look for structural problems, rule violations, dead/empty modules, unconsumed types, gaps; check `assets/data/en/` for referenced-but-missing JSON.
