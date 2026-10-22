@@ -1,8 +1,9 @@
 """The Facilitator's rule-shaped checks, run on the Dispatcher's sweep instead of nightly.
 
-Three of the Facilitator's steps need no judgment: re-firing a missed wake (§2a),
-spotting a wedged per-agent dispatcher (§2b), and finding remote branches whose
-work is already on `origin/main` (§7 cases 1-2). As a nightly model run they failed
+Four of the Facilitator's steps need no judgment: re-firing a missed wake (§2a),
+spotting a wedged per-agent dispatcher (§2b), finding remote branches whose work is
+already on `origin/main` (§7 cases 1-2), and pushing local task branches whose
+commits exist nowhere else (§7b). As a nightly model run they failed
 on the same thing that causes the stalls they exist to clear. Wakes die when the
 account's usage limit runs out, and so did the Facilitator, two nights running, while
 verify stages sat idle for days with nothing left to re-fire them. A script spends no
@@ -44,6 +45,11 @@ WEDGE_SECONDS = float(os.environ.get("FACILITATOR_WEDGE_SECONDS", 15 * 60))
 #: be mid-landing, pushed a moment before its PR is opened.
 BRANCH_MIN_AGE = float(os.environ.get("FACILITATOR_BRANCH_MIN_AGE_SECONDS", 24 * 3600))
 BRANCH_SCAN_SECONDS = float(os.environ.get("FACILITATOR_BRANCH_SCAN_SECONDS", 6 * 3600))
+#: A local task branch untouched this long, with commits main lacks and no origin copy,
+#: is pushed. Matches the project guard's GRACE_DAYS (check_unpushed_task_branches.py):
+#: younger branches are the normal mid-flight queue, which only the Architect pushes.
+STRANDED_AGE = float(os.environ.get("FACILITATOR_STRANDED_AGE_SECONDS", 14 * 24 * 3600))
+STRANDED_GLOB = "refs/heads/task/AA-*"
 WEDGE_TITLE = "[class:wedged-dispatcher] "
 STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
 STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
@@ -254,6 +260,40 @@ def merged_branches(project: Path, open_heads: set[str], dry_run: bool, now: flo
     return found
 
 
+# --------------------------------------------------------------------------- §7b stranded local branches
+
+
+def stranded_branches(project: Path, dry_run: bool, now: float) -> list[dict]:
+    """Push every local task branch whose commits exist only on this disk.
+
+    Pushing is the remedy the project guard names, and the only non-destructive one:
+    the commits gain a second copy and nothing is rewritten, so unlike §7's deletion it
+    needs no opt-in. `--no-verify` because the pre-push hook is a landing gate, and this
+    push lands nothing; it only stops the work existing on one disk.
+
+    Run after merged_branches' fetch, so `origin/<branch>` and `origin/main` are current.
+    """
+    out = git(project, "for-each-ref", "--format=%(refname:short)\t%(committerdate:unix)",
+              STRANDED_GLOB, check=False).stdout
+    found = []
+    for line in out.splitlines():
+        branch, _, at = line.partition("\t")
+        if not at or now - float(at) < STRANDED_AGE:
+            continue
+        if git(project, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}",
+               check=False).returncode == 0:
+            continue
+        # `git cherry`, so a branch whose patches landed under other SHAs is not work.
+        ahead = git(project, "cherry", "origin/main", branch, check=False).stdout.count("+ ")
+        if not ahead:
+            continue
+        print(("DRY " if dry_run else "") + f"branch  {branch}: push, {ahead} commit(s) only here", flush=True)
+        pushed = dry_run or git(project, "push", "--quiet", "--no-verify", "origin", branch,
+                                check=False).returncode == 0
+        found.append({"branch": branch, "ahead": ahead, "pushed": pushed})
+    return found
+
+
 # --------------------------------------------------------------------------- driver
 
 
@@ -272,7 +312,7 @@ def save(path: Path, data: dict, dry_run: bool) -> None:
 
 
 def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_since=None) -> dict:
-    """Run all three checks, act on them, and write REPORT_FILE. Returns the report."""
+    """Run all four checks, act on them, and write REPORT_FILE. Returns the report."""
     now = time.time()
     me = os.environ.get("PAPERCLIP_AGENT_ID")
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
@@ -296,8 +336,10 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     previous = load(REPORT_FILE)
     if now - previous.get("branchesAt", 0) >= BRANCH_SCAN_SECONDS:
         merged, branches_at = merged_branches(project, open_heads, api.dry_run, now), now
+        stranded = stranded_branches(project, api.dry_run, now)
     else:
         merged, branches_at = previous.get("branchesOnMain", []), previous["branchesAt"]
+        stranded = previous.get("strandedPushed", [])
 
     report = {
         "at": now,
@@ -309,6 +351,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         "wedgeFiled": filed,
         "branchesAt": branches_at,
         "branchesOnMain": merged,
+        "strandedPushed": stranded,
     }
     save(REPORT_FILE, report, api.dry_run)
     return report

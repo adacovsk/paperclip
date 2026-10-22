@@ -161,7 +161,7 @@ done
 3. its linked `AA-nnnn` task is still open but non-advancing — **no `activeRun` and no live `executionRunId`** (cross-reference via `GET /issues?q=`), **and**
 4. `updatedAt` older than one fire interval.
 
-Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, like §7's finished-task branches, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. (Contrast §7 cases 1–2, which are *remote* branches whose commits are provably on `origin/main`.)
+Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, like §7's finished-task branches, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. A task branch untouched for 14 days is pushed by the mechanical sweep instead (`strandedPushed` in the report), since a push only adds a copy; report those entries, and any with `pushed: false`. (Contrast §7 cases 1–2, which are *remote* branches whose commits are provably on `origin/main`.)
 ### 8. Report
 
 Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
