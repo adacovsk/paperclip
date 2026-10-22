@@ -109,10 +109,12 @@ written in the same PATCH as a `Held:` comment that names what releases it:
 
 - `Held: until <id> merges`
 - `Held: until <id> opens its PR`
-- `Held: operator`
+- `Held: planner` — not `blocked`: `todo`, assigned to the Planner, whose only wake is that assignment
+- `Held: operator` — paperclip source fixes, rules/IP rulings, money/credentials/destructive remote changes only
 - `Held: worktree allocation failed`
 
-The Dispatcher releases the first two once their condition holds, and never
+The Dispatcher releases the first two once their condition holds, hands a
+`blocked` `Held: planner` task to the Planner, and never
 re-releases a hold the Coordinator wrote back. `dispatcher/hold_of_record.py` prints <!-- privacy-ok: the pipeline's own scripts, not project source -->
 the hold currently in force.
 
