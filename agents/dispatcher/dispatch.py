@@ -150,11 +150,13 @@ class GitState:
     #: Deleted paths origin/main split into a module directory (`x.rs` -> `x/`).
     #: The branch's hunks have a home there, so a Worker ports them.
     split_on_main: tuple[str, ...] = ()
+    #: Committer time of HEAD, to tell rework committed after a ruling from none.
+    head_at: float = 0.0
 
 
 @dataclass(frozen=True)
 class Decision:
-    kind: str  # "review" | "verify" | "reverify" | "resume-review" | "close-rebase" | "rebase" | "handoff" | "skip"
+    kind: str  # "review" | "verify" | "reverify" | "resume-review" | "close-rebase" | "rebase" | "rework" | "handoff" | "skip"
     reason: str
 
 
@@ -324,10 +326,28 @@ def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | Non
         if label == "data-only":
             return Decision("handoff", "Reviewer done, data-only with nothing cargo reads")
         return Decision("handoff", "Reviewer done, no label and nothing cargo reads")
+    if stage == "verify" and last["status"] == "cancelled" and last is stages[-1][1]:
+        return after_cancelled_verify(last, git)
     if stage == "verify":
         # Landing and the merge sweep own everything after a verify.
         return Decision("skip", "verify finished; landing owns it")
     return Decision("handoff", f"last stage {stage} ended {last['status']}")
+
+
+def after_cancelled_verify(verify: dict, git: GitState) -> Decision:
+    """A cancelled final Verify is a ruling sent back for rework, not a landing.
+
+    Every path that cancels a Verify as superseded leaves a newer stage after it
+    (a rebase, a fresh Verify) or closes the parent, so a cancelled Verify that is
+    still the newest stage was cancelled by hand. Read as "landing owns it", the
+    parent sat `in_review` with no run and no sweep ever looked at it again.
+    """
+    cancelled = iso_ts(verify.get("cancelledAt") or verify["updatedAt"])
+    if git.head_at <= cancelled:
+        return Decision("rework", "verify cancelled; the Worker has not committed since")
+    if git.dirty:
+        return Decision("handoff", "verify cancelled; the Worker's rework left a dirty tree")
+    return Decision("review", "verify cancelled; the Worker committed rework since")
 
 
 def held_until(comment: str) -> tuple[str, str] | None:
@@ -611,6 +631,7 @@ def git_state(project: Path, identifier: str) -> GitState:
         dirty = bool(git(wt, "status", "--porcelain").strip())
         ahead = int(git(wt, "rev-list", "--count", "origin/main..HEAD").strip() or 0)
         head = git(wt, "rev-parse", "HEAD").strip()
+        head_at = float(git(wt, "log", "-1", "--format=%ct", "HEAD").strip() or 0)
         changed = tuple(git(wt, "diff", "--name-only", "origin/main...HEAD").split())
         merge = subprocess.run(
             ["git", "-C", str(wt), "merge-tree", "--write-tree", "--name-only", "origin/main", "HEAD"],
@@ -623,7 +644,7 @@ def git_state(project: Path, identifier: str) -> GitState:
     return GitState(
         exists=True, dirty=dirty, ahead=ahead, head=head, changed=changed,
         merges_clean=merge.returncode == 0, conflicts=conflicts,
-        deleted_on_main=len(split) < len(deleted), split_on_main=split,
+        deleted_on_main=len(split) < len(deleted), split_on_main=split, head_at=head_at,
     )
 
 
@@ -979,6 +1000,7 @@ def sweep(api: Api, project: Path) -> None:
     # merge away from landing, and the Coordinator promotes only into what is left.
     rebase_slots = max(0, slots - in_flight)
     handed = load_state("handoffs.json")
+    reworks = load_state("reworks.json")
     handoff: list[dict] = []
     seen: dict[str, str] = {}
 
@@ -1082,6 +1104,24 @@ def sweep(api: Api, project: Path) -> None:
                 )
             if decision.kind == "reverify":
                 create_verify(api, agents, parent, rebase, git_st, take_capacity())
+        elif decision.kind == "rework":
+            verify = stages[-1][1]
+            if reworks.get(parent["id"]) == verify["id"]:
+                # Woken once for this ruling and came back with no commit.
+                hand_off(parent, handoff_signature(parent, children, git_st),
+                         "verify cancelled for rework; the Worker's run committed nothing")
+                continue
+            reworks[parent["id"]] = verify["id"]
+            ruling = (latest_body(api, verify).splitlines() or ["(no comment)"])[0]
+            # A wake fires on an assignee change: through null and back.
+            api.set_status(
+                parent, {"status": "todo", "assigneeAgentId": None},
+                f"{verify['identifier']} was cancelled with no Worker commit since. "
+                f"Back to the Worker for the rework it asked for:\n\n> {ruling}",
+                f"rework  {parent['identifier']}: verify {verify['identifier']} cancelled; wake the Worker",
+            )
+            api.write("PATCH", f"/issues/{parent['id']}", {"assigneeAgentId": agents["Worker"]},
+                      f"  reassign {parent['identifier']} to the Worker")
         elif decision.kind == "handoff":
             hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
 
@@ -1138,6 +1178,7 @@ def sweep(api: Api, project: Path) -> None:
                 save_state("refill.json", {"at": time.time()}, False)
     # Forget tasks that left the hand-off set so a later return re-notifies.
     save_state("handoffs.json", seen, api.dry_run)
+    save_state("reworks.json", reworks, api.dry_run)
 
 
 def close_landed_verifies(api: Api, project: Path, pr_heads: dict[str, str]) -> None:
@@ -1184,10 +1225,13 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
     markers = base_red_markers()
     by_task = {m.task: m for m in markers}
     owners = [agents["Architect"], *([agents["Dispatcher"]] if agents.get("Dispatcher") else [])]
+    live = api.get(f"/companies/{api.company}/live-runs") or []
     # A main-repair has no parent: it verifies its own `main`-rooted branch, so
-    # its sentinel is keyed by its own identifier.
+    # its sentinel is keyed by its own identifier. A `blocked` Verify is read too:
+    # a relaunch can leave it parked while the build is out, and nothing else
+    # would ever read the result that build writes.
     verifies = [
-        v for owner in owners for v in api.issues(status="in_review", assigneeAgentId=owner)
+        v for owner in owners for v in api.issues(status="in_review,blocked", assigneeAgentId=owner)
         if stage_of(v) == "verify" and (v.get("parentId") or is_main_repair(v))
     ]
     for verify in verifies:
@@ -1210,8 +1254,14 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         key = f"{code}|{mtime}"
         if state.get(verify["identifier"]) == key:
             continue
-        if seeding or verify.get("executionRunId"):
-            state[verify["identifier"]] = key  # a live Architect run is already reading it
+        if verify["status"] == "blocked" and not result_after_park(verify, mtime):
+            continue  # its block comment already answers this result
+        if seeding:
+            state[verify["identifier"]] = key
+            continue
+        if being_read(verify, live):
+            # Not recorded: if that run parks the Verify without acting on the
+            # result, the next sweep routes it.
             continue
         try:
             verdict = (VERIFY_DIR / f"{parent}.cloud.verdict").read_text()
@@ -1272,6 +1322,8 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
                 "No model run was spent on it.",
                 f"sentinel {verify['identifier']}: base-red ({why})",
             )
+        elif action == "wake" and verify["status"] == "blocked":
+            rewake_parked(api, agents, verify, f"a verify result arrived after it was parked ({why})")
         elif action == "wake" and mine:
             hand_to_architect(api, agents, verify, f"its verify result needs a model ({why})")
         elif action == "wake":
@@ -1335,6 +1387,34 @@ def launch_verify(api: Api, agents: dict, verify: dict, parent: dict) -> bool:
         ((out.stdout.strip().splitlines() or [f"exit {out.returncode}"])[-1])
     hand_to_architect(api, agents, verify, f"the Dispatcher could not launch it (`{said}`)")
     return False
+
+
+def being_read(verify: dict, live_runs: list[dict]) -> bool:
+    """Whether a live run is on this Verify now.
+
+    `executionRunId` alone is not evidence: it outlives its run, and reading its
+    presence as "a run is reading the result" recorded results nobody ever read.
+    """
+    return bool(
+        verify.get("activeRun")
+        or any(r.get("issueId") == verify["id"] or r["id"] == verify.get("executionRunId") for r in live_runs)
+    )
+
+
+def result_after_park(verify: dict, mtime: float) -> bool:
+    """Whether a `blocked` Verify's sentinel was written after it was last touched."""
+    return mtime > iso_ts(verify["updatedAt"])
+
+
+def rewake_parked(api: Api, agents: dict, verify: dict, why: str) -> None:
+    """Return a parked Verify to the Architect. A wake fires on an assignee change."""
+    api.set_status(
+        verify, {"status": "in_review", "assigneeAgentId": None},
+        f"Handing to the Architect: {why}.",
+        f"verify  {verify['identifier']}: unpark",
+    )
+    api.write("PATCH", f"/issues/{verify['id']}", {"assigneeAgentId": agents["Architect"]},
+              f"  reassign {verify['identifier']} to the Architect")
 
 
 def hand_to_architect(api: Api, agents: dict, verify: dict, why: str) -> None:

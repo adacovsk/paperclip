@@ -14,7 +14,7 @@ dispatch = importlib.util.module_from_spec(_spec)
 sys.modules["dispatch"] = dispatch  # dataclasses resolve annotations through sys.modules
 _spec.loader.exec_module(dispatch)
 
-GitState, decide = dispatch.GitState, dispatch.decide
+GitState, decide, iso_ts = dispatch.GitState, dispatch.decide, dispatch.iso_ts
 CLEAN = GitState(exists=True, ahead=2, head="a" * 40, changed=("src/x.rs",), merges_clean=True)
 
 
@@ -90,6 +90,25 @@ class ReviewerStage(unittest.TestCase):
 
     def test_finished_verify_is_left_to_landing(self):
         stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        self.assertEqual(decide(parent(), stages, CLEAN).kind, "skip")
+
+    def cancelled_verify(self, at="2026-10-18T00:58:00Z"):
+        return [self.review, {**child("Verify: T-1", "cancelled", "2", "verify"), "cancelledAt": at}]
+
+    def test_a_cancelled_final_verify_sends_the_parent_back_for_rework(self):
+        git = GitState(exists=True, ahead=2, merges_clean=True, head_at=iso_ts("2026-10-17T00:00:00Z"))
+        self.assertEqual(decide(parent(), self.cancelled_verify(), git).kind, "rework")
+
+    def test_rework_committed_after_the_cancel_gets_a_review(self):
+        git = GitState(exists=True, ahead=3, merges_clean=True, head_at=iso_ts("2026-10-19T00:00:00Z"))
+        self.assertEqual(decide(parent(), self.cancelled_verify(), git).kind, "review")
+
+    def test_rework_on_a_dirty_tree_is_handed_off(self):
+        git = GitState(exists=True, dirty=True, ahead=3, head_at=iso_ts("2026-10-19T00:00:00Z"))
+        self.assertEqual(decide(parent(), self.cancelled_verify(), git).kind, "handoff")
+
+    def test_a_cancelled_verify_followed_by_another_stage_is_not_a_ruling(self):
+        stages = [*self.cancelled_verify(), child("Verify: T-1", "done", "3", "verify")]
         self.assertEqual(decide(parent(), stages, CLEAN).kind, "skip")
 
     def test_ci_fix_key_counts_as_a_verify(self):
@@ -666,6 +685,44 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual([m for _, m in self.relaunched], ["retry", "retry"])
 
 
+class SentinelLiveness(unittest.TestCase):
+    """route_sentinels: a result is recorded only once something acts on it."""
+
+    MAIN = SentinelSweep.MAIN
+    setUp, tearDown, sentinel = SentinelSweep.setUp, SentinelSweep.tearDown, SentinelSweep.sentinel
+
+    VERIFY = {"id": "v1", "identifier": "V-1", "parentId": "p1", "title": "Verify: T-1 x",
+              "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": "arch",
+              "updatedAt": "2026-01-01T00:00:00Z"}
+
+    def route(self, verify, live=()):
+        api = SweepApi(issues=[verify], live=live)
+        dispatch.route_sentinels(api, {"Architect": "arch"}, Path(self.tmp.name))
+        return api.writes
+
+    def test_a_dead_execution_run_does_not_swallow_the_result(self):
+        self.sentinel("1")
+        writes = self.route({**self.VERIFY, "executionRunId": "gone"})
+        self.assertEqual([w[1] for w in writes], ["/agents/arch/wakeup"])
+
+    def test_a_live_run_on_the_verify_leaves_the_result_unrecorded(self):
+        self.sentinel("1")
+        self.assertEqual(self.route({**self.VERIFY, "executionRunId": "r1"}, live=[{"id": "r1", "issueId": "v1"}]), [])
+        # The run parked it without acting: the next sweep, with no live run, routes it.
+        self.assertEqual([w[1] for w in self.route(self.VERIFY)], ["/agents/arch/wakeup"])
+
+    def test_a_result_written_after_a_verify_was_parked_unparks_it(self):
+        self.sentinel("1")
+        writes = self.route({**self.VERIFY, "status": "blocked"})
+        self.assertEqual(writes, [("PATCH", "v1", {"status": "in_review", "assigneeAgentId": None}),
+                                  ("PATCH", "/issues/v1", {"assigneeAgentId": "arch"})])
+
+    def test_a_parked_verify_whose_block_comment_is_newer_is_left(self):
+        self.sentinel("1")
+        later = {**self.VERIFY, "status": "blocked", "updatedAt": "2999-01-01T00:00:00Z"}
+        self.assertEqual(self.route(later), [])
+
+
 class MainRepairSentinel(SentinelSweep):
     """A parentless `ci-fix:` main-repair: its sentinel is keyed by its own identifier."""
 
@@ -896,11 +953,13 @@ class CloudLaneFlag(unittest.TestCase):
 
 class SweepApi:
     dry_run = False
+    company = "c"
 
-    def __init__(self, owner="arch", issues=None, parent=None):
+    def __init__(self, owner="arch", issues=None, parent=None, live=()):
         self.writes = []
         self.owner = owner
         self.listed = issues
+        self.live = list(live)
         self.parent = parent or {"identifier": "T-1", "title": "Add a feat", "labels": []}
 
     def issues(self, **query):
@@ -912,6 +971,10 @@ class SweepApi:
                  "dedupeKey": "verify", "status": "in_review", "assigneeAgentId": self.owner}]
 
     def get(self, path):
+        if path.endswith("/live-runs"):
+            return self.live
+        if path.endswith("/comments"):
+            return []
         return self.parent
 
     def write(self, method, path, body, what):
