@@ -157,6 +157,8 @@ if [ -z "$prs" ]; then
     [ -z "$note" ] || echo "- note: $note"
     if grep -qE '^schemas: *proved-empty' <<< "$verdict"; then
       echo "- [skip-schema-regen] the cloud verify regenerated schemas and the diff was empty"
+    elif [ -z "$verdict" ] && [ "$(cat "$S/$task.schemas" 2>/dev/null)" = proved-empty ]; then
+      echo "- [skip-schema-regen] the local build regenerated schemas and the diff was empty"
     fi
   } >> "$B"
   body_check "$B" >/dev/null 2>&1 || model "check_pr_body.py rejected the generated body"
@@ -171,7 +173,7 @@ url="$("$GH" pr list --head "$branch" --state open --json url -q '.[0].url // em
 
 # The Dispatcher closes this Verify when the open PR carries this head.
 echo "$head" > "$S/$task.landed"
-rm -f "$S/$task.exit" "$S/$task.base" "$S/$task.head" "$S/$task.base-red" "$S/$task.freshness" "$S/$task.pid" "$S/$task".cloud.*
+rm -f "$S/$task.exit" "$S/$task.base" "$S/$task.head" "$S/$task.schemas" "$S/$task.base-red" "$S/$task.freshness" "$S/$task.pid" "$S/$task".cloud.*
 git for-each-ref --format='%(refname)' "refs/heads/cloud-verify/$task/" | xargs -r -n1 git update-ref -d
 [ "$verify" = "$task" ] || rm -f "$S/$verify".{pid,exit,base,log}
 say "PR confirmed: $url"

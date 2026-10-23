@@ -4,7 +4,8 @@
 # Moves the cargo half of a verify onto an Anthropic-managed cloud VM: clippy and
 # tests, fixes inside the task's own files (plus the out-of-scope errors the
 # task's own diff caused, declared and bounded — see `check_out_of_scope`), the
-# non-Rust guard suite, and schema regeneration last. The Architect's side of the
+# non-Rust guard suite, and schema regeneration before the tests (lib tests read
+# the committed schemas, so they must see the ones that land). The Architect's side of the
 # lane is INSTRUCTIONS.md §Cloud overflow lane; cloud-session.sh deletes a
 # finished session.
 #
@@ -191,10 +192,20 @@ breaks these rules is discarded.
 
 ${sync_text}
 
-2. Gate commands. Record each exit status.
+2. Gate commands, in this order. Record each exit status.
      cargo clippy --all-targets -- -D warnings -A dead-code -A unused-imports
+     schemas (below)
      cargo test --lib
      cargo test --test <name>                (for each tests/<name>.rs among the task's files)
+   The schemas gate:
+     git diff --name-only \$BASE HEAD | python3 scripts/check_schema_regen.py
+   Exit 0 -> schemas: not-relevant. Otherwise run as ONE chained command:
+     cargo run --bin generate_schemas && git diff --exit-code assets/schemas/
+   Non-empty diff -> commit only assets/schemas/ ('chore: regenerate schemas')
+   -> schemas: regenerated. Empty -> schemas: proved-empty. The generator
+   failing is a red gate. It runs BEFORE the tests because lib tests read the
+   committed assets/schemas/ files: tests run first check schemas that will not
+   land, and a regeneration after them lands schemas no test has read.
    No semaphore, no CARGO_INCREMENTAL, no job or codegen-unit limits.
    On 'No space left on device': cargo clean -p rust-bevy-rpg, then re-run.
 
@@ -237,14 +248,11 @@ ${sync_text}
 4. Non-Rust guards:  PYTHONPATH=scripts bash scripts/verify.sh
    Fix what it flags in the task's files, commit, re-run. Same limits.
 
-5. LAST, after your final fix commit:
-     git diff --name-only \$BASE HEAD | python3 scripts/check_schema_regen.py
-   Exit 0 -> schemas: not-relevant. Exit 1 -> run as ONE chained command:
-     cargo run --bin generate_schemas && git diff --exit-code assets/schemas/
-   Non-empty diff -> commit only assets/schemas/ ('chore: regenerate schemas')
-   and run the chain again until empty -> schemas: regenerated. Empty the first
-   time -> schemas: proved-empty. The generator failing -> result: FAIL.
-   No fix commit may follow this step.
+5. LAST: if any commit since your last step-2 run touched a .rs file (a step-4
+   fix), run step 2 again, so the schemas and the tests you report are the
+   tree you publish. Report schemas: from the last step-2 run. A schemas
+   result of regenerated on any run stays regenerated. No commit may follow
+   this step.
 
 6. Write the verdict text to a file:
 
