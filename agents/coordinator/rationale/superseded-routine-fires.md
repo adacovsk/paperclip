@@ -16,3 +16,9 @@ reasoning alone, without probing it.
 
 Status is the load-bearing part of that close. A comment is optional and not always free: on a
 deep queue each one costs another wake into the queue being drained.
+
+A fire that does run to completion closes its own task at exit (Run step 10), so step 0a should
+normally find nothing. It matches on `originKind` and assignee rather than title or `in_progress`
+status because both of those drift: the routine's task title is set on the routine, not here, and a
+fire that never checks out its task leaves it `todo`. Matching on either finds nothing while open
+fires accumulate.
