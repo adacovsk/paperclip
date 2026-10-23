@@ -10,10 +10,20 @@
 # instructions call it, so there is one copy of the chain and both lanes need no
 # model to start a build.
 #
-# The chain is unchanged: it writes `<task>.pid`, rebases (or merges) onto
-# origin/main, records `<task>.base` and the built `<task>.head`, runs clippy and
-# `cargo test --lib` under cargo-sem.sh, writes `<task>.exit` and fires the
-# sentinel callback. Its codes are the Architect's sentinel state machine:
+# The chain writes `<task>.pid`, rebases (or merges) onto origin/main, records
+# `<task>.base` and the built `<task>.head`, runs clippy, regenerates the schemas,
+# runs `cargo test --lib` under cargo-sem.sh, writes `<task>.exit` and fires the
+# sentinel callback.
+#
+# SCHEMAS BEFORE THE TESTS, NOT AFTER. Lib tests read the committed
+# `assets/schemas/` files (every generated object schema must forbid unknown
+# keys), so a test run before regeneration checks schemas that will not land,
+# and a regeneration after it lands schemas no test has read. When
+# `check_schema_regen.py` calls the diff schema-relevant, the chain runs
+# `generate_schemas` as its own slot, commits any change as `Stage: architect`
+# and moves `<task>.head` to that commit, so the tests build the tree that
+# lands. `<task>.schemas` records not-relevant, regenerated or proved-empty;
+# §6.5 reads it instead of regenerating. Its codes are the Architect's sentinel state machine:
 # 96 env broken, 97 worktree missing, 98 base not current, 99 signalled,
 # 137 OOM-killed, else cargo's own.
 #
@@ -54,7 +64,7 @@ SEM="${LOCAL_VERIFY_SEM:-$HERE/cargo-sem.sh}"
 CALLBACK="${LOCAL_VERIFY_CALLBACK:-$HERE/sentinel-callback.sh}"
 mkdir -p "$S"
 
-BODY='S="'"$S"'"; mkdir -p "$S"; echo verifyrun-@TASK@; echo $$ > "$S/@TASK@.pid"; rm -f "$S/@TASK@.exit" "$S/@TASK@.base-red"; _sentinel(){ [ -f "$S/@TASK@.exit" ] || echo 99 > "$S/@TASK@.exit"; }; _killed(){ echo "KILLED: wrapper took a signal before cargo reported — inconclusive, relaunch"; _sentinel; exit 99; }; trap _sentinel EXIT; trap _killed HUP INT TERM; A="@VERIFY@"; [ -n "$A" ] && [ "$A" != "@TASK@" ] && for x in pid exit base log; do ln -sfn "$S/@TASK@.$x" "$S/$A.$x"; done; . "$HOME/.cargo/env" 2>/dev/null || true; export PATH="$HOME/.local/bin:$PATH"; unset CARGO_TARGET_DIR; command -v cargo >/dev/null && command -v sccache >/dev/null || { echo "ENV BROKEN: cargo/sccache still not on PATH after bootstrap — this is NOT a build failure, do not edit Rust; escalate to operator"; echo 96 > "$S/@TASK@.exit"; exit 96; }; cd "@PROJECT@/.paperclip/worktrees/@TASK@" || { echo "ENV BROKEN: worktree missing or PAPERCLIP_PROJECT unset"; echo 97 > "$S/@TASK@.exit"; exit 97; }; git fetch -q origin main || { echo "STALE BASE: git fetch origin main failed — cannot confirm the build sits on current main"; echo 98 > "$S/@TASK@.exit"; exit 98; }; { ! git ls-remote --exit-code --heads origin "task/@TASK@" >/dev/null 2>&1 && git rebase origin/main >/dev/null 2>&1; } || { git rebase --abort >/dev/null 2>&1; git merge --no-edit origin/main >/dev/null 2>&1 || { git merge --abort >/dev/null 2>&1; echo "STALE BASE: neither rebase nor merge onto current origin/main succeeds — operator must resolve"; echo 98 > "$S/@TASK@.exit"; exit 98; }; echo "NOTE: branch already on origin, or the rebase replay conflicted; verifying on a merge commit"; }; git rev-parse origin/main > "$S/@TASK@.base"; git rev-parse HEAD > "$S/@TASK@.head"; sccache --start-server >/dev/null 2>&1 || true; SEM="@SEM@"; L="$S/@TASK@.log"; LC0=$(wc -l < "$L" 2>/dev/null || echo 0); "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings -A dead-code -A unused-imports && CARGO_SEM_CGU_DIV=2 "$SEM" env CARGO_INCREMENTAL=0 cargo test --lib; rc=$?; if [ "$rc" -ne 0 ] && tail -n +$((LC0+1)) "$L" 2>/dev/null | grep -qE "signal: (9|15)"; then rc=137; fi; echo $rc > "$S/@TASK@.exit"; "@CALLBACK@" "@VERIFY@"'
+BODY='S="'"$S"'"; mkdir -p "$S"; echo verifyrun-@TASK@; echo $$ > "$S/@TASK@.pid"; rm -f "$S/@TASK@.exit" "$S/@TASK@.base-red" "$S/@TASK@.schemas"; _sentinel(){ [ -f "$S/@TASK@.exit" ] || echo 99 > "$S/@TASK@.exit"; }; _killed(){ echo "KILLED: wrapper took a signal before cargo reported — inconclusive, relaunch"; _sentinel; exit 99; }; _schemas(){ if git diff --name-only "$(cat "$S/@TASK@.base")" HEAD | python3 scripts/check_schema_regen.py >/dev/null 2>&1; then echo not-relevant > "$S/@TASK@.schemas"; return 0; fi; "$SEM" env CARGO_INCREMENTAL=0 cargo run --bin generate_schemas || return; if [ -z "$(git status --porcelain -- assets/schemas/)" ]; then echo proved-empty > "$S/@TASK@.schemas"; return 0; fi; git add -- assets/schemas/ && git commit -q -m "chore: regenerate schemas" -m "Stage: architect" && git rev-parse HEAD > "$S/@TASK@.head" && echo regenerated > "$S/@TASK@.schemas"; }; trap _sentinel EXIT; trap _killed HUP INT TERM; A="@VERIFY@"; [ -n "$A" ] && [ "$A" != "@TASK@" ] && for x in pid exit base log; do ln -sfn "$S/@TASK@.$x" "$S/$A.$x"; done; . "$HOME/.cargo/env" 2>/dev/null || true; export PATH="$HOME/.local/bin:$PATH"; unset CARGO_TARGET_DIR; command -v cargo >/dev/null && command -v sccache >/dev/null || { echo "ENV BROKEN: cargo/sccache still not on PATH after bootstrap — this is NOT a build failure, do not edit Rust; escalate to operator"; echo 96 > "$S/@TASK@.exit"; exit 96; }; cd "@PROJECT@/.paperclip/worktrees/@TASK@" || { echo "ENV BROKEN: worktree missing or PAPERCLIP_PROJECT unset"; echo 97 > "$S/@TASK@.exit"; exit 97; }; git fetch -q origin main || { echo "STALE BASE: git fetch origin main failed — cannot confirm the build sits on current main"; echo 98 > "$S/@TASK@.exit"; exit 98; }; { ! git ls-remote --exit-code --heads origin "task/@TASK@" >/dev/null 2>&1 && git rebase origin/main >/dev/null 2>&1; } || { git rebase --abort >/dev/null 2>&1; git merge --no-edit origin/main >/dev/null 2>&1 || { git merge --abort >/dev/null 2>&1; echo "STALE BASE: neither rebase nor merge onto current origin/main succeeds — operator must resolve"; echo 98 > "$S/@TASK@.exit"; exit 98; }; echo "NOTE: branch already on origin, or the rebase replay conflicted; verifying on a merge commit"; }; git rev-parse origin/main > "$S/@TASK@.base"; git rev-parse HEAD > "$S/@TASK@.head"; sccache --start-server >/dev/null 2>&1 || true; SEM="@SEM@"; L="$S/@TASK@.log"; LC0=$(wc -l < "$L" 2>/dev/null || echo 0); "$SEM" env CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings -A dead-code -A unused-imports && _schemas && CARGO_SEM_CGU_DIV=2 "$SEM" env CARGO_INCREMENTAL=0 cargo test --lib; rc=$?; if [ "$rc" -ne 0 ] && tail -n +$((LC0+1)) "$L" 2>/dev/null | grep -qE "signal: (9|15)"; then rc=137; fi; echo $rc > "$S/@TASK@.exit"; "@CALLBACK@" "@VERIFY@"'
 BODY="${BODY//@TASK@/$task}"
 BODY="${BODY//@VERIFY@/$verify}"
 BODY="${BODY//@PROJECT@/$PAPERCLIP_PROJECT}"
