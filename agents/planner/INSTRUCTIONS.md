@@ -50,6 +50,7 @@ Leaving fill undone is a normal fire (name it in the summary so the next fire st
    - **Leftover commits after a merged PR** → land (file a follow-up task whose body names the branch as its source, then `cancelled` citing it) or drop (`cancelled` with tip SHA and diffstat).
    - **A hold naming a roadmap section, not a task** → file the section as a task and rewrite the hold `Held: until <task> merges`, or `cancelled`.
 
+   **Every comment you post on a held task opens with the `Held:` line now in force, verbatim, on its own first line** — re-hold, decision or anything else. The Dispatcher reads only the newest comment and only when it starts with `Held:`, so a hold followed by a non-`Held:` comment, or written mid-comment, is never released or routed. Fire summaries go on your own routine task, never on a held one.
    Never leave one `Held: planner` again or bounce it to the operator unless it is one of the three operator classes (paperclip source, a rules/IP ruling, money/credentials/destructive remote change) — then `blocked`, unassigned, `Held: operator — <the ruling needed>`. A re-held `blocked` task carries no assignee, or a later assignment fires a wake that cannot succeed.
 2. **Read `docs/ROADMAP.md`** — the current phase and its open bullets.
 3. **Reviewer patterns** — completed review tasks' `## Patterns`. Recurring → roadmap items.
