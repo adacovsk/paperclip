@@ -112,7 +112,10 @@ LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
 #: Anywhere in the body, not only at a line start: a task body often carries it
 #: mid-line and in markdown emphasis (`**Chain: 3 steps**`), and a chain read as
 #: an ordinary task gets its Review after step 1.
-CHAIN_STEPS = re.compile(r"\bChain:\s*\d+\s*steps\b")
+CHAIN_STEPS = re.compile(r"\bChain:\s*(\d+)\s*steps\b")
+#: Decisions that start a stage over the branch as it stands, which a chain must
+#: not get before every step is committed: its Review and Verify run once over all.
+STAGE_STARTS = ("review", "verify", "reverify", "resume-review")
 #: A hold names its own release condition. `merges`: the task builds on the
 #: blocker's code, which is not on main until it lands. `opens its PR`: the
 #: blocker is being written on the same files (or is the previous link of a
@@ -172,6 +175,8 @@ class GitState:
     split_on_main: tuple[str, ...] = ()
     #: Committer time of HEAD, to tell rework committed after a ruling from none.
     head_at: float = 0.0
+    #: Distinct `Chain-step:` trailer values on origin/main..HEAD.
+    chain_steps: int = 0
 
 
 @dataclass(frozen=True)
@@ -285,8 +290,20 @@ def needs_rebase(parent: dict, stages: list[tuple[str, dict]], git: GitState) ->
 def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | None = None) -> Decision:
     """One parent -> what its next stage is.
 
-    Pure, so the signal table is testable without an API or a worktree.
+    Pure, so the signal table is testable without an API or a worktree. A chain
+    with steps left is handed to the Coordinator, which resumes the Worker, on
+    every path that would start a stage: not only a first Review, but also the
+    Review after a cancelled Verify, where the chain was otherwise verified
+    with a step still missing.
     """
+    decision = next_stage(parent, children, git, pr_head)
+    m = CHAIN_STEPS.search(parent.get("description") or "")
+    if m and decision.kind in STAGE_STARTS and git.chain_steps < int(m.group(1)):
+        return Decision("handoff", f"chain task, {git.chain_steps} of {m.group(1)} steps committed")
+    return decision
+
+
+def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str | None) -> Decision:
     stages = ordered_stages(children)
     if parent["status"] in ("done", "cancelled"):
         return Decision("skip", f"parent is {parent['status']}")
@@ -657,6 +674,7 @@ def git_state(project: Path, identifier: str) -> GitState:
         ahead = int(git(wt, "rev-list", "--count", "origin/main..HEAD").strip() or 0)
         head = git(wt, "rev-parse", "HEAD").strip()
         head_at = float(git(wt, "log", "-1", "--format=%ct", "HEAD").strip() or 0)
+        steps = git(wt, "log", "origin/main..HEAD", "--format=%(trailers:key=Chain-step,valueonly)")
         changed = tuple(git(wt, "diff", "--name-only", "origin/main...HEAD").split())
         merge = subprocess.run(
             ["git", "-C", str(wt), "merge-tree", "--write-tree", "--name-only", "origin/main", "HEAD"],
@@ -670,6 +688,7 @@ def git_state(project: Path, identifier: str) -> GitState:
         exists=True, dirty=dirty, ahead=ahead, head=head, changed=changed,
         merges_clean=merge.returncode == 0, conflicts=conflicts,
         deleted_on_main=len(split) < len(deleted), split_on_main=split, head_at=head_at,
+        chain_steps=len({line.strip() for line in steps.splitlines() if line.strip()}),
     )
 
 
