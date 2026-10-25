@@ -50,6 +50,11 @@ BRANCH_SCAN_SECONDS = float(os.environ.get("FACILITATOR_BRANCH_SCAN_SECONDS", 6 
 #: younger branches are the normal mid-flight queue, which only the Architect pushes.
 STRANDED_AGE = float(os.environ.get("FACILITATOR_STRANDED_AGE_SECONDS", 14 * 24 * 3600))
 STRANDED_GLOB = "refs/heads/task/AA-*"
+#: reap.py's cadence. It runs detached: its first pass over a long backlog takes
+#: longer than the Dispatcher's run is allowed to.
+REAP_SCAN_SECONDS = float(os.environ.get("FACILITATOR_REAP_SCAN_SECONDS", 6 * 3600))
+REAP_LOG = STATE_DIR / "reap.log"
+REAP_PID = STATE_DIR / "reap.pid"
 WEDGE_TITLE = "[class:wedged-dispatcher] "
 STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
 STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
@@ -294,6 +299,36 @@ def stranded_branches(project: Path, dry_run: bool, now: float) -> list[dict]:
     return found
 
 
+# --------------------------------------------------------------------------- reap
+
+
+def reap_running() -> bool:
+    try:
+        os.kill(int(REAP_PID.read_text()), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def launch_reap(dry_run: bool) -> bool:
+    """Start reap.py detached, unless one is still running. It acts only under REAP_ACT=1.
+
+    Off by default for the same reason §7's deletion is: it acts on the shared remote
+    and the cloud account with no reader in the loop, so turning it on is the
+    operator's call. Without it, reap.log is the report of what it would do.
+    """
+    if dry_run or reap_running():
+        return False
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    args = ["python3", str(Path(__file__).with_name("reap.py"))]
+    if os.environ.get("REAP_ACT") == "1":
+        args.append("--act")
+    with open(REAP_LOG, "w") as log:
+        proc = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    REAP_PID.write_text(str(proc.pid))
+    return True
+
+
 # --------------------------------------------------------------------------- driver
 
 
@@ -341,6 +376,10 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         merged, branches_at = previous.get("branchesOnMain", []), previous["branchesAt"]
         stranded = previous.get("strandedPushed", [])
 
+    reap_at = previous.get("reapAt", 0)
+    if now - reap_at >= REAP_SCAN_SECONDS and launch_reap(api.dry_run):
+        reap_at = now
+
     report = {
         "at": now,
         "toggled": [i["identifier"] for i in due],
@@ -352,6 +391,8 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         "branchesAt": branches_at,
         "branchesOnMain": merged,
         "strandedPushed": stranded,
+        "reapAt": reap_at,
+        "reapLog": str(REAP_LOG),
     }
     save(REPORT_FILE, report, api.dry_run)
     return report

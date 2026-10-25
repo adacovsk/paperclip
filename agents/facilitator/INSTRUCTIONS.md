@@ -162,6 +162,10 @@ done
 4. `updatedAt` older than one fire interval.
 
 Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, like §7's finished-task branches, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. A task branch untouched for 14 days is pushed by the mechanical sweep instead (`strandedPushed` in the report), since a push only adds a copy; report those entries, and any with `pushed: false`. (Contrast §7 cases 1–2, which are *remote* branches whose commits are provably on `origin/main`.)
+
+### 7c. Reap finished tasks' leftovers
+
+`agents/facilitator/reap.py` <!-- privacy-ok: paperclip's own script, not a project file --> clears what a task leaves behind once it is `done` or `cancelled`. The mechanical sweep launches it detached every 6h. It acts only when `REAP_ACT=1` is set in the Dispatcher's environment; without that, it writes what it would do to `reapLog` in the report. It covers local worktrees and branches (a task branch whose commits exist nowhere else is pushed first), `cloud-verify/*` local and remote refs, remote task branches 7 days after the task finished, merged and clean `op/*` branches in both repos, completed cloud sessions, verify cache files, and cloud watchers still waiting on a finished task. It never touches a live task, an open PR, a running session or a dirty tree. Your part: read `reapLog`. Its `KEPT` lines are what it refused to delete, mostly worktrees with uncommitted changes. Report them, because only the operator can decide what that work is. Also report any `FAIL` or `SKIP` line.
 ### 8. Report
 
 Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
