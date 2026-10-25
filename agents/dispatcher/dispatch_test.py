@@ -41,9 +41,9 @@ class WorkerStage(unittest.TestCase):
     def test_chain_is_handed_off(self):
         self.assertEqual(decide(parent(description="Chain: 3 steps\n"), [], CLEAN).kind, "handoff")
 
-    def test_chain_inside_a_roadmap_bullet_is_handed_off(self):
-        bullet = "- **§4.1206** — `needs-build`. **Give it a pick.** **Chain: 3 steps** (see `docs/roadmap/4.1206.md`).\n"
-        self.assertEqual(decide(parent(description=bullet), [], CLEAN).kind, "handoff")
+    def test_chain_mid_line_in_emphasis_is_handed_off(self):
+        body = "- **Add the feature.** **Chain: 3 steps** (see the plan).\n"
+        self.assertEqual(decide(parent(description=body), [], CLEAN).kind, "handoff")
 
     def test_missing_worktree_is_handed_off(self):
         self.assertEqual(decide(parent(), [], GitState(exists=False)).kind, "handoff")
@@ -269,8 +269,8 @@ class Holds(unittest.TestCase):
 
     def test_parses_a_hold_on_several_blockers(self):
         self.assertEqual(
-            dispatch.held_until("Held: until AA-17983 and AA-17982 merge — one slice at a time"),
-            (("AA-17983", "AA-17982"), "merge"),
+            dispatch.held_until("Held: until AA-12 and AA-13 merge — one slice at a time"),
+            (("AA-12", "AA-13"), "merge"),
         )
         self.assertEqual(
             dispatch.held_until("Held: until AA-1, AA-2, and AA-3 open their PRs — files"),

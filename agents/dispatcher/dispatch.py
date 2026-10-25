@@ -109,9 +109,9 @@ DATA_PATH = re.compile(r"^assets/(data|locales)/")
 CARGO_PATH = re.compile(r"(\.rs$|(^|/)Cargo\.(toml|lock)$|^assets/(data|locales)/)")
 #: Most tasks carry their pipeline label in the body, not as an issue label.
 LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
-#: Anywhere in the body, not only at a line start: a task filed from a roadmap
-#: bullet carries it mid-line and bolded (`... **Chain: 3 steps** (see ...)`),
-#: and a chain read as an ordinary task gets its Review after step 1.
+#: Anywhere in the body, not only at a line start: a task body often carries it
+#: mid-line and in markdown emphasis (`**Chain: 3 steps**`), and a chain read as
+#: an ordinary task gets its Review after step 1.
 CHAIN_STEPS = re.compile(r"\bChain:\s*\d+\s*steps\b")
 #: A hold names its own release condition. `merges`: the task builds on the
 #: blocker's code, which is not on main until it lands. `opens its PR`: the
