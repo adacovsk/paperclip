@@ -136,6 +136,34 @@ class OperatorNoop(unittest.TestCase):
         self.assertEqual(reap.op_root(Path("/code/proj")), Path("/code/proj-op"))
 
 
+class InUse(unittest.TestCase):
+    def test_a_process_inside_a_tree_marks_it_in_use(self):
+        import os
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(reap.in_use(Path(d)), [])
+            p = subprocess.Popen(["sleep", "30"], cwd=d)
+            try:
+                self.assertIn(p.pid, reap.in_use(Path(d)))
+            finally:
+                p.kill()
+                p.wait()
+            self.assertNotIn(os.getpid(), reap.in_use(Path(d)))
+
+    def test_a_removal_of_a_tree_in_use_is_skipped(self):
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = subprocess.Popen(["sleep", "30"], cwd=d)
+            try:
+                line = reap.execute(reap.Action("remove-worktree", d, "test", REPO), True, set())
+            finally:
+                p.kill()
+                p.wait()
+            self.assertTrue(line.startswith("SKIP"), line)
+
+
 class Sessions(unittest.TestCase):
     def session(self, bucket, revision):
         return {"id": "s1", "status_bucket": bucket, "session_context": {"sources": [{"revision": revision}]}}

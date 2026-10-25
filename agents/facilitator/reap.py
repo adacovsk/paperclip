@@ -353,6 +353,42 @@ def watcher_units() -> list[str]:
     return [line.split()[0] for line in r.stdout.splitlines() if line.strip()]
 
 
+#: Where train-gate.sh builds a merged tree, one `wt-<tree>` per run. It removes
+#: its own tree on exit, so one that survives is a run that was interrupted.
+GATE_DIR = VERIFY_DIR / "train-gate"
+#: A gate tree idle this long is a leftover; a live gate run touches its index.
+GATE_IDLE = float(os.environ.get("REAP_GATE_IDLE_SECONDS", 86400))
+
+
+def in_use(path: Path) -> list[int]:
+    """Pids whose working directory or command line is inside `path`.
+
+    Read at the moment of removal, never from an earlier scan: a build can start
+    in a tree between the plan and the delete, and removing a tree a compiler is
+    writing into fails that build as if its code were red.
+    """
+    root, pids = str(path.resolve()), []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            cwd = os.readlink(proc / "cwd")
+            cmd = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if cwd == root or cwd.startswith(root + "/") or root + "/" in cmd or cmd.rstrip().endswith(root):
+            pids.append(int(proc.name))
+    return pids
+
+
+def gate_trees(repo: Path) -> list[Path]:
+    """Leftover train-gate worktrees registered on this repo."""
+    out = git(repo, "worktree", "list", "--porcelain").stdout
+    return [Path(line[9:]) for line in out.splitlines()
+            if line.startswith("worktree ") and Path(line[9:]).parent == GATE_DIR
+            and Path(line[9:]).name.startswith("wt-")]
+
+
 def live_builds() -> set[str]:
     """Task ids with a verify build running (reap-verify.sh --list)."""
     if not REAP_VERIFY.exists():
@@ -374,6 +410,9 @@ def execute(a: Action, act: bool, building: set[str]) -> str:
             reason = "parent-cancelled" if "cancelled" in a.why else "verify-done"
             if run(str(REAP_VERIFY), a.task, reason).returncode != 0:
                 return f"SKIP {line}: verify build not reaped"
+        busy = in_use(Path(a.target))
+        if busy:
+            return f"SKIP {line}: in use by pid {', '.join(map(str, busy[:5]))}"
         r = git(a.repo, "worktree", "remove", a.target)
     elif a.kind == "delete-local":
         r = git(a.repo, "branch", "-D", a.target)
@@ -423,6 +462,10 @@ def reap(project: Path, paperclip: Path, base: str, company: str, act: bool, lim
         a, k = plan_op(repo, ops, prs, noop)
         acts += a
         kept += k
+        if task_repo:
+            for path in gate_trees(repo):
+                if path.exists() and idle_for(path, now) >= GATE_IDLE:
+                    acts.append(Action("remove-worktree", str(path), "train-gate run left it behind", repo))
         for path, head in detached_op(repo):
             if idle_for(path, now) >= OP_IDLE and not git(path, "status", "--porcelain").stdout.strip() \
                     and not in_progress(path) and adds_nothing(repo, head):
