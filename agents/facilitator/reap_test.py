@@ -55,6 +55,13 @@ class TaskLocals(unittest.TestCase):
         acts, _ = self.plan(local("task/AA-1"), "cancelled", finished="2026-01-01T00:00:00Z")
         self.assertEqual(kinds(acts), [("delete-local", "task/AA-1")])
 
+    def test_a_diverged_branch_is_archived_beside_origins_copy(self):
+        b = reap.Local("task/AA-1", "abcdef1234567", None, False, False, False, True)
+        acts, _ = self.plan(b, "cancelled")
+        self.assertEqual(acts[0].kind, "push")
+        self.assertEqual(acts[0].target, "task/AA-1\ttask/AA-1-local-abcdef123")
+        self.assertEqual(reap.task_of("task/AA-1-local-abcdef123"), "AA-1")
+
     def test_a_dirty_worktree_is_kept_and_reported(self):
         acts, kept = self.plan(local("task/AA-1", "/wt", dirty=True, on_main=True), "done")
         self.assertEqual(acts, [])

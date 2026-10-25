@@ -88,16 +88,36 @@ class Local:
     dirty: bool
     on_main: bool      # every patch is on origin/main
     on_origin: bool    # origin/<branch> contains the tip
+    diverged: bool = False  # origin/<branch> exists but does not contain the tip
+
+
+#: Files that mean a worktree is mid-operation: its branch is detached while it
+#: runs, and the work in flight is in neither the branch nor the index.
+IN_PROGRESS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD")
+
+
+def in_progress(wt: Path) -> list[Path]:
+    paths = git(wt, "rev-parse", "--git-path", *IN_PROGRESS).stdout.split()
+    return [wt / p if not Path(p).is_absolute() else Path(p) for p in paths if (wt / p).exists()]
 
 
 def worktrees(repo: Path) -> dict[str, Path]:
-    """branch -> worktree path, the main checkout excluded."""
+    """branch -> worktree path, the main checkout excluded.
+
+    A worktree stopped mid-rebase is detached, so its branch is read from the
+    rebase's own record; otherwise it would look like a branch with no worktree.
+    """
     out, found, path = git(repo, "worktree", "list", "--porcelain").stdout, {}, None
     for line in out.splitlines():
         if line.startswith("worktree "):
             path = Path(line[9:])
         elif line.startswith("branch refs/heads/") and path and path != repo:
             found[line[len("branch refs/heads/"):]] = path
+        elif line == "detached" and path and path != repo and path.exists():
+            for p in in_progress(path):
+                head = p / "head-name"
+                if head.is_file() and head.read_text().startswith("refs/heads/"):
+                    found[head.read_text().strip()[len("refs/heads/"):]] = path
     return found
 
 
@@ -109,11 +129,12 @@ def locals_(repo: Path, patterns: list[str]) -> list[Local]:
     for line in out.splitlines():
         branch, _, tip = line.partition("\t")
         wt = trees.get(branch)
-        dirty = bool(wt and wt.exists() and git(wt, "status", "--porcelain").stdout.strip())
+        dirty = bool(wt and wt.exists() and (git(wt, "status", "--porcelain").stdout.strip() or in_progress(wt)))
         # `git cherry`, so patches that landed under other SHAs (squash, rebase) count.
         on_main = "+ " not in git(repo, "cherry", "origin/main", branch).stdout
-        on_origin = ok(repo, "merge-base", "--is-ancestor", tip, f"refs/remotes/origin/{branch}")
-        found.append(Local(branch, tip, wt, dirty, on_main, on_origin))
+        remote = ok(repo, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}")
+        on_origin = remote and ok(repo, "merge-base", "--is-ancestor", tip, f"refs/remotes/origin/{branch}")
+        found.append(Local(branch, tip, wt, dirty, on_main, on_origin, remote and not on_origin))
     return found
 
 
@@ -162,13 +183,19 @@ def plan_task_locals(repo: Path, branches: list[Local], tasks: dict, prs: dict,
             kept.append(f"{b.branch}: task {tasks[ident]['status']} but PR still open")
             continue
         if b.dirty:
-            kept.append(f"{b.branch}: uncommitted changes in {b.worktree}")
+            kept.append(f"{b.branch}: uncommitted changes or an unfinished rebase/merge in {b.worktree}")
             continue
         cloud = b.branch.startswith("cloud-verify/")
         if not cloud and not b.on_main and not b.on_origin and now - at < REMOTE_GRACE:
             # The only copy of this work: archive it on origin for what is left of
             # REMOTE_GRACE. Past it, plan_task_remotes would delete the push anyway.
-            acts.append(Action("push", b.branch, "commits exist only on this disk", repo, ident))
+            if b.diverged:
+                # Overwriting origin's copy would lose the commits only it has; the
+                # local tip is archived beside it and expires with it.
+                acts.append(Action("push", f"{b.branch}\t{b.branch}-local-{b.tip[:9]}",
+                                   "diverged from origin; archived beside it", repo, ident))
+            else:
+                acts.append(Action("push", b.branch, "commits exist only on this disk", repo, ident))
         if b.worktree:
             acts.append(Action("remove-worktree", str(b.worktree), f"task {tasks[ident]['status']}", repo, ident))
         acts.append(Action("delete-local", b.branch, f"task {tasks[ident]['status']}", repo, ident))
@@ -281,7 +308,8 @@ def execute(a: Action, act: bool, building: set[str]) -> str:
     if not act:
         return "DRY " + line
     if a.kind == "push":
-        r = git(a.repo, "push", "--quiet", "--no-verify", "origin", a.target)
+        src, _, dst = a.target.partition("\t")
+        r = git(a.repo, "push", "--quiet", "--no-verify", "origin", f"{src}:refs/heads/{dst or src}")
     elif a.kind == "remove-worktree":
         # A build still compiling this tree would rebuild a deleted directory. Only
         # a live one is reaped: reap-verify writes a sentinel even when none runs.
