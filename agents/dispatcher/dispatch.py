@@ -83,6 +83,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import dedupe  # noqa: E402
 import promote as promotion  # noqa: E402
+from hold_of_record import hold_of_record  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("mechanical", HERE.parent / "facilitator" / "mechanical.py")
 facilitator = importlib.util.module_from_spec(_spec)
@@ -112,7 +113,14 @@ LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
 #: blocker's code, which is not on main until it lands. `opens its PR`: the
 #: blocker is being written on the same files (or is the previous link of a
 #: same-shaped chain), and stops contending once it is finished.
-HELD_UNTIL = re.compile(r"^Held: until ([A-Z]+-\d+) (merges|opens its PR)\b")
+#: Several blockers (`until AA-1 and AA-2 merge`, `until AA-1, AA-2 open their
+#: PRs`) release only when every one has met the condition.
+HELD_UNTIL = re.compile(
+    r"^Held: until ([A-Z]+-\d+(?:(?:,? and |, )[A-Z]+-\d+)*) "
+    r"(merges?|opens its PR|open their PRs)\b"
+)
+HELD_UNTIL_PREFIX = "Held: until "
+TASK_ID = re.compile(r"[A-Z]+-\d+")
 LEGACY_HOLD = "Held: waiting on "
 LEGACY_HELD = re.compile(r"^Held: waiting on ([A-Z]+-\d+)\b")
 #: A judgment call the Planner owns (missing prerequisite, bad spec, claim
@@ -358,23 +366,23 @@ def after_cancelled_verify(verify: dict, git: GitState) -> Decision:
     return Decision("review", "verify cancelled; the Worker committed rework since")
 
 
-def held_until(comment: str) -> tuple[str, str] | None:
-    """(blocker id, "merge" | "pr") for a hold in the release-condition form."""
+def held_until(comment: str) -> tuple[tuple[str, ...], str] | None:
+    """(blocker ids, "merge" | "pr") for a hold in the release-condition form."""
     m = HELD_UNTIL.match(comment.strip())
     if not m:
         return None
-    return m.group(1), "merge" if m.group(2) == "merges" else "pr"
+    return tuple(TASK_ID.findall(m.group(1))), "merge" if m.group(2).startswith("merge") else "pr"
 
 
-def held_closed(comment: str) -> tuple[str, str] | None:
-    """(blocker id, "closed") for a `Held: waiting on <id>` hold.
+def held_closed(comment: str) -> tuple[tuple[str, ...], str] | None:
+    """((blocker id,), "closed") for a `Held: waiting on <id>` hold.
 
     That form does not say whether it waits on the merge or on the PR, so it is
     released only when both readings agree: the blocker is done or cancelled.
     Without this, such a hold waits on a Coordinator sweep that rarely gets that far.
     """
     m = LEGACY_HELD.match(comment.strip())
-    return (m.group(1), "closed") if m else None
+    return ((m.group(1),), "closed") if m else None
 
 
 def held_planner(comment: str) -> bool:
@@ -1929,25 +1937,32 @@ def dedupe_duplicates(api: Api, project: Path) -> int:
 def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None) -> int:
     """Release `Held: until <id> ...` holds whose condition is met. Returns how many.
 
+    The hold read is the newest comment whose first line is `Held:`
+    (`hold_of_record`). A hold naming several blockers releases only once every
+    one of them meets the condition.
+
     A `Held: planner` hold is handed to the Planner instead (not counted: it is
-    not supply). The newest-comment read is the same one the release uses, so a
-    Planner that re-holds in an `until` form is never routed back.
+    not supply). The routing reads the same hold the release does, so a Planner
+    that re-holds in an `until` form is never routed back.
     """
     state = load_state("holds.json")
     if time.time() - state.get("at", 0) < HOLD_SCAN_INTERVAL:
         return 0
     held = [i for i in api.issues(status="blocked") if not i.get("assigneeAgentId")]
 
-    def latest(issue: dict):
+    def in_force(issue: dict):
+        # The newest `Held:` comment, not the newest comment: a status note or fire
+        # summary posted after a hold would otherwise hide it from this sweep for good.
         comments = api.get(f"/issues/{issue['id']}/comments")
-        newest = max(comments, key=lambda c: c["createdAt"], default=None)
-        return issue, (newest or {}).get("body") or "", comments
+        _, hold = hold_of_record(comments)
+        return issue, (hold or {}).get("body") or "", comments
 
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
-        triples = list(pool.map(latest, held))
+        triples = list(pool.map(in_force, held))
 
     waiting = []
     legacy = 0
+    unparsed = []
     for issue, body, comments in triples:
         if planner and held_planner(body):
             route_to_planner(api, issue, body, planner)
@@ -1956,20 +1971,27 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
         if parsed and not overruled(comments, parsed):
             waiting.append((issue, body, parsed))
         legacy += body.startswith(LEGACY_HOLD) and not parsed
+        if body.startswith(HELD_UNTIL_PREFIX) and not parsed:
+            unparsed.append(issue["identifier"])
     if legacy:
         # Holds naming no task stay with the Coordinator.
         print(f"holds   {legacy} in the `Held: waiting on` form with no task named; left to the Coordinator", flush=True)
+    if unparsed:
+        # An unreadable release condition is a permanent block unless someone sees it.
+        print(f"holds   {len(unparsed)} `Held: until` line(s) match no release form: {', '.join(unparsed)}", flush=True)
     blockers: dict[str, dict | None] = {}
     released = 0
-    for issue, body, (blocker_id, kind) in waiting:
-        if blocker_id not in blockers:
-            try:
-                blockers[blocker_id] = api.get(f"/issues/{blocker_id}")
-            except urllib.error.HTTPError:
-                blockers[blocker_id] = None
-        why = hold_resolved(blockers[blocker_id], kind, f"task/{blocker_id}" in pr_heads)
-        if not why:
+    for issue, body, (blocker_ids, kind) in waiting:
+        for blocker_id in blocker_ids:
+            if blocker_id not in blockers:
+                try:
+                    blockers[blocker_id] = api.get(f"/issues/{blocker_id}")
+                except urllib.error.HTTPError:
+                    blockers[blocker_id] = None
+        reasons = [hold_resolved(blockers[b], kind, f"task/{b}" in pr_heads) for b in blocker_ids]
+        if not all(reasons):
             continue
+        why = "; ".join(reasons)
         quoted = body.strip().splitlines()[0]
         api.set_status(
             issue,
