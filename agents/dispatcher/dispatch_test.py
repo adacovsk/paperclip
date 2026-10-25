@@ -107,6 +107,19 @@ class ReviewerStage(unittest.TestCase):
         git = GitState(exists=True, ahead=3, merges_clean=True, head_at=iso_ts("2026-10-19T00:00:00Z"))
         self.assertEqual(decide(parent(), self.cancelled_verify(), git).kind, "review")
 
+    def test_chain_rework_with_steps_left_is_handed_off_not_reviewed(self):
+        git = GitState(exists=True, ahead=3, merges_clean=True, head_at=iso_ts("2026-10-19T00:00:00Z"), chain_steps=2)
+        decision = decide(parent(description="**Chain: 3 steps**"), self.cancelled_verify(), git)
+        self.assertEqual((decision.kind, decision.reason), ("handoff", "chain task, 2 of 3 steps committed"))
+
+    def test_chain_rework_with_every_step_committed_gets_its_review(self):
+        git = GitState(exists=True, ahead=3, merges_clean=True, head_at=iso_ts("2026-10-19T00:00:00Z"), chain_steps=3)
+        self.assertEqual(decide(parent(description="Chain: 3 steps"), self.cancelled_verify(), git).kind, "review")
+
+    def test_a_reviewed_chain_with_steps_left_is_not_verified(self):
+        git = GitState(exists=True, ahead=3, merges_clean=True, changed=("src/x.rs",), chain_steps=1)
+        self.assertEqual(decide(parent(description="Chain: 2 steps"), [self.review], git).kind, "handoff")
+
     def test_rework_on_a_dirty_tree_is_handed_off(self):
         git = GitState(exists=True, dirty=True, ahead=3, head_at=iso_ts("2026-10-19T00:00:00Z"))
         self.assertEqual(decide(parent(), self.cancelled_verify(), git).kind, "handoff")
