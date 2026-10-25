@@ -120,6 +120,22 @@ class OperatorBranches(unittest.TestCase):
         self.assertIn("uncommitted", kept[0])
 
 
+class OperatorNoop(unittest.TestCase):
+    def test_an_unmerged_branch_that_adds_nothing_is_removed(self):
+        acts, _ = reap.plan_op(REPO, [local("op/x", "/wt/x", on_origin=True)], {}, {"op/x"})
+        self.assertEqual(kinds(acts), [("remove-worktree", "/wt/x"), ("delete-local", "op/x"), ("delete-remote", "op/x")])
+
+    def test_an_unmerged_branch_that_adds_something_is_left(self):
+        self.assertEqual(reap.plan_op(REPO, [local("op/x", "/wt/x")], {}, set()), ([], []))
+
+    def test_noop_never_overrides_dirty_or_an_open_pr(self):
+        self.assertEqual(reap.plan_op(REPO, [local("op/x", "/wt/x", dirty=True)], {}, {"op/x"}), ([], []))
+        self.assertEqual(reap.plan_op(REPO, [local("op/x", "/wt/x")], {"op/x": [{"state": "OPEN"}]}, {"op/x"}), ([], []))
+
+    def test_the_operator_root_is_a_sibling_of_the_repo(self):
+        self.assertEqual(reap.op_root(Path("/code/proj")), Path("/code/proj-op"))
+
+
 class Sessions(unittest.TestCase):
     def session(self, bucket, revision):
         return {"id": "s1", "status_bucket": bucket, "session_context": {"sources": [{"revision": revision}]}}

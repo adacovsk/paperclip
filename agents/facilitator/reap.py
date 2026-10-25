@@ -44,6 +44,10 @@ REMOTE_GRACE = float(os.environ.get("REAP_REMOTE_GRACE_SECONDS", 7 * 86400))
 CACHE_GRACE = float(os.environ.get("REAP_CACHE_GRACE_SECONDS", 7 * 86400))
 #: A finished task's watcher gets this long to deliver before it is stopped.
 WATCH_GRACE = float(os.environ.get("REAP_WATCH_GRACE_SECONDS", 86400))
+#: An operator worktree idle this long whose tip adds nothing to main is removed
+#: without a merged PR. The idle check keeps a worktree just cut from main, which
+#: also adds nothing, from being removed under the operator starting work in it.
+OP_IDLE = float(os.environ.get("REAP_OP_IDLE_SECONDS", 86400))
 #: Destructive actions per sweep. A worktree removal can take seconds and the
 #: Dispatcher's run is bounded, so a backlog drains over several sweeps.
 LIMIT = int(os.environ.get("REAP_LIMIT", 40))
@@ -118,6 +122,46 @@ def worktrees(repo: Path) -> dict[str, Path]:
                 head = p / "head-name"
                 if head.is_file() and head.read_text().startswith("refs/heads/"):
                     found[head.read_text().strip()[len("refs/heads/"):]] = path
+    return found
+
+
+def adds_nothing(repo: Path, tip: str) -> bool:
+    """Whether merging `tip` into origin/main leaves main's tree unchanged.
+
+    Decided by a merge, not by patch ids: work that landed squashed, rebased or
+    ported under other commits still merges to main's own tree.
+    """
+    if ok(repo, "merge-base", "--is-ancestor", tip, "origin/main"):
+        return True
+    merged = git(repo, "merge-tree", "--write-tree", "origin/main", tip)
+    return merged.returncode == 0 and \
+        merged.stdout.split("\n", 1)[0].strip() == git(repo, "rev-parse", "origin/main^{tree}").stdout.strip()
+
+
+def idle_for(wt: Path | None, now: float) -> float:
+    """Seconds since the worktree's index last changed (checkout, add, commit, status)."""
+    if not wt:
+        return float("inf")
+    index = Path(git(wt, "rev-parse", "--git-path", "index").stdout.strip())
+    index = index if index.is_absolute() else wt / index
+    return now - index.stat().st_mtime if index.exists() else float("inf")
+
+
+def op_root(repo: Path) -> Path:
+    """Where operator worktrees live: a sibling `<repo>-op/` directory."""
+    return repo.parent / f"{repo.name}-op"
+
+
+def detached_op(repo: Path) -> list[tuple[Path, str]]:
+    """(path, HEAD) of detached worktrees under the operator root."""
+    root, found, path, head = op_root(repo), [], None, None
+    for line in git(repo, "worktree", "list", "--porcelain").stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            path = Path(line[9:])
+        elif line.startswith("HEAD "):
+            head = line[5:]
+        elif line == "detached" and path and root in path.parents and path.exists():
+            found.append((path, head))
     return found
 
 
@@ -215,12 +259,25 @@ def plan_task_remotes(repo: Path, branches: list[tuple[str, str]], tasks: dict, 
     return acts
 
 
-def plan_op(repo: Path, branches: list[Local], prs: dict) -> tuple[list[Action], list[str]]:
-    """op/* once its PR merged, its tree is clean, and every patch is on main."""
+def plan_op(repo: Path, branches: list[Local], prs: dict, noop: set[str] = frozenset()) -> tuple[list[Action], list[str]]:
+    """op/* once its PR merged, its tree is clean, and every patch is on main.
+
+    `noop` names op/* branches that need no PR: idle, and their tip adds nothing to
+    main. An unmerged op/* branch that adds something is the operator's, and left.
+    """
     acts, kept = [], []
     for b in branches:
+        if any(p["state"] == "OPEN" for p in prs.get(b.branch, [])):
+            continue
+        if b.branch in noop and not b.dirty:
+            if b.worktree:
+                acts.append(Action("remove-worktree", str(b.worktree), "adds nothing to main", repo))
+            acts.append(Action("delete-local", b.branch, "adds nothing to main", repo))
+            if b.on_origin:
+                acts.append(Action("delete-remote", f"{b.branch}\t{b.tip}", "adds nothing to main", repo))
+            continue
         merged = [p for p in prs.get(b.branch, []) if p["state"] == "MERGED"]
-        if not merged or any(p["state"] == "OPEN" for p in prs.get(b.branch, [])):
+        if not merged:
             continue
         if b.dirty:
             kept.append(f"{b.branch}: merged but has uncommitted changes in {b.worktree}")
@@ -361,9 +418,15 @@ def reap(project: Path, paperclip: Path, base: str, company: str, act: bool, lim
             acts += a
             kept += k
             acts += plan_task_remotes(repo, remotes(repo, ["task/", "cloud-verify/"]), tasks, prs, now)
-        a, k = plan_op(repo, locals_(repo, ["op/"]), prs)
+        ops = locals_(repo, ["op/"])
+        noop = {b.branch for b in ops if idle_for(b.worktree, now) >= OP_IDLE and adds_nothing(repo, b.tip)}
+        a, k = plan_op(repo, ops, prs, noop)
         acts += a
         kept += k
+        for path, head in detached_op(repo):
+            if idle_for(path, now) >= OP_IDLE and not git(path, "status", "--porcelain").stdout.strip() \
+                    and not in_progress(path) and adds_nothing(repo, head):
+                acts.append(Action("remove-worktree", str(path), "detached; adds nothing to main", repo))
     acts += plan_sessions(cloud_sessions(), tasks)
     acts += plan_watchers(watcher_units(), tasks, now)
     if VERIFY_DIR.is_dir():
