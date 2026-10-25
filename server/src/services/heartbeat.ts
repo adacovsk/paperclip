@@ -13,6 +13,7 @@ import {
   agentWakeupRequests,
   heartbeatRunEvents,
   heartbeatRuns,
+  issueComments,
   issues,
   projects,
   projectWorkspaces,
@@ -34,6 +35,7 @@ import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { branchAdvancedDuringRun, parseLsRemoteHead, shouldWakeNextMover } from "./stage-completion-wake.js";
 import { extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
+import { renderOperatorNotes } from "./operator-notes.js";
 import { logActivity } from "./activity-log.js";
 import { resolveSubtaskWakeTarget, summarizeOpenChildren } from "./subtask-wake-target.js";
 import { stageDispatcherIdFor } from "./coordinator-lookup.js";
@@ -2880,6 +2882,14 @@ export function heartbeatService(db: Db) {
         context.issueTitle = taskContext.title;
         context.issueDescription = taskContext.description ?? "";
         context.issueIdentifier = taskContext.identifier;
+        context.issueOperatorNotes = renderOperatorNotes(
+          await db
+            .select({ authorUserId: issueComments.authorUserId, body: issueComments.body, createdAt: issueComments.createdAt })
+            .from(issueComments)
+            .where(and(eq(issueComments.companyId, agent.companyId), eq(issueComments.issueId, taskContext.id)))
+            .orderBy(desc(issueComments.createdAt))
+            .limit(50),
+        );
       } else {
         // No task found and no explicit issueId in context. Agents without the
         // paperclip skill have nothing to do — their prompt template renders
