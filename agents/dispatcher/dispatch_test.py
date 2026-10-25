@@ -41,6 +41,10 @@ class WorkerStage(unittest.TestCase):
     def test_chain_is_handed_off(self):
         self.assertEqual(decide(parent(description="Chain: 3 steps\n"), [], CLEAN).kind, "handoff")
 
+    def test_chain_inside_a_roadmap_bullet_is_handed_off(self):
+        bullet = "- **§4.1206** — `needs-build`. **Give it a pick.** **Chain: 3 steps** (see `docs/roadmap/4.1206.md`).\n"
+        self.assertEqual(decide(parent(description=bullet), [], CLEAN).kind, "handoff")
+
     def test_missing_worktree_is_handed_off(self):
         self.assertEqual(decide(parent(), [], GitState(exists=False)).kind, "handoff")
 

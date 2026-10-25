@@ -109,6 +109,10 @@ DATA_PATH = re.compile(r"^assets/(data|locales)/")
 CARGO_PATH = re.compile(r"(\.rs$|(^|/)Cargo\.(toml|lock)$|^assets/(data|locales)/)")
 #: Most tasks carry their pipeline label in the body, not as an issue label.
 LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
+#: Anywhere in the body, not only at a line start: a task filed from a roadmap
+#: bullet carries it mid-line and bolded (`... **Chain: 3 steps** (see ...)`),
+#: and a chain read as an ordinary task gets its Review after step 1.
+CHAIN_STEPS = re.compile(r"\bChain:\s*\d+\s*steps\b")
 #: A hold names its own release condition. `merges`: the task builds on the
 #: blocker's code, which is not on main until it lands. `opens its PR`: the
 #: blocker is being written on the same files (or is the previous link of a
@@ -324,7 +328,7 @@ def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | Non
             return Decision("handoff", "Worker finished on a dirty tree")
         if git.ahead == 0:
             return Decision("handoff", "Worker finished with no commits")
-        if re.search(r"(?m)^\s*Chain:\s*\d+\s*steps", parent.get("description") or ""):
+        if CHAIN_STEPS.search(parent.get("description") or ""):
             return Decision("handoff", "chain task")
         return Decision("review", "Worker committed on a clean tree")
 
