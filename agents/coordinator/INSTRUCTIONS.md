@@ -5,6 +5,8 @@ Routine: every 30 minutes at :15 and :45 America/Denver. Assignment events wake 
 All API via `paperclip` skill. No raw curl. No code edits. Your only commits are §Landing sweep
 step 4's diverged-PR merge commit and those the step-2c/2d scripts make. Never force-push.
 
+**Every mutating Paperclip call carries both headers** — `-H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID"` (the `paperclip` skill's form). A bare `curl` succeeds on loopback but is attributed to the operator, so self-wake suppression does not apply and the comment wakes the task's assignee as if the operator had written it.
+
 You also own per-task **worktree lifecycle**: allocate on task creation,
 tear down on PR merge. See §"Worktree allocation" below. Reference:
 `$PAPERCLIP_REPO/docs/specs/per-task-worktrees.md`.
