@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Whether the weekly usage limit has quota to spare on cloud verifies.
 
-Prints 1 (lane open) or 0 (lane closed). The lane is open until a ceiling is
-reached: the five-hour session ceiling (CLOUD_PACE_SESSION_CEILING, default 80)
-or the week ceiling (CLOUD_PACE_WEEK_CEILING, default 90). While it is open every
+Prints 1 (lane open) or 0 (lane closed). The lane is open until the week
+ceiling is reached (CLOUD_PACE_WEEK_CEILING, default 90). While it is open every
 verify goes to the cloud with no concurrency bound; once it closes, the local
 build box (the Architect's local chain) carries the queue. The week ceiling sits
 below 100 because an exhausted weekly limit stalls every local agent too, not
 just the verifies.
 
-The operator's standing choice is the cloud for everything a ceiling allows, so
+The operator's standing choice is the cloud for everything the ceiling allows, so
 pace is not compared by default. CLOUD_PACE_ENFORCE_PACE=1 restores the pacing
 gate: the lane is then open only while weekly utilization is behind the
 fraction of the week elapsed, so spend tracks the calendar.
@@ -25,9 +24,10 @@ must degrade to "lane off", not to a crash a caller might read as permission.
 
 Unreadable usage fails closed whether or not pace is enforced.
 
-The session (five-hour) limit is a separate ceiling for the same reason: a
-week with plenty of headroom can still hit the session limit, and that blocks
-the local agents too.
+The five-hour session limit does not gate the lane. It resets within hours,
+so hitting it costs an afternoon; only the weekly limit can stall the agents
+for days. Do not re-add a session ceiling here: closing on it sends verifies
+to the local box while the week still has headroom.
 
 CACHED, BECAUSE THE METER RATE-LIMITS. Every launch, offload and re-verify asks
 this gate, and the endpoint answers HTTP 429 once asked often enough. Uncached,
@@ -37,8 +37,8 @@ is cached for CLOUD_PACE_CACHE_TTL seconds (default 300) and reused without a
 request. When a request fails, a cached reading no older than
 CLOUD_PACE_STALE_MAX seconds (default 900) is used in its place; older than that,
 the gate fails closed as before. Usage only rises, so a stale reading can only
-under-read it, by at most fifteen minutes of spend, and the session and week
-ceilings sit well below 100% to absorb that.
+under-read it, by at most fifteen minutes of spend, and the week ceiling sits
+well below 100% to absorb that.
 """
 
 import json
@@ -117,17 +117,12 @@ def fetch_usage() -> dict:
 
 
 def is_open(usage: dict, now: float) -> tuple[bool, str]:
-    session_ceiling = env_float("CLOUD_PACE_SESSION_CEILING", 80)
-
     week = usage["seven_day"]
     used = float(week["utilization"])
     reset = datetime.fromisoformat(week["resets_at"]).timestamp()
     elapsed = min(100.0, max(0.0, 100 * (1 - (reset - now) / WEEK)))
-    session = float((usage.get("five_hour") or {}).get("utilization") or 0)
 
-    why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed, session {session:.0f}%"
-    if session >= session_ceiling:
-        return False, f"{why}: session ceiling {session_ceiling:.0f}% reached"
+    why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed"
     if os.environ.get("CLOUD_PACE_ENFORCE_PACE") == "1":
         if used >= elapsed:
             return False, f"{why}: on or ahead of pace"
