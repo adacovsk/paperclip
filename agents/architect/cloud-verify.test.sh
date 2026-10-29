@@ -237,15 +237,14 @@ usage() {  # weekly%, session%
 export CLOUD_PACE_USAGE_FILE="$DIR/usage.json" CLOUD_PACE_NOW="$NOW"
 pace() { python3 "$HERE/cloud-pace.py" 2>/dev/null; }
 
-# By default only the ceilings close the lane; pace is not compared.
+# By default only the week ceiling closes the lane; pace is not compared.
 usage 60 6;  check "ahead of pace -> open"             "$(pace)" 1
-usage 20 85; check "session ceiling -> closed"         "$(pace)" 0
+usage 20 100; check "session limit does not gate -> open" "$(pace)" 1
 usage 90 6;  check "week ceiling -> closed"            "$(pace)" 0
-# CLOUD_PACE_ENFORCE_PACE=1 restores the pacing gate, under the same session ceiling.
+# CLOUD_PACE_ENFORCE_PACE=1 restores the pacing gate.
 usage 38 6;  check "enforced: 38% used at 43% elapsed -> open" "$(CLOUD_PACE_ENFORCE_PACE=1 pace)" 1
 usage 43 6;  check "enforced: on pace -> closed"       "$(CLOUD_PACE_ENFORCE_PACE=1 pace)" 0
 usage 60 6;  check "enforced: ahead of pace -> closed" "$(CLOUD_PACE_ENFORCE_PACE=1 pace)" 0
-usage 20 85; check "enforced: session ceiling -> closed" "$(CLOUD_PACE_ENFORCE_PACE=1 pace)" 0
 usage 60 6;  check "enforce is exactly 1"              "$(CLOUD_PACE_ENFORCE_PACE=true pace)" 1
 echo 'not json' > "$DIR/usage.json"
 check "unreadable usage fails closed" "$(pace)" 0
