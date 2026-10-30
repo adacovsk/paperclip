@@ -15,7 +15,8 @@ cat > "$DIR/issues.json" <<'EOF'
  {"identifier":"AA-5","status":"in_review","parentId":"x","title":"Review: AA-1 §4.5","description":""},
  {"identifier":"AA-6","status":"done","completedAt":"2999-01-01T00:00:00Z","title":"§4.8 — slice one","description":"Where: src/a.rs"},
  {"identifier":"AA-7","status":"in_review","title":"§4.10 — slice in flight","description":""},
- {"identifier":"AA-8","status":"todo","title":"Unrelated §4.50 work","description":"Section: §4.50"}]
+ {"identifier":"AA-8","status":"todo","title":"Unrelated §4.50 work","description":"Section: §4.50"},
+ {"identifier":"AA-9","status":"in_review","parentId":"AA-1","title":"§4.60 — Split a file the review flagged","description":""}]
 EOF
 
 check() {  # check <expected exit> <description> <args...>
@@ -31,7 +32,8 @@ check 0 "a task done long ago claims nothing"                  4.7  --title "any
 check 1 "a section-less task with the same title claims it"    4.9  --title "Scale carry limits by size (§4.9)"
 check 0 "the candidate does not claim against itself"          4.5  --title "anything" --exclude AA-1
 check 0 "a stage subtask is not a claim of its own"            4.5  --title "anything" --exclude AA-1
-check 0 "§4.5 does not match §4.50"                            4.5  --title "anything" --exclude AA-1
+check 1 "a review follow-up filed as a child still claims"     4.60 --title "anything"
+check 0 "§4.5 does not match §4.50"                           4.5  --title "anything" --exclude AA-1
 check 0 "a done slice with disjoint paths leaves room"         4.8  --title "slice two" --slice --paths src/b.rs
 check 1 "a done slice that took the same path claims it"       4.8  --title "slice two" --slice --paths src/a.rs
 check 1 "a slice still in flight claims the whole front"       4.10 --title "slice two" --slice --paths src/z.rs

@@ -63,7 +63,7 @@ def same_work(a: str, b: str) -> bool:
 
 
 def is_candidate(issue: dict, now: datetime, days: int = 7) -> bool:
-    if issue.get("parentId") or re.match(r"(Review|Verify|Rebase|ci-fix)\b", issue.get("title", "")):
+    if section_claims.is_stage(issue):
         return False
     return section_claims.is_live(issue, days, now)
 
