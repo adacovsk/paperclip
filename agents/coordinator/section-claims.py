@@ -21,8 +21,11 @@ task for §4.1020 carried neither `§4.1020` nor a `Source:` anchor, only the fi
 title without its `(§4.1020)` suffix. A section-number search cannot see that task, and
 it reached an open PR beside the first one.
 
-Stage subtasks (`Review:`, `Verify:`, anything with a parent) are part of their parent's
-claim, not claims of their own, and are ignored.
+Stage subtasks (`Review:`, `Verify:`, `ci-fix:`, `Rebase `) are part of their parent's
+claim, not claims of their own, and are ignored. They are told apart by title, not by
+`parentId`: a Reviewer files its follow-up work as a child of the task it reviewed, and
+that child claims its section like any top-level task. Skipping every parented task hid
+those follow-ups, and the Planner filed each of their sections a second time.
 
 A multi-slice front is meant to have several tasks — "overlap is the slice, not the
 section number" — so pass `--slice` for one. It then admits one slice *in flight* at a
@@ -49,6 +52,14 @@ API = os.environ.get("PAPERCLIP_API_URL", "http://localhost:3100").rstrip("/")
 
 #: Words that differ between two filings of the same front without changing what it is.
 _NOISE = re.compile(r"\(§\s*\d+(?:\.\d+)*\)|§\s*\d+(?:\.\d+)*\s*[—–-]?|`|\*\*")
+
+
+#: Title prefixes of the pipeline's stage subtasks — the Dispatcher's `STAGE_PREFIXES`.
+STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
+
+
+def is_stage(issue: dict) -> bool:
+    return issue.get("title", "").startswith(STAGE_PREFIXES)
 
 
 def normalise(title: str) -> str:
@@ -90,7 +101,7 @@ def claims(issues: list[dict], section: str, title: str, exclude: str | None,
         ident = issue.get("identifier", "")
         if ident == exclude or ident in found or not is_live(issue, days, now):
             continue
-        if issue.get("parentId") or re.match(r"(Review|Verify|ci-fix):", issue.get("title", "")):
+        if is_stage(issue):
             continue
         text = f"{issue.get('title', '')}\n{issue.get('description') or ''}"
         have = normalise(issue.get("title", ""))

@@ -48,7 +48,10 @@ class SameWork(unittest.TestCase):
 class Candidates(unittest.TestCase):
     def test_stage_subtasks_are_not_candidates(self):
         self.assertFalse(dedupe.is_candidate(task("AA-2", "Verify: AA-1 something"), NOW))
-        self.assertFalse(dedupe.is_candidate(task("AA-2", "Something", parentId="p"), NOW))
+        self.assertFalse(dedupe.is_candidate(task("AA-2", "Rebase task/AA-1 onto origin/main", parentId="p"), NOW))
+
+    def test_a_reviewer_follow_up_is_a_candidate(self):
+        self.assertTrue(dedupe.is_candidate(task("AA-2", "§4.1464 — Split a file", parentId="p"), NOW))
 
     def test_cancelled_is_not_live(self):
         self.assertFalse(dedupe.is_candidate(task("AA-2", "Something", status="cancelled"), NOW))
