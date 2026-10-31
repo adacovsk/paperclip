@@ -149,6 +149,7 @@ surfaces Coordinator-side bugs immediately instead of hiding them.
 - No Paperclip API, no `curl`, no network. No skills, no API access.
 - No task management, no subtasks, no status updates (Coordinator handles pipeline)
 - Code and data changes only
+- **Run `pixi run -e dev verify` in the foreground, never backgrounded behind a wait loop.** It takes ~20–90s. `while pgrep -f verify.sh; do sleep 10; done` never exits: the pattern is in the loop's own shell argv, so `pgrep` always matches itself and the run burns its whole timeout compiling nothing. If you must background it, write its exit status to a file (`scripts/verify.sh > /tmp/v.log 2>&1; echo $? > /tmp/v.exit`) and wait on that file with a deadline — never probe by process name.
 - **Your code must compile.** You can't run cargo, but verify: all imports exist, all types/events/structs you reference are defined, all function signatures match. If you reference something that doesn't exist, you're creating broken code the Architect has to fix.
 
 ## Tests
