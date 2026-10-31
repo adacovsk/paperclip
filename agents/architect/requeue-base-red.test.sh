@@ -3,10 +3,11 @@
 #
 # The load-bearing properties: a marker whose sha is still origin/main is left
 # alone (re-running would only reproduce the red); a stale one has its result
-# deleted BEFORE the task is re-dispatched; the re-dispatch toggles the assignee
-# through null (the only thing that fires a wake); and a task that is no longer
-# blocked is cleared but not touched, unless a newer `Verify:` subtask of the
-# same task is the one blocked — the marker may still name a cancelled predecessor.
+# deleted BEFORE the task is re-dispatched, and the marker only AFTER it; the
+# re-dispatch toggles the assignee through null (the only thing that fires a
+# wake); a verify not yet blocked keeps everything for a later pass; and a
+# finished one is cleared but not touched, unless a newer `Verify:` subtask of
+# the same task is the one blocked — the marker may still name a cancelled predecessor.
 #
 # Run: bash agents/architect/requeue-base-red.test.sh
 set -u
@@ -79,13 +80,35 @@ case "$p2" in *"/issues/u1 "*'"assigneeAgentId":"arch"'*) ok "second PATCH resto
 case "$out" in *"requeued V-1"*) ok "reports the requeue";; *) fail "no requeue report: $out";; esac
 grep -q "^POST .*/issues/u1/comments" "$D/calls" && ok "posts a comment naming what resolved the block" || fail "no resolving comment"
 
-# 3. Stale marker, task no longer blocked → cleared, not patched.
+# 3. Stale marker, verify not yet blocked (the Architect writes the marker,
+#    then PATCHes `blocked`) → nothing deleted, not patched; a later pass that
+#    finds it blocked requeues it.
 reset
 printf '%s\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
-echo '[{"identifier":"T-1","id":"u2","status":"in_progress","assigneeAgentId":"arch"}]' > "$D/issues.json"
+echo '[{"identifier":"T-1","id":"u2","status":"in_review","assigneeAgentId":"arch"}]' > "$D/issues.json"
 bash "$R" >/dev/null
-[ ! -e "$V/T-1.exit" ] && ! grep -q PATCH "$D/calls" \
-  && ok "non-blocked task cleared but not re-dispatched" || fail "non-blocked task was patched or not cleared"
+[ -e "$V/T-1.exit" ] && [ -e "$V/T-1.base-red" ] && ! grep -q PATCH "$D/calls" \
+  && ok "not-yet-blocked verify keeps its marker and result" || fail "not-yet-blocked verify was cleared or patched"
+echo '[{"identifier":"T-1","id":"u2","status":"blocked","assigneeAgentId":"arch"}]' > "$D/issues.json"
+out="$(bash "$R")"
+case "$out" in *"requeued T-1"*) ok "a later pass requeues it once blocked";; *) fail "later pass did not requeue: $out";; esac
+[ ! -e "$V/T-1.base-red" ] && [ ! -e "$V/T-1.exit" ] && ok "marker removed after the re-dispatch" || fail "marker survived a successful requeue"
+
+# 3b. Stale marker, verify finished → cleared, not patched.
+reset
+printf '%s\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
+echo '[{"identifier":"T-1","id":"u2","status":"cancelled","assigneeAgentId":"arch"}]' > "$D/issues.json"
+bash "$R" >/dev/null
+[ ! -e "$V/T-1.exit" ] && [ ! -e "$V/T-1.base-red" ] && ! grep -q PATCH "$D/calls" \
+  && ok "finished verify cleared but not re-dispatched" || fail "finished verify was patched or not cleared"
+
+# 3c. Lookup finds nothing (unknown name or API down) → marker kept.
+reset
+printf '%s\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
+echo '[]' > "$D/issues.json"
+bash "$R" >/dev/null
+[ -e "$V/T-1.base-red" ] && ! grep -q PATCH "$D/calls" \
+  && ok "an empty lookup keeps the marker" || fail "an empty lookup cleared the marker"
 
 # 4. Unknown task after a known one → no reuse of the previous marker's ids.
 reset
