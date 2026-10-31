@@ -100,14 +100,7 @@ for marker in "$S"/*.base-red; do
     echo "$task: would requeue $esc (base-red $sha, main now $MAIN)"; continue
   fi
 
-  # Clear before re-dispatch: a woken Architect must find no result, so it
-  # launches rather than re-reading the stale red and escalating again. The
-  # cloud launch record goes too: with it and no sentinel the state reads as a
-  # dead watcher, and resuming that waits on a verdict that was already read.
-  rm -f "$S/$task.exit" "$S/$task.cloud.verdict" "$S/$task.cloud.head" "$S/$task.cloud.launched" "$marker"
-  [ "$esc" != "$task" ] && rm -f "$S/$esc.exit"
-
-  id=""; status=""; assignee=""   # a failed read must not reuse the last marker's task
+  id=""; status=""; assignee=""; pred=""   # a failed read must not reuse the last marker's task
   read -r id status assignee < <(lookup "$esc" 2>/dev/null) || true
   # The named task is whoever escalated first. A later `Verify:` subtask can
   # re-escalate the same red and keep the marker, so the name may be a
@@ -118,19 +111,37 @@ for marker in "$S"/*.base-red; do
     fb=""; fbid=""; fbst=""; fbas=""
     read -r fbid fbst fbas fb < <(lookup_verify "$task" 2>/dev/null) || true
     if [ -n "$fbid" ]; then
-      [ "$fb" != "$esc" ] && rm -f "$S/$fb.exit"
+      [ "$fb" != "$esc" ] && pred="$esc"
       id="$fbid"; status="$fbst"; assignee="$fbas"; esc="$fb"
     fi
   fi
-  if [ -z "$id" ]; then
-    echo "$task: cleared; $esc not found in the task list — not re-dispatched"; continue
-  fi
-  if [ "$status" != "blocked" ]; then
-    echo "$task: cleared; $esc is $status, not blocked — not re-dispatched"; continue
-  fi
+  # Nothing is deleted until a blocked verify is in hand. The Architect writes
+  # the marker and only then PATCHes its verify `blocked`; a pass landing
+  # between the two sees a live verify, and clearing the marker there leaves
+  # the block it is about to write with nothing that can ever release it.
+  case "$status" in
+    done|cancelled)
+      rm -f "$S/$task.exit" "$S/$task.cloud.verdict" "$S/$task.cloud.head" "$S/$task.cloud.launched" "$marker"
+      echo "$task: cleared; $esc is $status — not re-dispatched"; continue ;;
+    blocked) ;;
+    "")
+      # A failed read and an unknown name look the same here, and an API
+      # outage must not wipe every marker on the box.
+      echo "$task: $esc not found in the task list — marker kept"; continue ;;
+    *)
+      echo "$task: $esc is $status, not yet blocked — marker kept for a later pass"; continue ;;
+  esac
   if [ "$assignee" = "-" ]; then
-    echo "$task: cleared; $esc has no assignee — not re-dispatched"; continue
+    echo "$task: $esc has no assignee — marker kept, not re-dispatched"; continue
   fi
+
+  # Clear before re-dispatch: a woken Architect must find no result, so it
+  # launches rather than re-reading the stale red and escalating again. The
+  # cloud launch record goes too: with it and no sentinel the state reads as a
+  # dead watcher, and resuming that waits on a verdict that was already read.
+  rm -f "$S/$task.exit" "$S/$task.cloud.verdict" "$S/$task.cloud.head" "$S/$task.cloud.launched"
+  [ "$esc" != "$task" ] && rm -f "$S/$esc.exit"
+  [ -n "$pred" ] && rm -f "$S/$pred.exit"
   # wakeOnDemand fires on an assignee CHANGE, so rewriting the same value does
   # nothing: go through null and back. The field is assigneeAgentId — the
   # similar-looking assigneeId is accepted and silently dropped.
@@ -143,9 +154,12 @@ for marker in "$S"/*.base-red; do
   if api PATCH "/issues/$id" '{"status":"todo","assigneeAgentId":null}' >/dev/null \
      && { api POST "/issues/$id/comments" "{\"body\":\"Requeued by requeue-base-red.sh: this was blocked on breakage already on main (origin/main $sha). origin/main is now $MAIN, so the stale result was deleted and the verify re-dispatched; the relaunch rebases onto it.\"}" >/dev/null || true; } \
      && api PATCH "/issues/$id" "{\"assigneeAgentId\":\"$assignee\"}" >/dev/null; then
+    # The marker goes last: until the wake has fired it is the only record
+    # that this block is waiting on main, and a failed PATCH retries next pass.
+    rm -f "$marker"
     echo "$task: requeued $esc (base-red $sha, main now $MAIN)"
   else
-    echo "$task: cleared; re-dispatch of $esc FAILED — re-check its status and assignee"
+    echo "$task: re-dispatch of $esc FAILED — marker kept; the next pass retries"
   fi
 done
 exit 0

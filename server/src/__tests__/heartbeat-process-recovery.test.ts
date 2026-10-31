@@ -177,15 +177,14 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakeup?.status).toBe("claimed");
   });
 
-  // A detached run's work lives outside this process, so a dead pid says nothing
-  // about the build. Reaping one is not a cosmetic wrong status: the retry path
-  // below would re-dispatch the agent and start a duplicate multi-hour build
-  // while the original is still compiling.
-  it("never reaps or retries a detached run, even with a dead pid", async () => {
+  // A detached run's work lives outside this process, so the generic reap is
+  // wrong for it: the retry path below would re-dispatch the agent and start a
+  // duplicate multi-hour build while the original is still compiling.
+  it("never reaps or retries a detached run whose wrapper is alive", async () => {
     const { agentId, runId } = await seedRunFixture({
       adapterType: "claude_local",
       invocationSource: "detached_external",
-      processPid: 999_999_999,
+      processPid: process.pid,
     });
     const heartbeat = heartbeatService(db);
 
@@ -194,6 +193,31 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const run = await heartbeat.getRun(runId);
     expect(run?.status).toBe("running");
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+  });
+
+  // The recorded pid is the wrapper, which closes its run before exiting. Once
+  // it is dead nothing else can settle the row, so the reaper settles it the
+  // way the wrapper would have: failed, and still no retry.
+  it("settles a detached run whose wrapper pid is dead, without a retry", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "claude_local",
+      invocationSource: "detached_external",
+      processPid: 999_999_999,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(1);
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("failed");
+    expect(run?.errorCode).toBe("detached_wrapper_lost");
 
     const runs = await db
       .select()

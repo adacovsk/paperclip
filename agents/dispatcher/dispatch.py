@@ -705,9 +705,15 @@ def main_has_dir(wt: Path, path: str) -> bool:
     return out.returncode == 0 and bool(out.stdout.strip())
 
 
+#: Source files a split turns into a module directory of the same stem: Rust's
+#: `x.rs` -> `x/` and a Python module's `x.py` -> package `x/`.
+SPLIT_SUFFIXES = (".rs", ".py")
+
+
 def split_dir(path: str) -> str | None:
     """The module directory a split of `path` would create: `a/b.rs` -> `a/b`."""
-    return path[: -len(".rs")] if path.endswith(".rs") else None
+    suffix = next((s for s in SPLIT_SUFFIXES if path.endswith(s)), None)
+    return path[: -len(suffix)] if suffix else None
 
 
 def parse_merge_tree(out: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1984,6 +1990,7 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
         triples = list(pool.map(in_force, held))
 
     waiting = []
+    final = []
     legacy = 0
     unparsed = []
     for issue, body, comments in triples:
@@ -1993,6 +2000,8 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
         parsed = held_until(body) or held_closed(body)
         if parsed and not overruled(comments, parsed):
             waiting.append((issue, body, parsed))
+        elif parsed:
+            final.append((issue, parsed))
         legacy += body.startswith(LEGACY_HOLD) and not parsed
         if body.startswith(HELD_UNTIL_PREFIX) and not parsed:
             unparsed.append(issue["identifier"])
@@ -2023,6 +2032,21 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
             f"release {issue['identifier']}: {why}",
         )
         released += 1
+    # A re-hold is final, so one written on a condition that already holds can
+    # never be released by this sweep. Not acted on -- the re-hold may be a
+    # deliberate correction -- but named, since nothing else will notice it.
+    met = []
+    for issue, (blocker_ids, kind) in final:
+        for blocker_id in blocker_ids:
+            if blocker_id not in blockers:
+                try:
+                    blockers[blocker_id] = api.get(f"/issues/{blocker_id}")
+                except urllib.error.HTTPError:
+                    blockers[blocker_id] = None
+        if all(hold_resolved(blockers[b], kind, f"task/{b}" in pr_heads) for b in blocker_ids):
+            met.append(issue["identifier"])
+    if met:
+        print(f"holds   {len(met)} re-held on a condition already met, so never released: {', '.join(met)}", flush=True)
     save_state("holds.json", {"at": time.time()}, api.dry_run)
     return released
 
