@@ -2209,9 +2209,31 @@ export function heartbeatService(db: Db) {
       // tracked-local-child adapter with a pid recorded — can satisfy
       // `shouldRetry` and RE-DISPATCH THE AGENT for work that is running fine.
       // Only the caller that launched the work knows when it is done, so only
-      // that caller settles these: a leaked row costs a stale pulse, a spurious
-      // retry costs a duplicate run of whatever was already in flight.
-      if (run.invocationSource === DETACHED_INVOCATION_SOURCE) continue;
+      // that caller settles these: a spurious retry costs a duplicate run of
+      // whatever was already in flight.
+      //
+      // The one exception is a caller that is itself gone. The recorded pid is
+      // the wrapper shell, not the build, and the wrapper closes its run before
+      // it exits; once that pid is dead nothing can ever settle the row, and a
+      // `running` detached run keeps the issue's execution lock, so every
+      // re-dispatch of the task starts no run. Settle it exactly as the
+      // wrapper's own close would (no retry, no re-dispatch): the wrapper's
+      // cancel watcher acts only on `cancelled`, so even a recycled-pid misread
+      // cannot tear down a live build.
+      if (run.invocationSource === DETACHED_INVOCATION_SOURCE) {
+        if (!run.processPid || isProcessAlive(run.processPid)) continue;
+        // Re-read after the pid check: a wrapper closes before it exits, so a
+        // close that raced this sweep is visible now and must not be overwritten.
+        const fresh = await getRun(run.id);
+        if (!fresh || fresh.status !== "running") continue;
+        await setRunStatus(run.id, "failed", {
+          finishedAt: now,
+          error: `Detached wrapper pid ${run.processPid} exited without settling its run`,
+          errorCode: "detached_wrapper_lost",
+        });
+        reaped.push(run.id);
+        continue;
+      }
 
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
