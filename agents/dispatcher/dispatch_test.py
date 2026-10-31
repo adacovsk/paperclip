@@ -1,5 +1,7 @@
 """Signal-table tests for dispatch.py.  Run: python3 -m unittest agents/dispatcher/dispatch_test.py"""
 
+import contextlib
+import io
 import importlib.util
 import os
 import subprocess
@@ -263,6 +265,7 @@ class RebaseDispatch(unittest.TestCase):
         git = GitState(exists=True, ahead=1, conflicts=("src/x.rs",), split_on_main=("src/x.rs",))
         self.assertEqual(decide(parent(), [VERIFY_BLOCKED], git).kind, "rebase")
         self.assertEqual(dispatch.split_dir("src/a/b.rs"), "src/a/b")
+        self.assertEqual(dispatch.split_dir("scripts/gen/profiles.py"), "scripts/gen/profiles")
         self.assertIsNone(dispatch.split_dir("assets/a.json"))
 
 
@@ -422,6 +425,18 @@ class PlannerHolds(unittest.TestCase):
             {"createdAt": "1", "body": "Held: until AA-7 merges — first hold"},
         ]}, {"AA-7": "done"})
         self.assertEqual(dispatch.release_holds(api, {}), 0)
+
+    def test_a_final_re_hold_on_a_met_condition_is_named_not_released(self):
+        api = self.Api({"1": [
+            {"createdAt": "1", "body": "Held: until AA-7 merges — builds on its seam"},
+            {"createdAt": "2", "body": "Released: AA-7 is done.\n\n> Held: until AA-7 merges — builds on its seam"},
+            {"createdAt": "3", "body": "Held: until AA-7 merges — re-held"},
+        ]}, {"AA-7": "done"})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(dispatch.release_holds(api, {}), 0)
+        self.assertEqual(api.writes, [])
+        self.assertIn("re-held on a condition already met, so never released: AA-1", out.getvalue())
 
     def test_a_hold_on_several_blockers_waits_for_all_of_them(self):
         comments = {"1": [{"createdAt": "1", "body": "Held: until AA-7 and AA-8 merge — one slice at a time"}]}
