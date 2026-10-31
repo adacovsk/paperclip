@@ -19,6 +19,7 @@ whole instruction set. This script runs those rows directly:
   `Held: until <id> merges|opens its PR`  -> back to backlog once it has
   `Held: waiting on <id>`, <id> closed     -> back to backlog
   `Held: planner`, blocked and unassigned  -> todo, assigned to the Planner (its wake)
+  `todo`, no assignee, past the grace      -> backlog, so promotion dispatches it
   same work filed twice, copy unstarted     -> cancel it, re-point holds on it (dedupe.py)
   base-red marker, main moved past it      -> requeue the verify (requeue-base-red.sh)
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task,
@@ -100,6 +101,11 @@ DEDUPE_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_DEDUPE_SCAN_SECONDS", 18
 FACILITATOR_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_FACILITATOR_SCAN_SECONDS", 1800))
 #: A refill wake the Coordinator just answered needs no repeat inside this window.
 REFILL_INTERVAL = float(os.environ.get("DISPATCHER_REFILL_SECONDS", 300))
+#: How long a task may sit `todo` with no assignee before it is parked in
+#: `backlog`. Every re-dispatch passes through exactly that state (`todo` +
+#: null, then the assignee) within one sweep, so the grace is what keeps a
+#: toggle in flight from being mistaken for a stranded task.
+STRANDED_TODO_GRACE = float(os.environ.get("DISPATCHER_STRANDED_TODO_SECONDS", 600))
 
 STAGE_KEYS = {"review": "review", "verify": "verify", "ci-fix": "verify", "rebase": "rebase"}
 STAGE_PREFIXES = {"Review:": "review", "Verify:": "verify", "ci-fix:": "verify", "Rebase ": "rebase"}
@@ -1186,6 +1192,8 @@ def sweep(api: Api, project: Path) -> None:
     # Before release_holds: a hold on a cancelled duplicate reads as released, so it
     # must move to the surviving copy first or the waiting task is freed early.
     dedupe_duplicates(api, project)
+    # Before promotion, so a task parked here is a candidate this same sweep.
+    park_stranded_todos(api)
     released = release_holds(api, pr_heads, agents.get("Planner"))
     promoted, judged = promotion.promote(api, agents, project, pr_heads)
     in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
@@ -1961,6 +1969,38 @@ def dedupe_duplicates(api: Api, project: Path) -> int:
     cancelled = dedupe.sweep(api, project)
     save_state("dedupe.json", {"at": time.time()}, api.dry_run)
     return cancelled
+
+
+def stranded_todos(issues: list[dict], now: float, grace: float = STRANDED_TODO_GRACE) -> list[dict]:
+    """`todo` tasks no one will ever run: no assignee, not a stage, quiet past the grace.
+
+    Promotion reads `backlog` and a wake fires on assignment, so a `todo` with
+    no assignee is dispatched by nothing; one sat 13 days. It cannot be made
+    unwritable instead, because every re-dispatch passes through it. Stages are
+    excluded: a held Verify waits `todo` and unassigned for build capacity by
+    design, and the sweep dispatches it from there.
+    """
+    return [
+        i for i in issues
+        if i["status"] == "todo"
+        and not i.get("assigneeAgentId") and not i.get("assigneeUserId")
+        and stage_of(i) is None
+        and now - iso_ts(i["updatedAt"]) >= grace
+    ]
+
+
+def park_stranded_todos(api: Api) -> int:
+    """Move stranded `todo` tasks to `backlog`, where promotion's checks apply. Returns how many."""
+    parked = stranded_todos(api.issues(status="todo"), time.time())
+    for issue in parked:
+        api.set_status(
+            issue,
+            {"status": "backlog"},
+            "Parked in `backlog`: this task was `todo` with no assignee, a state nothing "
+            "dispatches. Promotion picks it up from here, with the usual hold and contention checks.",
+            f"strand  {issue['identifier']}: unassigned todo -> backlog",
+        )
+    return len(parked)
 
 
 def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None) -> int:

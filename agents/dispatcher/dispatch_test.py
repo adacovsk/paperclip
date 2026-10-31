@@ -1,6 +1,7 @@
 """Signal-table tests for dispatch.py.  Run: python3 -m unittest agents/dispatcher/dispatch_test.py"""
 
 import contextlib
+from datetime import datetime, timezone
 import io
 import importlib.util
 import os
@@ -1166,3 +1167,30 @@ class MainHasDir(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StrandedTodoTest(unittest.TestCase):
+    NOW = 1_000_000.0
+
+    def todo(self, age, **kw):
+        stamp = datetime.fromtimestamp(self.NOW - age, timezone.utc).isoformat()
+        return {"identifier": "AA-1", "status": "todo", "title": "§4.1 — do a thing",
+                "updatedAt": stamp, **kw}
+
+    def test_an_unassigned_todo_past_the_grace_is_stranded(self):
+        self.assertEqual(len(dispatch.stranded_todos([self.todo(3600)], self.NOW, 600)), 1)
+
+    def test_a_toggle_in_flight_is_left_alone(self):
+        # Every re-dispatch passes through todo + null for a moment.
+        self.assertEqual(dispatch.stranded_todos([self.todo(5)], self.NOW, 600), [])
+
+    def test_an_assigned_todo_is_not_stranded(self):
+        issues = [self.todo(3600, assigneeAgentId="w"), self.todo(3600, assigneeUserId="u")]
+        self.assertEqual(dispatch.stranded_todos(issues, self.NOW, 600), [])
+
+    def test_a_held_verify_waiting_for_capacity_is_not_stranded(self):
+        held = self.todo(3600, title="Verify: AA-2 something", dedupeKey="verify", parentId="p")
+        self.assertEqual(dispatch.stranded_todos([held], self.NOW, 600), [])
+
+    def test_other_statuses_are_ignored(self):
+        self.assertEqual(dispatch.stranded_todos([self.todo(3600, status="backlog")], self.NOW, 600), [])
