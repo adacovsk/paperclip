@@ -155,7 +155,7 @@ Only after all six checks pass, proceed to "Verification" below.
 
 ## Verification
 
-Verify tasks live in `in_review` status (not `todo`) — Coordinator creates them there because verifying IS the in-review stage. The server holds your task at `in_review` until the branch merges (you have no paperclip skill); the Dispatcher closes the Verify once the open PR carries the head Landing recorded in `{task-id}.landed`. Finish and exit.
+Verify tasks live in `in_review` status (not `todo`) — Coordinator creates them there because verifying IS the in-review stage. The server holds your task at `in_review` until the branch merges (you have no paperclip skill); the Dispatcher closes the Verify once the open PR carries the head Landing recorded in `{task-id}.landed`. That is the Dispatcher's rule, not a stop condition for you: the PR head matching `{task-id}.landed` does not mean this Verify is done. A Verify opened after a Rebase stage exists because the worktree HEAD is ahead of the PR head, and the marker predates it. Treat the task as already landed only when the worktree HEAD equals the open PR's head (`git -C "$WORKTREE" rev-parse HEAD` against `gh pr view --json headRefOid`); otherwise build, verify and land the worktree head. Finish and exit.
 
 ### Cargo discipline (read every run)
 
