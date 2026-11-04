@@ -4,7 +4,7 @@ import { APPROVAL_TYPES } from "../constants.js";
 export const createApprovalSchema = z.object({
   type: z.enum(APPROVAL_TYPES),
   requestedByAgentId: z.string().uuid().optional().nullable(),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   issueIds: z.array(z.string().uuid()).optional(),
 });
 
@@ -25,7 +25,7 @@ export const requestApprovalRevisionSchema = z.object({
 export type RequestApprovalRevision = z.infer<typeof requestApprovalRevisionSchema>;
 
 export const resubmitApprovalSchema = z.object({
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type ResubmitApproval = z.infer<typeof resubmitApprovalSchema>;
