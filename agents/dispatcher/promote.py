@@ -42,6 +42,7 @@ SPLIT_MAX_UNLANDED = int(os.environ.get("DISPATCHER_SPLIT_MAX_UNLANDED", 2))
 MAX_EXAMINED = int(os.environ.get("DISPATCHER_PROMOTE_EXAMINED", 40))
 
 _TICK = re.compile(r"`([^`\n]+)`")
+_BRACE = re.compile(r"([^{}]*)\{([^{}]+)\}([^{}]*)")
 _PATH_EXT = re.compile(r"\.(rs|json|txt|py|toml|md|sh|ron|png)$")
 _REMOVES = re.compile(r"Removes?:\s*(.+?)(?:\.\s|\.$|\n|$)", re.S)
 _KEY = re.compile(r"^[a-z][a-z0-9_]*(?::[a-z0-9_]+)?$")
@@ -81,16 +82,24 @@ class Board:
 
 
 def candidate_paths(body: str) -> list[str]:
-    """Backticked tokens that name a file or directory."""
+    """Backticked tokens that name a file or directory, `dir/{a,b}` expanded.
+
+    A bare file name the body also spells out in full refers to that path, not to
+    every file of that name: matched against any directory, the `mod.rs` a split
+    task names for its new module collides with every other split in flight.
+    """
     out = []
     for tok in _TICK.findall(body):
         tok = tok.strip().rstrip(":,")
-        if " " in tok or tok.startswith(("docs/ROADMAP", "docs/roadmap/")):
-            continue
-        if "/" in tok or _PATH_EXT.search(tok):
-            if tok not in out:
+        m = _BRACE.fullmatch(tok)
+        expanded = [m[1] + part.strip() + m[3] for part in m[2].split(",")] if m else [tok]
+        for tok in expanded:
+            if " " in tok or tok.startswith(("docs/ROADMAP", "docs/roadmap/")):
+                continue
+            if ("/" in tok or _PATH_EXT.search(tok)) and tok not in out:
                 out.append(tok)
-    return out
+    spelled = {t.rstrip("/").rsplit("/", 1)[1] for t in out if "/" in t.rstrip("/")}
+    return [t for t in out if "/" in t or t not in spelled]
 
 
 def removes_keys(body: str) -> list[str]:

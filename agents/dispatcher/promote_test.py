@@ -27,6 +27,22 @@ class Parsing(unittest.TestCase):
         body = "Edit `src/a.rs` and `types.rs` in `src/components/`; key `shield_block`; `docs/ROADMAP.md:4`."
         self.assertEqual(promote.candidate_paths(body), ["src/a.rs", "types.rs", "src/components/"])
 
+    def test_brace_paths_expand(self):
+        body = "`src/x/a.rs` -> `src/x/a/{mod.rs, b.rs}`."
+        self.assertEqual(promote.candidate_paths(body), ["src/x/a.rs", "src/x/a/mod.rs", "src/x/a/b.rs"])
+
+    def test_bare_name_spelled_in_full_is_that_path(self):
+        body = "Split `src/x/a.rs` into `src/x/a/{mod.rs,b.rs}`; re-exports in `mod.rs`; beside `c.rs`."
+        self.assertEqual(promote.candidate_paths(body), ["src/x/a.rs", "src/x/a/mod.rs", "src/x/a/b.rs", "c.rs"])
+
+    def test_split_mod_rs_is_not_contended_by_other_modules(self):
+        body = "Split `src/x/a.rs` into `src/x/a/{mod.rs,b.rs}`; re-exports in `mod.rs`."
+        board = self.board_with({"src/y/mod.rs": {"AA-2", "AA-3"}})
+        self.assertEqual(judge(task("§4.983 — Split `src/x/a.rs`"), body, board, CLEAN, {}).action, "promote")
+
+    def board_with(self, in_flight):
+        return Board(roadmap=ROADMAP, in_flight=in_flight)
+
     def test_removes_keys_reads_only_the_removes_clause(self):
         body = "Removes: `anoint_ally`, `blood_rising` (in `class-sorcerer.txt`). Files: `src/x.rs`."
         self.assertEqual(promote.removes_keys(body), ["anoint_ally", "blood_rising"])
