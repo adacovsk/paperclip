@@ -58,6 +58,9 @@ from pathlib import Path
 
 # What `git cherry-pick` carries over unchanged, however the patch was resolved.
 PICK_KEY = "%ae %at %s"
+#: Kept equal to `agents/facilitator/mechanical.py`'s; the two scripts are loaded by path.
+STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
+STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
 REAP = Path(__file__).resolve().parent.parent / "architect" / "reap-verify.sh"
 
 
@@ -168,10 +171,36 @@ class Api:
         d = self.call("GET", f"/companies/{self.company}/issues?status=in_review")
         return d if isinstance(d, list) else d.get("issues", [])
 
-    def close(self, issue: dict, comment: str) -> None:
+    def close(self, issue: dict, comment: str, status: str = "done") -> None:
         # Comment first: a status flipped with no reason is the unrecoverable half.
         self.call("POST", f"/issues/{issue['id']}/comments", {"body": comment})
-        self.call("PATCH", f"/issues/{issue['id']}", {"status": "done"})
+        self.call("PATCH", f"/issues/{issue['id']}", {"status": status})
+
+    def children(self, issue: dict) -> list[dict]:
+        d = self.call("GET", f"/companies/{self.company}/issues?parentId={issue['id']}")
+        return d if isinstance(d, list) else d.get("issues", [])
+
+
+def is_stage(issue: dict) -> bool:
+    """A pipeline stage of its parent, as the Facilitator's `mechanical.is_stage` reads one."""
+    return (issue.get("dedupeKey") or "") in STAGE_KEYS or issue["title"].startswith(STAGE_PREFIXES)
+
+
+def cancel_stages(api, parent: dict, pr_number: int) -> list[str]:
+    """Cancel a merged parent's open stages.
+
+    Left open, a stage keeps its assignee and the missed-wake sweep re-fires it every
+    few hours into a run that aborts on the reaped worktree. Only stages: a follow-up
+    filed as a child has its own branch and work still to do.
+    """
+    out = []
+    for child in api.children(parent):
+        if child["status"] in ("done", "cancelled") or not is_stage(child):
+            continue
+        api.close(child, f"Cancelled: parent {parent['identifier']} merged (PR #{pr_number}); "
+                         f"this stage has nothing left to do. Closed by `merge-sweep.py`.", "cancelled")
+        out.append(child["identifier"])
+    return out
 
 
 def sweep(project: Path, parents: list[dict], prs: list[dict], api, reap, dry: bool) -> list[str]:
@@ -201,6 +230,9 @@ def sweep(project: Path, parents: list[dict], prs: list[dict], api, reap, dry: b
                           f"{' or its `train-src` snapshot' if pr.is_train else ''}. "
                           f"Closed by `merge-sweep.py`.")
         done = [f"{ident}: closed (PR #{pr.number}, {pr.head})"]
+        stages = cancel_stages(api, parent, pr.number)
+        if stages:
+            done.append(f"stages cancelled: {', '.join(stages)}")
 
         wt = project / ".paperclip" / "worktrees" / ident
         if not reaped:

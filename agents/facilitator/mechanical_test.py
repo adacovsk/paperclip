@@ -27,8 +27,8 @@ def task(ident, title="Verify: X-1 something", status="in_review", hours_ago=3, 
             "updatedAt": iso(hours_ago), "activeRun": None, "executionRunId": None, **extra}
 
 
-def stalled(issues, runs=(), paused=(), skip=None, quiet=None):
-    return [i["identifier"] for i in m.missed_wakes(issues, list(runs), set(paused), skip, NOW, quiet)]
+def stalled(issues, runs=(), paused=(), skip=None, quiet=None, closed=None):
+    return [i["identifier"] for i in m.missed_wakes(issues, list(runs), set(paused), skip, NOW, quiet, closed)]
 
 
 class MissedWakes(unittest.TestCase):
@@ -65,6 +65,24 @@ class MissedWakes(unittest.TestCase):
 
     def test_a_recent_off_board_event_restarts_the_clock(self):
         self.assertEqual(stalled([task("A", hours_ago=5)], quiet=lambda i: NOW - 0.5 * HOUR), [])
+
+    def test_a_stage_under_a_closed_parent_is_not_owed_a_wake(self):
+        closed = lambda i: i.get("parentId") == "merged"
+        self.assertEqual(stalled([task("A", parentId="merged"), task("B", parentId="open")], closed=closed), ["B"])
+
+    def test_closed_parent_check_reads_only_parents_not_listed_open(self):
+        class Api:
+            reads = []
+
+            def get(self, path):
+                self.reads.append(path)
+                return {"status": "done"}
+        api = Api()
+        check = m.closed_parent_check(api, [{"id": "p-open"}])
+        self.assertFalse(check({"parentId": "p-open"}))
+        self.assertFalse(check({}))
+        self.assertTrue(check({"parentId": "p-done"}))
+        self.assertEqual(api.reads, ["/issues/p-done"])
 
     def test_oldest_stall_first(self):
         self.assertEqual(stalled([task("new", hours_ago=3), task("old", hours_ago=30)]), ["old", "new"])

@@ -25,12 +25,16 @@ ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
 
 
 class FakeApi:
-    def __init__(self):
+    def __init__(self, kids=()):
         self.calls = []
+        self.kids = list(kids)
 
-    def close(self, issue, comment):
+    def close(self, issue, comment, status="done"):
         self.calls.append(("comment", issue["identifier"], comment))
-        self.calls.append(("done", issue["identifier"]))
+        self.calls.append((status, issue["identifier"]))
+
+    def children(self, issue):
+        return self.kids
 
 
 class Repo:
@@ -239,6 +243,20 @@ class MergeSweep(unittest.TestCase):
         pr = self.r.merge_pr("origin/train/7/T-14")
         self.sweep(["T-14"], [pr])
         self.assertEqual(self.api.calls[-1], ("done", "T-14"))
+
+    def test_open_stages_are_cancelled_with_the_parent_but_follow_ups_are_not(self):
+        self.r.task("T-1", [("a.txt", "a")])
+        pr = self.r.merge_pr("origin/task/T-1")
+        self.api.kids = [
+            {"identifier": "S-1", "title": "Verify: T-1 x", "status": "in_review"},
+            {"identifier": "S-2", "title": "Rebase task/T-1 onto origin/main", "status": "in_review"},
+            {"identifier": "S-3", "title": "Review: T-1 x", "status": "done"},
+            {"identifier": "F-1", "title": "§4.1 follow-up", "status": "blocked"},
+        ]
+        out = self.sweep(["T-1"], [pr])
+        cancelled = [c[1] for c in self.api.calls if c[0] == "cancelled"]
+        self.assertEqual(cancelled, ["S-1", "S-2"])
+        self.assertIn("stages cancelled: S-1, S-2", out[0])
 
     def test_no_merged_pr_is_silent(self):
         self.r.task("T-6", [("j.txt", "j")])
