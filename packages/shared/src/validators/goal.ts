@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchSchema } from "./patch.js";
 import { GOAL_LEVELS, GOAL_STATUSES } from "../constants.js";
 
 export const createGoalSchema = z.object({
@@ -12,6 +13,6 @@ export const createGoalSchema = z.object({
 
 export type CreateGoal = z.infer<typeof createGoalSchema>;
 
-export const updateGoalSchema = createGoalSchema.partial();
+export const updateGoalSchema = patchSchema(createGoalSchema);
 
 export type UpdateGoal = z.infer<typeof updateGoalSchema>;

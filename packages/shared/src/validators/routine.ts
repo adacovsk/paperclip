@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchSchema } from "./patch.js";
 import {
   ISSUE_PRIORITIES,
   ROUTINE_CATCH_UP_POLICIES,
@@ -22,7 +23,7 @@ export const createRoutineSchema = z.object({
 
 export type CreateRoutine = z.infer<typeof createRoutineSchema>;
 
-export const updateRoutineSchema = createRoutineSchema.partial();
+export const updateRoutineSchema = patchSchema(createRoutineSchema);
 export type UpdateRoutine = z.infer<typeof updateRoutineSchema>;
 
 const baseTriggerSchema = z.object({
@@ -61,7 +62,7 @@ export type UpdateRoutineTrigger = z.infer<typeof updateRoutineTriggerSchema>;
 
 export const runRoutineSchema = z.object({
   triggerId: z.string().uuid().optional().nullable(),
-  payload: z.record(z.unknown()).optional().nullable(),
+  payload: z.record(z.string(), z.unknown()).optional().nullable(),
   idempotencyKey: z.string().trim().max(255).optional().nullable(),
   source: z.enum(["manual", "api"]).optional().default("manual"),
 });

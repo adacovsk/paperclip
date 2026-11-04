@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchSchema } from "./patch.js";
 
 export const issueWorkProductTypeSchema = z.enum([
   "preview_url",
@@ -43,12 +44,12 @@ export const createIssueWorkProductSchema = z.object({
   isPrimary: z.boolean().optional().default(false),
   healthStatus: z.enum(["unknown", "healthy", "unhealthy"]).optional().default("unknown"),
   summary: z.string().optional().nullable(),
-  metadata: z.record(z.unknown()).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   createdByRunId: z.string().uuid().optional().nullable(),
 });
 
 export type CreateIssueWorkProduct = z.infer<typeof createIssueWorkProductSchema>;
 
-export const updateIssueWorkProductSchema = createIssueWorkProductSchema.partial();
+export const updateIssueWorkProductSchema = patchSchema(createIssueWorkProductSchema);
 
 export type UpdateIssueWorkProduct = z.infer<typeof updateIssueWorkProductSchema>;

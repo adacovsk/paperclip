@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { patchSchema } from "./patch.js";
 import { PROJECT_STATUSES } from "../constants.js";
 
 const executionWorkspaceStrategySchema = z
@@ -19,11 +20,11 @@ export const projectExecutionWorkspacePolicySchema = z
     allowIssueOverride: z.boolean().optional(),
     defaultProjectWorkspaceId: z.string().uuid().optional().nullable(),
     workspaceStrategy: executionWorkspaceStrategySchema.optional().nullable(),
-    workspaceRuntime: z.record(z.unknown()).optional().nullable(),
-    branchPolicy: z.record(z.unknown()).optional().nullable(),
-    pullRequestPolicy: z.record(z.unknown()).optional().nullable(),
-    runtimePolicy: z.record(z.unknown()).optional().nullable(),
-    cleanupPolicy: z.record(z.unknown()).optional().nullable(),
+    workspaceRuntime: z.record(z.string(), z.unknown()).optional().nullable(),
+    branchPolicy: z.record(z.string(), z.unknown()).optional().nullable(),
+    pullRequestPolicy: z.record(z.string(), z.unknown()).optional().nullable(),
+    runtimePolicy: z.record(z.string(), z.unknown()).optional().nullable(),
+    cleanupPolicy: z.record(z.string(), z.unknown()).optional().nullable(),
   })
   .strict();
 
@@ -43,7 +44,7 @@ const projectWorkspaceFields = {
   remoteProvider: z.string().optional().nullable(),
   remoteWorkspaceRef: z.string().optional().nullable(),
   sharedWorkspaceKey: z.string().optional().nullable(),
-  metadata: z.record(z.unknown()).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable(),
 };
 
 function validateProjectWorkspace(value: Record<string, unknown>, ctx: z.RefinementCtx) {
@@ -79,10 +80,10 @@ export const createProjectWorkspaceSchema = z.object({
 
 export type CreateProjectWorkspace = z.infer<typeof createProjectWorkspaceSchema>;
 
-export const updateProjectWorkspaceSchema = z.object({
+export const updateProjectWorkspaceSchema = patchSchema(z.object({
   ...projectWorkspaceFields,
   isPrimary: z.boolean().optional(),
-}).partial();
+}));
 
 export type UpdateProjectWorkspace = z.infer<typeof updateProjectWorkspaceSchema>;
 
@@ -107,7 +108,7 @@ export const createProjectSchema = z.object({
 
 export type CreateProject = z.infer<typeof createProjectSchema>;
 
-export const updateProjectSchema = z.object(projectFields).partial();
+export const updateProjectSchema = patchSchema(z.object(projectFields));
 
 export type UpdateProject = z.infer<typeof updateProjectSchema>;
 

@@ -27,7 +27,7 @@ import {
  *
  * @see PLUGIN_SPEC.md §10.1 — Manifest shape
  */
-export const jsonSchemaSchema = z.record(z.unknown()).refine(
+export const jsonSchemaSchema = z.record(z.string(), z.unknown()).refine(
   (val) => {
     // Must have a "type" field if non-empty, or be a valid JSON Schema object
     if (Object.keys(val).length === 0) return true;
@@ -203,7 +203,7 @@ const launcherBoundsByEnvironment: Record<
 export const pluginLauncherActionDeclarationSchema = z.object({
   type: z.enum(PLUGIN_LAUNCHER_ACTIONS),
   target: z.string().min(1),
-  params: z.record(z.unknown()).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
 }).superRefine((value, ctx) => {
   if (value.type === "performAction" && value.target.includes("/")) {
     ctx.addIssue({
@@ -580,7 +580,7 @@ export type InstallPlugin = z.infer<typeof installPluginSchema>;
  * the plugin's instanceConfigSchema is done at the service layer.
  */
 export const upsertPluginConfigSchema = z.object({
-  configJson: z.record(z.unknown()),
+  configJson: z.record(z.string(), z.unknown()),
 });
 
 export type UpsertPluginConfig = z.infer<typeof upsertPluginConfigSchema>;
@@ -590,7 +590,7 @@ export type UpsertPluginConfig = z.infer<typeof upsertPluginConfigSchema>;
  * Allows a partial merge of config values.
  */
 export const patchPluginConfigSchema = z.object({
-  configJson: z.record(z.unknown()),
+  configJson: z.record(z.string(), z.unknown()),
 });
 
 export type PatchPluginConfig = z.infer<typeof patchPluginConfigSchema>;

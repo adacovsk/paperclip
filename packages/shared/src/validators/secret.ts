@@ -19,7 +19,7 @@ export const envBindingSchema = z.union([
   envBindingSecretRefSchema,
 ]);
 
-export const envConfigSchema = z.record(envBindingSchema);
+export const envConfigSchema = z.record(z.string(), envBindingSchema);
 
 export const createSecretSchema = z.object({
   name: z.string().min(1),
