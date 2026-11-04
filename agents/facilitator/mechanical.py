@@ -72,7 +72,7 @@ def is_stage(issue: dict) -> bool:
 
 
 def missed_wakes(issues: list[dict], live_runs: list[dict], paused: set[str], skip_agent: str | None,
-                 now: float, quiet_since=None) -> list[dict]:
+                 now: float, quiet_since=None, parent_closed=None) -> list[dict]:
     """Assigned tasks whose wake never started a run, oldest stall first.
 
     A Worker parent `in_review` with no run is waiting on its stage children, which is
@@ -82,6 +82,10 @@ def missed_wakes(issues: list[dict], live_runs: list[dict], paused: set[str], sk
     `quiet_since(issue)` is when the task last did anything off the board, or None
     while work it is waiting on is still running: a Verify has no run for the hours
     its build is out, and that is not a stall. It defaults to `updatedAt`.
+
+    `parent_closed(issue)` says whether a stage's parent is `done`/`cancelled`. Such a
+    stage has nothing left to do (its worktree is reaped), so every toggle would buy
+    a run that aborts.
     """
     live_ids = {r["id"] for r in live_runs}
     live_issues = {r.get("issueId") for r in live_runs if r.get("issueId")}
@@ -106,8 +110,22 @@ def missed_wakes(issues: list[dict], live_runs: list[dict], paused: set[str], sk
             since = max(since, off_board)
         if now - since < STALL_SECONDS:
             continue
+        if parent_closed and is_stage(issue) and parent_closed(issue):
+            continue
         out.append(issue)
     return sorted(out, key=lambda i: i["updatedAt"])
+
+
+def closed_parent_check(api, open_issues: list[dict]):
+    """`parent_closed` for missed_wakes: a parent listed as open is not closed; others are read."""
+    open_ids = {i["id"] for i in open_issues}
+
+    def parent_closed(issue: dict) -> bool:
+        parent = issue.get("parentId")
+        if not parent or parent in open_ids:
+            return False
+        return (api.get(f"/issues/{parent}") or {}).get("status") in ("done", "cancelled")
+    return parent_closed
 
 
 def plan_toggles(stalled: list[dict], history: dict, now: float) -> tuple[list[dict], list[dict], dict]:
@@ -353,7 +371,9 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
     live_runs = api.get(f"/companies/{api.company}/live-runs") or []
 
-    stalled = missed_wakes(api.issues(status="in_review,in_progress"), live_runs, paused, me, now, quiet_since)
+    open_issues = api.issues(status="in_review,in_progress")
+    stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
+                           closed_parent_check(api, open_issues))
     due, failing, history = plan_toggles(stalled, load(TOGGLES_FILE), now)
     for issue in due:
         toggle(api, issue)
