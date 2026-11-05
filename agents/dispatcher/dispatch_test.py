@@ -393,6 +393,53 @@ class UnheldEscalations(unittest.TestCase):
         self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", [], True, set()))
 
 
+class OrphanStages(unittest.TestCase):
+    """An open stage under a closed parent is cancelled, whatever closed the parent."""
+
+    class Api:
+        dry_run = False
+
+        def __init__(self, open_issues, parents):
+            self.open_issues, self.parents, self.writes, self.reads = open_issues, parents, [], []
+
+        def issues(self, **query):
+            return self.open_issues
+
+        def get(self, path):
+            pid = path.rsplit("/", 1)[1]
+            self.reads.append(pid)
+            return self.parents[pid]
+
+        def set_status(self, issue, body, comment, what):
+            self.writes.append((issue["identifier"], body["status"], comment))
+
+    PARENTS = {
+        "merged": {"identifier": "AA-1", "status": "done"},
+        "dropped": {"identifier": "AA-2", "status": "cancelled"},
+        "live": {"identifier": "AA-3", "status": "in_review"},
+    }
+
+    def test_cancels_stages_under_done_and_cancelled_parents_only(self):
+        api = self.Api([
+            {"id": "a", "identifier": "AA-11", "title": "Verify: AA-1 x", "parentId": "merged"},
+            {"id": "b", "identifier": "AA-12", "title": "Rebase task/AA-2 onto origin/main", "parentId": "dropped"},
+            {"id": "c", "identifier": "AA-13", "title": "Review: AA-3 x", "parentId": "live"},
+            {"id": "d", "identifier": "AA-14", "title": "Follow-up: tidy AA-1", "parentId": "merged"},
+            {"id": "e", "identifier": "AA-15", "title": "Verify: AA-9 x"},
+        ], self.PARENTS)
+        self.assertEqual(dispatch.cancel_orphan_stages(api), ["AA-11", "AA-12"])
+        self.assertEqual([(w[0], w[1]) for w in api.writes], [("AA-11", "cancelled"), ("AA-12", "cancelled")])
+        self.assertIn("parent AA-2 is `cancelled`", api.writes[1][2])
+
+    def test_reads_each_parent_once(self):
+        api = self.Api([
+            {"id": "a", "identifier": "AA-11", "title": "Verify: AA-1 x", "parentId": "merged"},
+            {"id": "b", "identifier": "AA-12", "title": "Review: AA-1 x", "parentId": "merged"},
+        ], self.PARENTS)
+        dispatch.cancel_orphan_stages(api)
+        self.assertEqual(api.reads, ["merged"])
+
+
 class PlannerHolds(unittest.TestCase):
     """A `Held: planner` hold reaches the Planner as an assignment, never as a blocked row."""
 

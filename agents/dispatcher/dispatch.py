@@ -1048,10 +1048,45 @@ def inherit_cloud_lane(roster: list[dict]) -> None:
         os.environ.pop("ARCHITECT_CLOUD_LANE", None)
 
 
+def cancel_orphan_stages(api: Api) -> list[str]:
+    """Cancel every open stage whose parent is `done` or `cancelled`.
+
+    A parent closes by several paths — merge-sweep on a merged PR, a supersession,
+    an operator cancelling it by hand — and only some of them closed its stages.
+    A stage left open under a closed parent keeps its assignee or its hold, and
+    every writer that re-fires stages reads it as live work: the missed-wake
+    toggle, this sweep's held-verify dispatch, the Coordinator's held-verify
+    release. Each such run finds nothing to do. Patching each writer left the next
+    one exposed, so this closes the stage itself, once, whatever closed the
+    parent; a cancelled stage is invisible to all of them.
+    """
+    cancelled, parents = [], {}
+    for stage in api.issues(status=",".join(sorted(OPEN))):
+        if not stage_of(stage) or not stage.get("parentId"):
+            continue
+        pid = stage["parentId"]
+        if pid not in parents:
+            parents[pid] = api.get(f"/issues/{pid}")
+        parent = parents[pid]
+        if parent.get("status") not in ("done", "cancelled"):
+            continue
+        api.set_status(
+            stage,
+            {"status": "cancelled"},
+            f"Cancelled: parent {parent['identifier']} is `{parent['status']}`, so this stage "
+            "has nothing left to act on.",
+            f"cancel  {stage['identifier']}: parent {parent['identifier']} {parent['status']}",
+        )
+        cancelled.append(stage["identifier"])
+    return cancelled
+
+
 def sweep(api: Api, project: Path) -> None:
     roster = api.get(f"/companies/{api.company}/agents")
     inherit_cloud_lane(roster)
     agents = {a["name"]: a["id"] for a in roster}
+    # First, so no step below dispatches or re-fires a stage whose parent is closed.
+    cancel_orphan_stages(api)
     worker = next(a for a in roster if a["name"] == "Worker")
 
     owned = api.issues(status="in_review", assigneeAgentId=agents["Worker"])
