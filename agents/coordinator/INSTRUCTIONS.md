@@ -374,7 +374,9 @@ dispatch, and `in_review` is not a parking status. So for each surplus `needs-bu
 - Create the `Verify:` subtask as normal, but `assigneeAgentId: null`, status `todo`.
 - Record `Intended assignee: Architect (held — LIVE=<n> >= 2*SLOTS=<m>)` in the subtask body.
 - A later fire, once `LANE=1` or `LIVE < 2 * SLOTS`, PATCHes the assignee and `status` to `in_review`. *That*
-  PATCH is the dispatch.
+  PATCH is the dispatch. **Read the parent first:** a held Verify whose parent is `done` or `cancelled` is
+  cancelled, never released — releasing it buys an Architect run with nothing to verify. The Dispatcher cancels
+  such stages on every sweep; this covers a fire that lands between sweeps.
 
 **§Landing sweep's predicate changes with it**: "in_review + assignee = Architect" means
 *dispatched, awaiting result* and nothing else. "in_review + assignee = Dispatcher" is the same state for a build the Dispatcher launched itself (it does whenever the cloud lane is open); the Dispatcher tends it, so the sweep skips it too. A held verify is `todo` + unassigned, has no
