@@ -65,7 +65,8 @@ Read `~/.cache/paperclip-tester/result.json`:
 | `stages.test.results` | each target's `test result:` line, as `<target>: <line>` |
 | `stages.test.compile_errors` | errors that stopped a test target from building |
 | `stages.test.complete` | `true` only when every test target built and ran; `false` means absence from `failed` proves nothing |
-| `stages.smoke`, `stages.scenario-<name>` | the headless runs: `smoke` boots the game to `InGame`, each `scenario-<name>` drives the project's `scripts/smoke/<name>.smoke` through it. `cause` holds the panic and assertion lines, `log_tail` the end of the run. **Any non-zero exit but `137` is a finding**: the game exits `101` on a panic, and a crash may exit otherwise |
+| `stages.game-build.diagnostics` | errors that stopped the game binary building; a red build leaves every headless stage not run |
+| `stages.smoke`, `stages.scenario-<name>` | the headless runs, in parallel once `game-build` is green: `smoke` boots the game to `InGame`, each `scenario-<name>` drives the project's `scripts/smoke/<name>.smoke` through it. `cause` holds the panic and assertion lines, `log_tail` the end of the run. **Any non-zero exit but `137` is a finding**: the game exits `101` on a panic, and a crash may exit otherwise |
 
 The two clippy stages are `pixi.toml`'s `clippy-default` and `clippy-ci`, so a
 red one reproduces with `pixi run clippy-default` or `pixi run clippy-ci`.
@@ -123,7 +124,12 @@ fix needs and nothing else:
   the few lines around it.
 - The merges since `last_green` (below).
 
-**4a. Headless: one issue per red headless stage.** For each `smoke` or
+**4a. Headless: one issue per red headless stage.** First the build: if
+`game-build` exited non-zero (not `137`) while `clippy-default` is red too, it is
+the same compile failure and step 3's issue covers it; otherwise ensure one issue
+titled `Game binary does not build on main` with its diagnostics, as in step 3.
+A red build leaves the headless stages not run — no verdict on them, so file and
+close nothing from them. Then the runs. For each `smoke` or
 `scenario-<name>` stage whose exit is non-zero and not `137`, ensure exactly
 one open issue titled:
 

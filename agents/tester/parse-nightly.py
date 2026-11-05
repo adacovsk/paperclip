@@ -18,6 +18,8 @@ from pathlib import Path
 
 CLIPPY_STAGES = ("clippy-default", "clippy-no-default-features")
 TEST_STAGE = "test"
+#: Builds the game binary the headless runs execute; a compile, read like clippy.
+BUILD_STAGE = "game-build"
 #: Stage-name prefixes of the headless game runs; `run-nightly.sh` adds one
 #: `scenario-<name>` stage per scenario file, so they are discovered, not listed.
 HEADLESS_PREFIXES = ("smoke", "scenario-")
@@ -152,7 +154,7 @@ def main() -> int:
             "sha": sha or None,
             "exit": run_exit,
             "last_green": last_green or None,
-            "stages": {name: stage(state, name) for name in (*CLIPPY_STAGES, TEST_STAGE, *headless_stages(state))},
+            "stages": {name: stage(state, name) for name in (*CLIPPY_STAGES, TEST_STAGE, BUILD_STAGE, *headless_stages(state))},
             "log_tail": run_log.read_text(errors="replace").splitlines()[-15:]
             if run_exit != 0 and run_log.is_file()
             else [],
