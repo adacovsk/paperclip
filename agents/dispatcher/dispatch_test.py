@@ -353,6 +353,46 @@ class Holds(unittest.TestCase):
 
 
 
+class UnheldEscalations(unittest.TestCase):
+    """A blocked stage nobody owns is routed to the Planner with its own reason."""
+
+    VERIFY = {"id": "v", "identifier": "AA-20"}
+
+    @staticmethod
+    def comment(at, body):
+        return {"createdAt": at, "body": body}
+
+    def test_routes_a_marked_escalation_with_its_reason(self):
+        comments = [self.comment("2", "Two worn-item tests fail.\n\nPAPERCLIP-ESCALATE: pick a scope for the Epaulet slot")]
+        self.assertEqual(
+            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set()),
+            "Held: planner — AA-20 escalated: pick a scope for the Epaulet slot",
+        )
+
+    def test_routes_a_prose_escalation_by_its_first_line(self):
+        comments = [self.comment("2", "What it needs: an operator to land it.\nDetail follows.")]
+        self.assertEqual(
+            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set()),
+            "Held: planner — AA-20 escalated: What it needs: an operator to land it.",
+        )
+
+    def test_a_held_stage_is_owned(self):
+        comments = [self.comment("1", "PAPERCLIP-ESCALATE: x"), self.comment("2", "Held: operator — needs a ruling")]
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set()))
+
+    def test_a_conflict_is_the_rebase_lanes(self):
+        comments = [self.comment("1", "PAPERCLIP-ESCALATE: conflict with main")]
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, False, set()))
+
+    def test_a_red_main_is_the_base_red_markers_by_stage_or_parent(self):
+        comments = [self.comment("1", "PAPERCLIP-ESCALATE: main does not compile")]
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-20"}))
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-2"}))
+
+    def test_a_stage_with_no_comment_is_left(self):
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", [], True, set()))
+
+
 class OrphanStages(unittest.TestCase):
     """An open stage under a closed parent is cancelled, whatever closed the parent."""
 

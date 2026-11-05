@@ -293,6 +293,38 @@ def needs_rebase(parent: dict, stages: list[tuple[str, dict]], git: GitState) ->
     return Decision("rebase", ", ".join(paths))
 
 
+#: `next_stage`'s verdict on a parent whose last stage is `blocked`: its block
+#: comment owns it. `unheld_escalation` checks that something actually does.
+BLOCKED_STAGE = "last stage is blocked; its block comment owns it"
+#: The line the Architect ends an escalating final message with.
+ESCALATE_LINE = re.compile(r"^PAPERCLIP-ESCALATE:\s*(.+)$", re.MULTILINE)
+
+
+def unheld_escalation(stage: dict, parent: str, comments: list[dict], merges_clean: bool,
+                      base_red: set[str]) -> str | None:
+    """The `Held: planner` line for a blocked stage nothing routes, else None.
+
+    A Verify or Review escalates by parking `blocked`. Three kinds have an owner:
+    a merge conflict (the rebase lane, or the Coordinator past the rebase cap), a
+    red `main` (its base-red marker and the main-repair task), and anything that
+    carries a `Held:` line (the release sweep or whoever it names). The rest —
+    a fix outside the task's files, a scope pick, a request for an operator
+    written in prose — sat `blocked` with no reader, holding every task queued
+    behind its files. The Planner is the pipeline's judgment for scope, so the
+    stage is routed there with the escalation's own reason.
+    """
+    # A base-red marker names the escalating stage, or its parent when it could not.
+    if not merges_clean or {stage["identifier"], parent} & base_red:
+        return None
+    newest, held = hold_of_record(comments)
+    if held is not None or newest is None:
+        return None
+    body = newest.get("body") or ""
+    m = ESCALATE_LINE.search(body)
+    reason = m.group(1).strip() if m else body.strip().split("\n", 1)[0]
+    return f"Held: planner — {stage['identifier']} escalated: {reason}"
+
+
 def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | None = None) -> Decision:
     """One parent -> what its next stage is.
 
@@ -339,7 +371,7 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
     if rebase:
         return rebase
     if stages and stages[-1][1]["status"] == "blocked":
-        return Decision("skip", "last stage is blocked; its block comment owns it")
+        return Decision("skip", BLOCKED_STAGE)
 
     if pr_head:
         # Landed work waits on a human merge; the merge sweep owns it, whatever
@@ -1148,11 +1180,19 @@ def sweep(api: Api, project: Path) -> None:
             launch_verify(api, agents, held, launcher[1])
 
     # Oldest parent first, so a hot file's longest-waiting branch gets the slot.
+    # A stage that escalated on a red `main` is owned by its base-red marker.
+    base_red_stages = {name for m in base_red_markers() for name in (m.escalated, m.task)}
     for parent, children, git_st in sorted(loaded, key=lambda t: t[0]["createdAt"]):
         if git_st is None:
             continue
         decision = decide(parent, children, git_st, pr_heads.get(f"task/{parent['identifier']}"))
         stages = ordered_stages(children)
+        if decision.reason == BLOCKED_STAGE and agents.get("Planner"):
+            blocked = stages[-1][1]
+            hold = unheld_escalation(blocked, parent["identifier"], api.get(f"/issues/{blocked['id']}/comments"),
+                                     git_st.merges_clean, base_red_stages)
+            if hold:
+                route_to_planner(api, blocked, hold, agents["Planner"])
         if decision.kind == "review":
             create_review(api, agents, parent, git_st)
         elif decision.kind == "verify":
