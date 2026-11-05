@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The nightly check of origin/main: clippy -D warnings in both feature sets, then
-# every test target. Records each stage's verdict as JSON, then wakes the Tester
+# The nightly check of origin/main: clippy -D warnings in both feature sets,
+# every test target, then the real game booted headless and each console
+# scenario driven through it. Records each stage's verdict as JSON, then wakes the Tester
 # to report them.
 #
 # Runs DETACHED. The Tester launches it and ends its run; this script wakes the
@@ -48,6 +49,8 @@ STAGES=(
   "test|CARGO_SEM_CGU_DIV=2|cargo test --tests --no-fail-fast"
   "clippy-no-default-features||cargo clippy --no-default-features --all-targets -- -D warnings -A dead-code -A unused-imports"
 )
+#: The headless runs, `name|game arguments`; filled once the checkout exists.
+HEADLESS=()
 
 mkdir -p "$STATE"
 if [ -f "$STATE/pid" ] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; then
@@ -94,7 +97,10 @@ for name, st in r.get("stages", {}).items():
     else:
         found = True
         n = len(st.get("failed") or st.get("diagnostics") or [])
-        parts.append(f"{name} {n or '?'} failed" if name == "test" else f"{name} {n or '?'} errors")
+        if name.startswith(("smoke", "scenario-")):
+            parts.append(f"{name} failed")
+        else:
+            parts.append(f"{name} {n or '?'} failed" if name == "test" else f"{name} {n or '?'} errors")
 state = "failure" if found else "error" if unknown or r.get("exit") else "success"
 print(state); print("; ".join(parts) or f"no verdict (exit {r.get('exit')})")
 PY
@@ -103,7 +109,7 @@ PY
 # Every stage ran and exited 0. A stage with no exit file never ran.
 all_green() {
   local s
-  for s in "${STAGES[@]}"; do
+  for s in "${STAGES[@]}" "${HEADLESS[@]}"; do
     [ "$(cat "$STATE/${s%%|*}.exit" 2>/dev/null)" = 0 ] || return 1
   done
 }
@@ -148,9 +154,58 @@ else
 fi
 SHA="$(git -C "$WT" rev-parse HEAD)"
 echo "tester: origin/main at $SHA" >> "$STATE/log"
-post_status "$SHA" pending "nightly clippy x2 + tests running"
+post_status "$SHA" pending "nightly clippy x2 + tests + headless running"
 cd "$WT" || { finish 97; exit 97; }
 sccache --start-server >/dev/null 2>&1 || true
+
+# Headless stages: the real game under DefaultPlugins, which no test target
+# reaches — they all run under MinimalPlugins, so boot-path panics (query
+# conflicts, missing resources, world generation) and anything a scenario drives
+# pass every test. `--smoke` boots to InGame and exits; each project
+# `scripts/smoke/*.smoke` drives console commands through a run. Any non-zero
+# exit is a finding. Discovered from the checkout, so a new scenario runs the
+# night it lands with no edit here.
+#
+# ONE BUILD, PARALLEL RUNS. The binary is built once, as its own cargo-sem.sh
+# stage after the test stage (whose default-feature dependency artifacts it
+# reuses). A run is not a compile, so the runs take no cargo slot: they start the
+# moment the build is green, HEADLESS_JOBS at a time, alongside the remaining
+# clippy stage. Each runs in its own sandbox under $STATE — the worktree's
+# `assets` and `scripts` symlinked in, an empty `saves/` — because the game writes
+# `saves/` relative to its working directory: parallel runs in one directory
+# would race on it, and a run in the worktree would leave it holding files the
+# next night's checkout has to step around. An empty `saves/` is the state a
+# fresh checkout boots from, which is what the Architect's smoke step sees.
+GAME_BIN=rust-bevy-rpg  # <!-- privacy-ok: cargo needs the literal bin name -->
+HEADLESS_JOBS="${TESTER_HEADLESS_JOBS:-2}"
+HEADLESS_TIMEOUT="${TESTER_HEADLESS_TIMEOUT:-900}"
+HEADLESS=("smoke|--smoke")
+for scenario in scripts/smoke/*.smoke; do
+  [ -f "$scenario" ] || continue
+  HEADLESS+=("scenario-$(basename "$scenario" .smoke)|--script scripts/smoke/$(basename "$scenario")")
+done
+STAGES=("${STAGES[@]:0:2}" "game-build||cargo build --bin $GAME_BIN" "${STAGES[@]:2}")
+
+# Every headless run, HEADLESS_JOBS at a time. Run without cargo, so the binary
+# needs what `cargo run` would have supplied: the toolchain's and the build's
+# shared libraries (the dev profile links Bevy dynamically), and an asset root —
+# Bevy otherwise looks beside the executable.
+run_headless() {
+  local bin="$WT/target/debug/$GAME_BIN" libs entry name args box running=0
+  libs="$WT/target/debug/deps:$WT/target/debug:$(rustc --print target-libdir)"
+  for entry in "${HEADLESS[@]}"; do
+    name="${entry%%|*}" args="${entry#*|}" box="$STATE/headless/${entry%%|*}"
+    rm -rf "$box" && mkdir -p "$box/saves" && ln -s "$WT/assets" "$box/assets" && ln -s "$WT/scripts" "$box/scripts"
+    # shellcheck disable=SC2086  # $args is word-split on purpose
+    ( cd "$box" && env -u DISPLAY -u WAYLAND_DISPLAY WGPU_ADAPTER_NAME=llvmpipe \
+        LD_LIBRARY_PATH="$libs" BEVY_ASSET_ROOT="$box" CARGO_MANIFEST_DIR="$box" \
+        timeout "$HEADLESS_TIMEOUT" "$bin" $args > "$STATE/$name.log" 2>&1
+      echo $? > "$STATE/$name.exit" ) &
+    running=$((running + 1))
+    if [ "$running" -ge "$HEADLESS_JOBS" ]; then wait -n; running=$((running - 1)); fi
+  done
+  wait
+}
 
 # Express lane: the FIFO queue routinely holds a day of verifies, and a nightly
 # run that waits behind all of them reports on a main that has long moved. One
@@ -168,6 +223,9 @@ for stage in "${STAGES[@]}"; do
   # cargo then prints as an ordinary compile failure.
   if [ "$rc" -ne 0 ] && grep -qE "signal: (9|15)|terminated by signal (9|15)" "$STATE/$name.log"; then rc=137; fi
   echo "$rc" > "$STATE/$name.exit"
+  if [ "$name" = game-build ] && [ "$rc" -eq 0 ]; then run_headless & HEADLESS_PID=$!; fi
 done
+# A red build leaves the headless stages without exit files: "not run", no verdict.
+[ -n "${HEADLESS_PID:-}" ] && wait "$HEADLESS_PID"
 finish 0 "$SHA"
 exit 0
