@@ -718,9 +718,8 @@ accept_cloud_work() {
 # SUPERSEDED. A resolve verify that finds main already doing the task's work
 # stops with no commits and names the main commit. Do not fold this into FAIL:
 # `accept_cloud_work` rejects a commit-less resolve result (its parent is the
-# launched head, not rebased-onto), so the task would sit `blocked` as stuck
-# stock — holding pace-scale's promotion gate shut — until an operator
-# cancelled it by hand.
+# launched head, not rebased-onto), so the task would sit `blocked` until an
+# operator cancelled it by hand.
 #
 # The claim closes a task, so it is checked rather than trusted: the VM published
 # no work, the commit is on origin/main, and it changed at least one of the
@@ -765,8 +764,8 @@ suppressions() {  # lines adding a lint or test suppression in $1..$2
 # detached; exit the run as for a local launch). Exit 1 = lane closed; run the
 # local chain instead. Declining is never an error and writes no sentinel.
 #
-# There is deliberately no concurrency bound: while usage is under the session
-# and week ceilings (cloud-pace.py) every verify goes to the cloud, and the flood
+# There is deliberately no concurrency bound: while usage is under the week
+# ceiling (cloud-pace.py) every verify goes to the cloud, and the flood
 # is bounded by the quota it spends closing the gate. The gate is here rather than in INSTRUCTIONS.md so
 # no Architect run can offload without passing it.
 cmd_offload() {

@@ -136,8 +136,7 @@ the same six checks; only *Verify there's something to do* differs in what it ex
    **A conflict you suspect is superseded by `main` is still a resolve-mode
    offload, not an escalation**: the VM decides, and its confirmed `94` closes the
    task with no operator in the loop. An escalation that says "appears
-   superseded" leaves the task `blocked` as stuck stock, which holds the pace
-   script's promotion gate shut for the whole pipeline. (`ci-failure` flavor: skip — the
+   superseded" leaves the task `blocked` until an operator closes it by hand. (`ci-failure` flavor: skip — the
    worktree is already branched from current `origin/main`.) A verdict of
    "X does not exist" or "the premise is false" cites `origin/main`
    (`git show origin/main:<path>`, `git grep <pattern> origin/main -- <path>`),
@@ -404,8 +403,8 @@ green result waits for the next Coordinator fire.
 It pushes the branch, records its base, and detaches the watch. **Exit 0 → exit
 the run. Exit 1 → the lane is closed for this task; launch the local chain as
 usual.** Exit 1 is never a failure. The lane is open until the week usage
-ceiling is reached (the `cloud-pace` script beside this file; `CLOUD_PACE_ENFORCE_PACE=1`
-also closes it while usage is ahead of the week's pace), and while open there is
+ceiling is reached (the `cloud-pace` script beside this file, the pipeline's one quota
+gate), and while open there is
 no concurrency bound. Never call `watch` or `launch`
 directly — they bypass the gate.
 
