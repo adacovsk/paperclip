@@ -18,6 +18,12 @@ from pathlib import Path
 
 CLIPPY_STAGES = ("clippy-default", "clippy-no-default-features")
 TEST_STAGE = "test"
+#: Stage-name prefixes of the headless game runs; `run-nightly.sh` adds one
+#: `scenario-<name>` stage per scenario file, so they are discovered, not listed.
+HEADLESS_PREFIXES = ("smoke", "scenario-")
+#: Log lines that say why a headless run died: a Rust panic, its location line,
+#: or a scenario assertion.
+HEADLESS_CAUSE = re.compile(r"panicked at|^\s*(thread '.*' )?panicked|assert|ERROR", re.IGNORECASE)
 
 RUNNING = re.compile(r"^\s+Running (?:unittests )?(\S+)")
 FAILED = re.compile(r"^test (\S+) \.\.\. FAILED$")
@@ -108,6 +114,13 @@ def stage(state: Path, name: str) -> dict:
     lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines() if log_file.is_file() else []
     errors = [d for d in diagnostics(lines) if d["level"] == "error"]
     out: dict = {"exit": rc, "ran": True}
+    if name.startswith(HEADLESS_PREFIXES):
+        # The game binary exits 101 on a panic, the same status cargo test uses
+        # for a red test, so every non-zero exit here is a finding with a cause.
+        out["cause"] = [line for line in lines if HEADLESS_CAUSE.search(line)][:20]
+        if rc != 0:
+            out["log_tail"] = lines[-30:]
+        return out
     if name == TEST_STAGE:
         out.update(parse_tests(lines))
         out["compile_errors"] = errors
@@ -123,6 +136,12 @@ def stage(state: Path, name: str) -> dict:
     return out
 
 
+def headless_stages(state: Path) -> list[str]:
+    """The headless stages this run recorded, smoke first, then scenarios by name."""
+    names = {p.name.removesuffix(".exit") for p in state.glob("*.exit")}
+    return sorted((n for n in names if n.startswith(HEADLESS_PREFIXES)), key=lambda n: (n != "smoke", n))
+
+
 def main() -> int:
     state, sha, last_green = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
     run_exit_file = state / "exit"
@@ -133,7 +152,7 @@ def main() -> int:
             "sha": sha or None,
             "exit": run_exit,
             "last_green": last_green or None,
-            "stages": {name: stage(state, name) for name in (*CLIPPY_STAGES, TEST_STAGE)},
+            "stages": {name: stage(state, name) for name in (*CLIPPY_STAGES, TEST_STAGE, *headless_stages(state))},
             "log_tail": run_log.read_text(errors="replace").splitlines()[-15:]
             if run_exit != 0 and run_log.is_file()
             else [],

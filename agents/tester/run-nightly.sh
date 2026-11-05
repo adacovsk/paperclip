@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The nightly check of origin/main: clippy -D warnings in both feature sets, then
-# every test target. Records each stage's verdict as JSON, then wakes the Tester
+# The nightly check of origin/main: clippy -D warnings in both feature sets,
+# every test target, then the real game booted headless and each console
+# scenario driven through it. Records each stage's verdict as JSON, then wakes the Tester
 # to report them.
 #
 # Runs DETACHED. The Tester launches it and ends its run; this script wakes the
@@ -94,7 +95,10 @@ for name, st in r.get("stages", {}).items():
     else:
         found = True
         n = len(st.get("failed") or st.get("diagnostics") or [])
-        parts.append(f"{name} {n or '?'} failed" if name == "test" else f"{name} {n or '?'} errors")
+        if name.startswith(("smoke", "scenario-")):
+            parts.append(f"{name} failed")
+        else:
+            parts.append(f"{name} {n or '?'} failed" if name == "test" else f"{name} {n or '?'} errors")
 state = "failure" if found else "error" if unknown or r.get("exit") else "success"
 print(state); print("; ".join(parts) or f"no verdict (exit {r.get('exit')})")
 PY
@@ -148,9 +152,27 @@ else
 fi
 SHA="$(git -C "$WT" rev-parse HEAD)"
 echo "tester: origin/main at $SHA" >> "$STATE/log"
-post_status "$SHA" pending "nightly clippy x2 + tests running"
+post_status "$SHA" pending "nightly clippy x2 + tests + headless running"
 cd "$WT" || { finish 97; exit 97; }
 sccache --start-server >/dev/null 2>&1 || true
+
+# Headless stages: the real game under DefaultPlugins, which no test target
+# reaches — they all run under MinimalPlugins, so boot-path panics (query
+# conflicts, missing resources, world generation) and anything a scenario drives
+# pass every test. `--smoke` boots to InGame and exits; each project
+# `scripts/smoke/*.smoke` drives console commands through a run. Any non-zero
+# exit is a finding. They follow the test stage, whose default-feature
+# dependency artifacts the game binary reuses, and each is its own cargo-sem.sh
+# call like every stage. Discovered from the checkout, so a new scenario runs
+# the night it lands with no edit here.
+GAME_BIN=rust-bevy-rpg  # <!-- privacy-ok: cargo needs the literal bin name -->
+HEADLESS="env -u DISPLAY -u WAYLAND_DISPLAY WGPU_ADAPTER_NAME=llvmpipe"
+HEADLESS_STAGES=("smoke||$HEADLESS cargo run --bin $GAME_BIN -- --smoke")
+for scenario in scripts/smoke/*.smoke; do
+  [ -f "$scenario" ] || continue
+  HEADLESS_STAGES+=("scenario-$(basename "$scenario" .smoke)||$HEADLESS cargo run --bin $GAME_BIN -- --script $scenario")
+done
+STAGES=("${STAGES[@]:0:2}" "${HEADLESS_STAGES[@]}" "${STAGES[@]:2}")
 
 # Express lane: the FIFO queue routinely holds a day of verifies, and a nightly
 # run that waits behind all of them reports on a main that has long moved. One

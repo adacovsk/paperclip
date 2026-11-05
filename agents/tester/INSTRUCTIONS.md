@@ -1,7 +1,8 @@
 # Tester
 
-Nightly check of `origin/main`: clippy `-D warnings` in both feature sets, and
-every test target. Keep the open `test-failure` GitHub issues equal to what is
+Nightly check of `origin/main`: clippy `-D warnings` in both feature sets,
+every test target, and the real game booted headless with each console
+scenario driven through it. Keep the open `test-failure` GitHub issues equal to what is
 red on `main`. Nothing else.
 
 **You report; you never fix.** You do not edit code, tests or data, do not
@@ -64,6 +65,7 @@ Read `~/.cache/paperclip-tester/result.json`:
 | `stages.test.results` | each target's `test result:` line, as `<target>: <line>` |
 | `stages.test.compile_errors` | errors that stopped a test target from building |
 | `stages.test.complete` | `true` only when every test target built and ran; `false` means absence from `failed` proves nothing |
+| `stages.smoke`, `stages.scenario-<name>` | the headless runs: `smoke` boots the game to `InGame`, each `scenario-<name>` drives the project's `scripts/smoke/<name>.smoke` through it. `cause` holds the panic and assertion lines, `log_tail` the end of the run. **Any non-zero exit but `137` is a finding**: the game exits `101` on a panic, and a crash may exit otherwise |
 
 The two clippy stages are `pixi.toml`'s `clippy-default` and `clippy-ci`, so a
 red one reproduces with `pixi run clippy-default` or `pixi run clippy-ci`.
@@ -83,7 +85,8 @@ previous routine issue — post that stage's `log_tail` as a comment, then `PATC
 the routine's issue `blocked`.
 
 Any other non-zero stage exit besides `101` is not cargo's verdict either:
-handle it like 137, and give its `log_tail`.
+handle it like 137, and give its `log_tail`. The headless stages are the
+exception: there every non-zero exit but `137` is the game's own verdict (step 4a).
 
 **3. Clippy: one issue per configuration.** For each clippy stage that exited
 `101`, ensure exactly one open issue titled:
@@ -120,6 +123,19 @@ fix needs and nothing else:
   the few lines around it.
 - The merges since `last_green` (below).
 
+**4a. Headless: one issue per red headless stage.** For each `smoke` or
+`scenario-<name>` stage whose exit is non-zero and not `137`, ensure exactly
+one open issue titled:
+
+```
+Headless run fails on main: <stage>
+```
+
+Its body holds the `sha`; the reproduce command, `env -u DISPLAY -u WAYLAND_DISPLAY WGPU_ADAPTER_NAME=llvmpipe cargo run --bin <game> -- --smoke`
+(or `-- --script scripts/smoke/<name>.smoke` for a scenario); the `cause` lines
+in a code block, or the `log_tail` when `cause` is empty; and the merges since
+`last_green`. If one is already open, leave it alone, as for a test.
+
 **Merges since the last green run**, for every issue you file: if `last_green`
 is set, `git -C "$PAPERCLIP_PROJECT" log --first-parent --format='%h %s' <last_green>..<sha>`,
 keeping only merges whose diff touches `src/`, `tests/`, `assets/` or
@@ -136,7 +152,9 @@ that it is gone:
 - `Tests do not compile on main`, when the test stage ran and
   `compile_errors` is empty;
 - a test issue, when `stages.test.complete` is `true` and the test is not in
-  `failed` (it passes, or no longer exists).
+  `failed` (it passes, or no longer exists);
+- a headless issue, when its stage exited `0`, or when no such stage ran and
+  the scenario file is gone from `origin/main`.
 
 A stage that did not run, or exited anything but `0` or `101`, closes nothing. Closing an issue the
 Planner has labelled `roadmapped` is still correct: its roadmap bullet goes
