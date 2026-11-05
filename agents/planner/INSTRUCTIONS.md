@@ -11,7 +11,7 @@ You file `backlog` tasks from roadmap fronts (step 8a); the Coordinator dispatch
 
 A fire has a bounded wall clock and turn count, and the classic failure is dying after commit and before push. → [why](rationale/fire-budget.md)
 
-- **Spine — never skip, never defer:** step 0 (branch), steps 1a–1b (directed tasks, `Held: planner` decisions), step 7 (prune) and the commit-push-merge checkpoint that closes it, then step 8a (keep the backlog). Finish the spine before any fill — an empty backlog idles every Worker slot, which costs more than any fill step buys.
+- **Spine — never skip, never defer:** step 0 (branch), steps 1a–1b (directed tasks, `Held: planner` decisions), step 7 (prune) and the commit-push-merge checkpoint that closes it, then step 8a (keep the backlog). **When step 8a ends short of `target` because every indexed front is claimed or held, step 8 joins the spine for that fire:** write at least one new section, an unlock section (Output quality) first, before any other fill. An index that cannot fill the backlog is the supply failure the spine exists to prevent. → [why](rationale/unlock-not-park.md) Finish the spine before any fill — an empty backlog idles every Worker slot, which costs more than any fill step buys.
 - **Fill — bounded and resumable:** steps 4, 5, 8, 9. Take them in priority order; stop when the budget is spent, not when the list is.
 - **Always run** (a few turns each): 1–3, 6, 10, 11. **Run step 6's queue check before step 4** — it decides whether the expensive fill is worth starting.
 
@@ -90,6 +90,7 @@ Leaving fill undone is a normal fire (name it in the summary so the next fire st
    - **`needs-build` is the band that runs dry last.** Shipped mechanics, not throughput, is the goal; expect the Architect queue to bind, and answer that with bundling and chaining, not cheaper work. **Within `data-only`, prefer game data over new tooling** — a new `check_*.py` earns a slot only by preventing a *recurring* authoring defect.
    - **Write each section small:** heading, short summary, `Label` / `Priority` / `Done-when`, and a `**Detail**:` link; the analysis goes in `docs/roadmap/<number>.md`. A new section seeds its own ceiling in `scripts/roadmap_section_baseline.txt`. **Sub-headings are `####`, never `##`** (`heading-levels` fails it).
    - **Size a section to one Worker task.** A finding too big for one branch becomes several numbered sections, each independently promotable with its own done-when — not one section with a multi-part `Done-when`. Findings too small to be worth a build each go into one bundle; slices that must land in order go into one chain (Output quality).
+   - **A row that needs a missing mechanic is supply, not a park.** When allowlist rows, stub records or unread keys cannot be cleared because the mechanic they need does not exist, write an unlock section (Output quality) that builds the mechanic and clears those rows in one PR. **No front in the index may say it cannot be filed** (`Parked`, `Do not file`, `stays on the allowlist`): prose is not a hold marker, so such a bullet counts as free depth, reads as supply and starves intake. Convert each one the fire you meet it: to an unlock section when a `remaster: true` record defines the mechanic; to `<!-- gated: operator -->` when only an operator decision can clear it; otherwise the rows stay on the allowlist, the bullet leaves the index, and its detail file records which rule is missing. → [why](rationale/unlock-not-park.md)
    - Add from scan and Reviewer patterns; reprioritise on new dependencies or urgency; anything unpromoted > 30 days is deleted or escalated.
 8a. **Keep the backlog at `target`** (spine — run it after step 7's merge, because a task's `Source:` anchor must resolve on `origin/main`). `target` = `worker_slots` from the pace script step 8 reads; `ready` = `count(status == backlog)` → [why backlog and nothing else](rationale/ready-counts-supply-not-queue.md). While `ready < target`, file `backlog` tasks from `## Active fronts`, oldest-first from the cursor:
    - **Cursor — the scan region is `## Active fronts`, not the phase bodies.** Read the newest `Backlog intake cursor: ROADMAP.md:<line-number>` comment on any Planner task (`GET /api/companies/{companyId}/issues?q=Backlog intake cursor`, then that task's comments). Absent, or below the end of `## Active fronts` → start at the heading: anchoring below it scans past the entire supply and never comes back. The index is terse by design — follow each `§N.NNN` to its section before filing; the section and its `**Detail**:` file are what go in the task body. → [why the index is the only promotable region](rationale/roadmap-index-is-the-anchor.md)
@@ -124,7 +125,7 @@ Leaving fill undone is a normal fire (name it in the summary so the next fire st
 
 ## Priority order
 
-Bug fixes → unblockers → systemic Reviewer patterns → current phase → mechanics before content (mechanics > spells/equipment/quests).
+Bug fixes → unblockers (an unlock section is one: it turns parked allowlist rows into shipped behaviour) → systemic Reviewer patterns → current phase → mechanics before content (mechanics > spells/equipment/quests).
 
 Operator-filed issues enter by content, not as a tier, but **tie-break above** a scan finding of the same class.
 
@@ -153,6 +154,14 @@ A bundle needs independent members. When a finding splits into slices that must 
 - **Every step's files must be uncontended when you write it.** A chain holds its branch for N Worker runs, longer than any one section. If a step needs a contended file, end the chain before it and leave that step as its own section below the chain, which is then its unblocker.
 - **Issue markers follow the chain, not the step:** `(#<n>)` when the last step finishes the issue, otherwise `(part of #<n>)`. The chain lands as one PR, so that PR is what closes the issue.
 - **Folding existing unpromoted dependent sections into one chain counts as restock,** and is the one re-pack the no-sweep rule above allows: do it when step 8 has you editing those sections anyway, never as a pass of its own. Leave out any section that already has a task, and delete the folded sections and their detail files in the same commit.
+
+### Unlock a missing mechanic — the mechanic and its rows, one PR
+
+When rows wait on a mechanic that does not exist, the section that builds the mechanic also clears the rows. Built alone, the mechanic has no caller, so it warns `dead_code` and that cannot be suppressed; the rows alone cannot be cleared, because a row leaves its allowlist only when its effect is implemented. Together they ship as used code, and the shrinking allowlist proves it. → [why](rationale/unlock-not-park.md)
+- **Cite the rule.** The bullet names the `remaster: true` record that defines the mechanic. With none, it is not an unlock section: the gap stays open and the rows stay on the allowlist.
+- **One mechanic per section,** and the bullet names it, the rows it clears and their allowlist. `Done-when`: those rows deleted from the allowlist and the behaviour each describes running. Re-pointing a key at a mechanic that already exists, or rewriting a row's description to fit one, is not an unlock — the behaviour has to change, not just the key's resolution.
+- **Size it like any section.** Mechanic plus every row it unlocks in one Worker run → one ordinary section. Bigger → a chain (`needs-build`, two to four steps): Step 1 builds the mechanic **and** clears the first rows that read it — never the mechanic alone — and each later step clears the next batch. Rows past the fourth step become ordinary sections written after the chain lands, since they read its mechanic.
+- **Unlocks run in parallel when their mechanics are disjoint.** Two unlock sections touching different files are independent supply; the contention rule above still applies to the files they share.
 
 ### Write for the intake filter (or your items never promote)
 
