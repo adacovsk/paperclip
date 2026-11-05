@@ -35,7 +35,7 @@ parked five days, and a third parked over a one-word comment edit.
 A conflict-blocked task is reviewed work one rebase away from landing. A newly promoted task is a
 future branch on the same files `main` is churning, so promoting it before the rebases adds to the
 pile the rebase would have shrunk. Spending free Worker slots on rebases first means spare quota
-drains the stuck stock instead of feeding it, which is also why the stock cap limits
+drains the stuck work instead of feeding it, which is also why a closed quota gate stops
 `promote_slots` and never the Worker's own slots.
 
 ## A file and its own test are one surface

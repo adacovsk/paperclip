@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Whether the weekly usage limit has quota to spare on cloud verifies.
+"""Whether the weekly usage limit has quota to spare: the pipeline's one quota gate.
 
-Prints 1 (lane open) or 0 (lane closed). The lane is open until the week
-ceiling is reached (CLOUD_PACE_WEEK_CEILING, default 90). While it is open every
-verify goes to the cloud with no concurrency bound; once it closes, the local
-build box (the Architect's local chain) carries the queue. The week ceiling sits
-below 100 because an exhausted weekly limit stalls every local agent too, not
-just the verifies.
+Prints 1 (lane open) or 0 (lane closed). The lane is open until weekly usage
+reaches WEEK_CEILING. While it is open every verify goes to the cloud with no
+concurrency bound and the Coordinator's `pace-scale.py` runs supply at full
+width; once it closes, the local build box carries the verify queue and
+promotion of new work stops, so the quota left under the ceiling lands finished
+work. The ceiling sits below 100 because an exhausted weekly limit stalls every
+agent, not just the verifies.
 
-The operator's standing choice is the cloud for everything the ceiling allows, so
-pace is not compared by default. CLOUD_PACE_ENFORCE_PACE=1 restores the pacing
-gate: the lane is then open only while weekly utilization is behind the
-fraction of the week elapsed, so spend tracks the calendar.
+ONE GATE, ONE NUMBER. Every caller that throttles on quota reads this script,
+and the ceiling is a constant here, not an environment variable. When it was a
+per-agent variable, raising it on the Architect and Dispatcher left the Planner
+on the old default: the Planner read the lane as closed and stopped writing
+supply while the Architect was launching cloud verifies on the same reading.
+A second throttle in another script does the same thing with different
+numbers -- a pace-deficit tier set narrowed supply at 91% while this lane was
+open -- so do not add one. Spending the week up to the ceiling is the
+operator's standing choice; pace against the calendar is not compared.
 
 The window is read from the usage response's own `resets_at`, never from a
 hardcoded weekday, so a moved reset cannot desynchronise the gate.
@@ -21,8 +27,6 @@ when it cannot see the meter is how a week's quota is exhausted and every agent
 stalls until the reset. The endpoint is the one Claude Code's own usage display
 reads; it is not a published API, so a changed shape is expected eventually and
 must degrade to "lane off", not to a crash a caller might read as permission.
-
-Unreadable usage fails closed whether or not pace is enforced.
 
 The five-hour session limit does not gate the lane. It resets within hours,
 so hitting it costs an afternoon; only the weekly limit can stall the agents
@@ -37,8 +41,8 @@ is cached for CLOUD_PACE_CACHE_TTL seconds (default 300) and reused without a
 request. When a request fails, a cached reading no older than
 CLOUD_PACE_STALE_MAX seconds (default 900) is used in its place; older than that,
 the gate fails closed as before. Usage only rises, so a stale reading can only
-under-read it, by at most fifteen minutes of spend, and the week ceiling sits
-well below 100% to absorb that.
+under-read it, by at most fifteen minutes of spend, and the two points between
+the ceiling and 100% absorb that.
 """
 
 import json
@@ -56,6 +60,8 @@ CACHE = os.path.expanduser(
     )
 )
 WEEK = 7 * 24 * 3600
+#: Weekly utilization (percent) at which the lane closes. The only quota threshold in the pipeline.
+WEEK_CEILING = 98.0
 
 
 def env_float(name: str, default: float) -> float:
@@ -123,22 +129,22 @@ def is_open(usage: dict, now: float) -> tuple[bool, str]:
     elapsed = min(100.0, max(0.0, 100 * (1 - (reset - now) / WEEK)))
 
     why = f"week {used:.0f}% used, {elapsed:.0f}% elapsed"
-    if os.environ.get("CLOUD_PACE_ENFORCE_PACE") == "1":
-        if used >= elapsed:
-            return False, f"{why}: on or ahead of pace"
-        return True, f"{why}: behind pace"
-    week_ceiling = env_float("CLOUD_PACE_WEEK_CEILING", 90)
-    if used >= week_ceiling:
-        return False, f"{why}: week ceiling {week_ceiling:.0f}% reached"
-    return True, f"{why}: under the ceilings"
+    if used >= WEEK_CEILING:
+        return False, f"{why}: week ceiling {WEEK_CEILING:.0f}% reached"
+    return True, f"{why}: under the ceiling"
+
+
+def is_open_now() -> tuple[bool, str]:
+    """The gate's answer for this moment, failing closed on any read or shape error."""
+    now = env_float("CLOUD_PACE_NOW", time.time())
+    try:
+        return is_open(read_usage(), now)
+    except Exception as exc:
+        return False, f"usage unreadable ({type(exc).__name__}: {exc})"
 
 
 def main() -> int:
-    now = env_float("CLOUD_PACE_NOW", time.time())
-    try:
-        open_, why = is_open(read_usage(), now)
-    except Exception as exc:  # fail closed on every read or shape error
-        open_, why = False, f"usage unreadable ({type(exc).__name__}: {exc})"
+    open_, why = is_open_now()
     print(1 if open_ else 0)
     print(f"cloud-pace: {'open' if open_ else 'closed'} — {why}", file=sys.stderr)
     return 0

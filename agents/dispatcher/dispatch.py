@@ -503,8 +503,8 @@ def main_repair_body(markers: list[BaseRed], main_sha: str, worktree: str, branc
         f"Main-repair: origin/main {main_sha} is red; {len(markers)} verifies escalated on it.\n\n"
         "**What** — Fix `origin/main` so it compiles and its lib tests pass. Breakage already on "
         "`main` is in scope wherever it is; no `#[allow]`/`#[expect]`/`#[ignore]`, no deleted test.\n\n"
-        f"**Why** — every verify built on this `main` fails here first, escalates, and counts as "
-        f"stuck stock. Escalated by: {who}.\n\n"
+        f"**Why** — every verify built on this `main` fails here first, escalates, and sits "
+        f"`blocked` until it is fixed. Escalated by: {who}.\n\n"
         f"## Compile errors\n{listed}\n"
     )
 
@@ -1759,7 +1759,7 @@ def requeue_base_red(dry_run: bool) -> None:
 
     The Coordinator also runs this, but only when a fire reaches that step; a
     fixed `main` then waited on the next full sweep while every verify it
-    stranded counted as stuck stock. The Dispatcher runs on every stage
+    stranded sat `blocked`. The Dispatcher runs on every stage
     completion, so the requeue follows the merge that fixed `main`.
     """
     script = HERE.parent / "architect" / "requeue-base-red.sh"
@@ -1865,8 +1865,7 @@ def close_superseded(api: Api) -> None:
     """Close each Verify, and its parent, whose branch the cloud lane found superseded.
 
     The Architect has no API, so without this a confirmed supersession sat
-    `blocked` as stuck stock and held pace-scale's promotion gate shut until an
-    operator cancelled it. The parent closes `done` with a
+    `blocked` until an operator cancelled it. The parent closes `done` with a
     `PR-EVIDENCE: superseded-on-main` line, the form the Coordinator's PR-evidence
     audit accepts. The branch is kept: the comment records its disposition as
     Abandoned with the tip, and deleting it stays with §Worktree teardown.
