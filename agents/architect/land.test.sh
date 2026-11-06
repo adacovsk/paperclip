@@ -119,6 +119,13 @@ check "main moved past the cap -> 0" "$r" 0
 check "  branch now contains main" "$(git -C "$WT" merge-base --is-ancestor origin/main HEAD && echo yes)" yes
 check "  cap flagged in the body" "$(grep -c 'freshness cap' "$S/T-1.pr-body.md")" 1
 check "  no skip token when schemas regenerated" "$(grep -c 'skip-schema-regen' "$S/T-1.pr-body.md")" 0
+check "  no skip token on the merge head when schemas regenerated" "$(git -C "$WT" log -1 --format=%B | grep -c 'skip-schema-regen')" 0
+advance base.txt
+green proved-empty; git -C "$PAPERCLIP_PROJECT" rev-parse origin/main~1 > "$S/T-1.base"
+r=$(CODE_MOVED=0 run)
+check "main moved, schemas proved empty -> 0" "$r" 0
+check "  the sync merge is the head" "$(git -C "$WT" rev-list --parents -n1 HEAD | wc -w | tr -d ' ')" 3
+check "  the merge head carries the skip token" "$(git -C "$WT" log -1 --format=%B | grep -c 'skip-schema-regen')" 1
 
 echo "the pre-push hook is the gate where it is installed"
 mkdir -p "$DIR/hooks"

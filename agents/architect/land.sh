@@ -109,12 +109,22 @@ resolve() {
 # is not forced, and a rewritten tip would be rejected.
 git fetch -q origin main || model "cannot fetch origin/main"
 note=""
+# The schema-regen gate reads `[skip-schema-regen]` from the PR text or the head
+# commit message, and before the push there is no PR. A sync merge becomes the
+# head, so it must carry the token itself or a proved-empty regen can never pass
+# the pre-push gate; an empty token commit is lost again on the next merge.
+skip_schema=""
+if grep -qE '^schemas: *proved-empty' <<< "$verdict"; then
+  skip_schema="[skip-schema-regen] the cloud verify regenerated schemas and the diff was empty"
+elif [ -z "$verdict" ] && [ "$(cat "$S/$task.schemas" 2>/dev/null)" = proved-empty ]; then
+  skip_schema="[skip-schema-regen] the local build regenerated schemas and the diff was empty"
+fi
 old="$(cat "$S/$task.base")"
 main="$(git rev-parse origin/main)"
 if [ "$old" != "$main" ]; then
   { ! git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 && git rebase -q origin/main 2>/dev/null; } \
     || { git rebase --abort >/dev/null 2>&1
-         git merge -q --no-edit origin/main >/dev/null 2>&1 \
+         git merge -q --no-edit -m "Merge origin/main into $branch" ${skip_schema:+-m "$skip_schema"} origin/main >/dev/null 2>&1 \
            || { git merge --abort >/dev/null 2>&1; resolve; }; }
   echo "$main" > "$S/$task.base"
   # relaunch-verify.sh said land, so main's advance either cannot reach this branch
@@ -155,11 +165,7 @@ if [ -z "$prs" ]; then
     grep -E '^out-of-scope:' <<< "$verdict" | sed 's/^/- /'
     [ -n "$verdict" ] || echo "- local build: clippy --all-targets -D warnings and cargo test --lib green; every commit is the Worker's or the Reviewer's, no Architect fix"
     [ -z "$note" ] || echo "- note: $note"
-    if grep -qE '^schemas: *proved-empty' <<< "$verdict"; then
-      echo "- [skip-schema-regen] the cloud verify regenerated schemas and the diff was empty"
-    elif [ -z "$verdict" ] && [ "$(cat "$S/$task.schemas" 2>/dev/null)" = proved-empty ]; then
-      echo "- [skip-schema-regen] the local build regenerated schemas and the diff was empty"
-    fi
+    [ -z "$skip_schema" ] || echo "- $skip_schema"
   } >> "$B"
   body_check "$B" >/dev/null 2>&1 || model "check_pr_body.py rejected the generated body"
   "$GH" pr create --base main --head "$branch" --title "$title" --body-file "$B" >/dev/null \
