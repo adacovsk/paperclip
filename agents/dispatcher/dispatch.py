@@ -85,6 +85,7 @@ sys.path.insert(0, str(HERE))
 import dedupe  # noqa: E402
 import promote as promotion  # noqa: E402
 from hold_of_record import hold_of_record  # noqa: E402
+from unreachable import ApiUnreachable, skip_unreachable, transport_failure  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("mechanical", HERE.parent / "facilitator" / "mechanical.py")
 facilitator = importlib.util.module_from_spec(_spec)
@@ -652,6 +653,13 @@ def handoff_signature(parent: dict, children: list[dict], git: GitState) -> str:
 
 # --------------------------------------------------------------------------- I/O
 
+#: Per-request client timeout, seconds.
+API_TIMEOUT = 30
+#: Tries for an idempotent GET that got no answer; the pause grows by this many
+#: seconds per retry, enough to ride out a server restart's first seconds.
+GET_ATTEMPTS = 3
+GET_RETRY_PAUSE = 5
+
 
 class Api:
     def __init__(self, dry_run: bool):
@@ -665,15 +673,30 @@ class Api:
             self.headers["X-Paperclip-Run-Id"] = os.environ["PAPERCLIP_RUN_ID"]
 
     def call(self, method: str, path: str, body: dict | None = None):
-        req = urllib.request.Request(
-            self.base + path,
-            data=None if body is None else json.dumps(body).encode(),
-            method=method,
-            headers=self.headers,
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else None
+        """One request; a GET with no answer is retried, a write never is.
+
+        A write that timed out may have applied, so repeating it could apply it
+        twice; it raises `ApiUnreachable` and the caller's item is re-read next sweep.
+        """
+        attempts = GET_ATTEMPTS if method == "GET" else 1
+        for attempt in range(attempts):
+            req = urllib.request.Request(
+                self.base + path,
+                data=None if body is None else json.dumps(body).encode(),
+                method=method,
+                headers=self.headers,
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=API_TIMEOUT) as resp:
+                    raw = resp.read()
+                    return json.loads(raw) if raw else None
+            except Exception as exc:
+                if not transport_failure(exc):
+                    raise
+                if attempt + 1 < attempts:
+                    time.sleep(GET_RETRY_PAUSE * (attempt + 1))
+                    continue
+                raise ApiUnreachable(f"{method} {path}: {exc}") from exc
 
     def get(self, path: str):
         return self.call("GET", path)
@@ -1166,111 +1189,128 @@ def sweep(api: Api, project: Path) -> None:
         (v for v in api.issues(status="todo") if stage_of(v) == "verify" and not v.get("assigneeAgentId")),
         key=lambda v: v["createdAt"],
     ):
-        body = api.get(f"/issues/{held['id']}").get("description") or ""
-        if HELD_VERIFY not in body or not take_capacity():
-            continue
-        launcher = self_launcher(held.get("parentId"))
-        api.set_status(
-            held,
-            {"status": "in_review", "assigneeAgentId": launcher[0] if launcher else agents["Architect"]},
-            "Dispatching: verify capacity is free (held at creation for lack of a build slot).",
-            f"verify  {held['identifier']}: dispatch held verify",
-        )
-        if launcher:
-            launch_verify(api, agents, held, launcher[1])
+        with skip_unreachable(f"verify  {held['identifier']}"):
+            body = api.get(f"/issues/{held['id']}").get("description") or ""
+            if HELD_VERIFY not in body or not take_capacity():
+                continue
+            launcher = self_launcher(held.get("parentId"))
+            api.set_status(
+                held,
+                {"status": "in_review", "assigneeAgentId": launcher[0] if launcher else agents["Architect"]},
+                "Dispatching: verify capacity is free (held at creation for lack of a build slot).",
+                f"verify  {held['identifier']}: dispatch held verify",
+            )
+            if launcher:
+                launch_verify(api, agents, held, launcher[1])
 
     # Oldest parent first, so a hot file's longest-waiting branch gets the slot.
     # A stage that escalated on a red `main` is owned by its base-red marker.
     base_red_stages = {name for m in base_red_markers() for name in (m.escalated, m.task)}
     for parent, children, git_st in sorted(loaded, key=lambda t: t[0]["createdAt"]):
-        if git_st is None:
-            continue
-        decision = decide(parent, children, git_st, pr_heads.get(f"task/{parent['identifier']}"))
-        stages = ordered_stages(children)
-        if decision.reason == BLOCKED_STAGE and agents.get("Planner"):
-            blocked = stages[-1][1]
-            hold = unheld_escalation(blocked, parent["identifier"], api.get(f"/issues/{blocked['id']}/comments"),
-                                     git_st.merges_clean, base_red_stages)
-            if hold:
-                route_to_planner(api, blocked, hold, agents["Planner"])
-        if decision.kind == "review":
-            create_review(api, agents, parent, git_st)
-        elif decision.kind == "verify":
-            review = max((c for c in children if stage_of(c) == "review"), key=lambda c: c["createdAt"])
-            dispatch_now = take_capacity()
-            launcher = self_launcher(parent["id"]) if dispatch_now else None
-            created = create_verify(api, agents, parent, review, git_st, dispatch_now,
-                                    launcher[0] if launcher else None)
-            if launcher and created:
-                launch_verify(api, agents, created, launcher[1])
-        elif decision.kind == "rebase":
-            if rebase_slots <= 0:
+        with skip_unreachable(f"stage   {parent['identifier']}"):
+            if git_st is None:
                 continue
-            for finished in (c for _, c in stages if finished_rebase(c)):  # a `done` one needs nothing
+            decision = decide(parent, children, git_st, pr_heads.get(f"task/{parent['identifier']}"))
+            stages = ordered_stages(children)
+            if decision.reason == BLOCKED_STAGE and agents.get("Planner"):
+                blocked = stages[-1][1]
+                hold = unheld_escalation(blocked, parent["identifier"], api.get(f"/issues/{blocked['id']}/comments"),
+                                         git_st.merges_clean, base_red_stages)
+                if hold:
+                    route_to_planner(api, blocked, hold, agents["Planner"])
+            if decision.kind == "review":
+                create_review(api, agents, parent, git_st)
+            elif decision.kind == "verify":
+                review = max((c for c in children if stage_of(c) == "review"), key=lambda c: c["createdAt"])
+                dispatch_now = take_capacity()
+                launcher = self_launcher(parent["id"]) if dispatch_now else None
+                created = create_verify(api, agents, parent, review, git_st, dispatch_now,
+                                        launcher[0] if launcher else None)
+                if launcher and created:
+                    launch_verify(api, agents, created, launcher[1])
+            elif decision.kind == "rebase":
+                if rebase_slots <= 0:
+                    continue
+                for finished in (c for _, c in stages if finished_rebase(c)):  # a `done` one needs nothing
+                    api.set_status(
+                        finished,
+                        {"status": "done"},
+                        f"Rebase finished, but `origin/main` has since moved on {decision.reason}; "
+                        "a fresh rebase follows.",
+                        f"rebase  {finished['identifier']}: close (main moved again)",
+                    )
+                create_rebase(api, agents, parent, stages, git_st)
+                rebase_slots -= 1
+                in_flight += 1
+            elif decision.kind in ("reverify", "resume-review", "close-rebase"):
+                rebase = unconsumed_rebase(stages)
+                follow = {
+                    "reverify": "The parent needs a fresh verify on the rebased head.",
+                    "resume-review": "The review it held resumes on the rebased head.",
+                    "close-rebase": "The open PR's head is this commit, so nothing further is needed here.",
+                }[decision.kind]
+                retire_superseded(api, agents, stages, rebase, resume=decision.kind == "resume-review")
+                if rebase["status"] != "done":
+                    api.set_status(
+                        rebase,
+                        {"status": "done"},
+                        f"Rebase landed: `merge-tree --write-tree origin/main HEAD` is clean at "
+                        f"{git_st.head[:9]}, tree clean. {follow}",
+                        f"rebase  {rebase['identifier']}: close ({decision.reason})",
+                    )
+                if decision.kind == "reverify":
+                    create_verify(api, agents, parent, rebase, git_st, take_capacity())
+            elif decision.kind == "rework":
+                verify = stages[-1][1]
+                if reworks.get(parent["id"]) == verify["id"]:
+                    # Woken once for this ruling and came back with no commit.
+                    hand_off(parent, handoff_signature(parent, children, git_st),
+                             "verify cancelled for rework; the Worker's run committed nothing")
+                    continue
+                reworks[parent["id"]] = verify["id"]
+                ruling = (latest_body(api, verify).splitlines() or ["(no comment)"])[0]
+                # A wake fires on an assignee change: through null and back.
                 api.set_status(
-                    finished,
-                    {"status": "done"},
-                    f"Rebase finished, but `origin/main` has since moved on {decision.reason}; "
-                    "a fresh rebase follows.",
-                    f"rebase  {finished['identifier']}: close (main moved again)",
+                    parent, {"status": "todo", "assigneeAgentId": None},
+                    f"{verify['identifier']} was cancelled with no Worker commit since. "
+                    f"Back to the Worker for the rework it asked for:\n\n> {ruling}",
+                    f"rework  {parent['identifier']}: verify {verify['identifier']} cancelled; wake the Worker",
                 )
-            create_rebase(api, agents, parent, stages, git_st)
-            rebase_slots -= 1
-            in_flight += 1
-        elif decision.kind in ("reverify", "resume-review", "close-rebase"):
-            rebase = unconsumed_rebase(stages)
-            follow = {
-                "reverify": "The parent needs a fresh verify on the rebased head.",
-                "resume-review": "The review it held resumes on the rebased head.",
-                "close-rebase": "The open PR's head is this commit, so nothing further is needed here.",
-            }[decision.kind]
-            retire_superseded(api, agents, stages, rebase, resume=decision.kind == "resume-review")
-            if rebase["status"] != "done":
-                api.set_status(
-                    rebase,
-                    {"status": "done"},
-                    f"Rebase landed: `merge-tree --write-tree origin/main HEAD` is clean at "
-                    f"{git_st.head[:9]}, tree clean. {follow}",
-                    f"rebase  {rebase['identifier']}: close ({decision.reason})",
-                )
-            if decision.kind == "reverify":
-                create_verify(api, agents, parent, rebase, git_st, take_capacity())
-        elif decision.kind == "rework":
-            verify = stages[-1][1]
-            if reworks.get(parent["id"]) == verify["id"]:
-                # Woken once for this ruling and came back with no commit.
-                hand_off(parent, handoff_signature(parent, children, git_st),
-                         "verify cancelled for rework; the Worker's run committed nothing")
-                continue
-            reworks[parent["id"]] = verify["id"]
-            ruling = (latest_body(api, verify).splitlines() or ["(no comment)"])[0]
-            # A wake fires on an assignee change: through null and back.
-            api.set_status(
-                parent, {"status": "todo", "assigneeAgentId": None},
-                f"{verify['identifier']} was cancelled with no Worker commit since. "
-                f"Back to the Worker for the rework it asked for:\n\n> {ruling}",
-                f"rework  {parent['identifier']}: verify {verify['identifier']} cancelled; wake the Worker",
-            )
-            api.write("PATCH", f"/issues/{parent['id']}", {"assigneeAgentId": agents["Worker"]},
-                      f"  reassign {parent['identifier']} to the Worker")
-        elif decision.kind == "handoff":
-            hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
+                api.write("PATCH", f"/issues/{parent['id']}", {"assigneeAgentId": agents["Worker"]},
+                          f"  reassign {parent['identifier']} to the Worker")
+            elif decision.kind == "handoff":
+                hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
 
-    collect_landings(api)
-    close_landed_verifies(api, project, pr_heads)
-    close_superseded(api)
+    # Each step is contained: a call with no answer ends that step, not the sweep.
+    with skip_unreachable("collect-landings"):
+        collect_landings(api)
+    with skip_unreachable("close-landed-verifies"):
+        close_landed_verifies(api, project, pr_heads)
+    with skip_unreachable("close-superseded"):
+        close_superseded(api)
     requeue_base_red(api.dry_run)
-    route_sentinels(api, agents, project)
-    file_main_repair(api, agents, project)
+    with skip_unreachable("route-sentinels"):
+        route_sentinels(api, agents, project)
+    with skip_unreachable("file-main-repair"):
+        file_main_repair(api, agents, project)
     # After route_sentinels: a sentinel it just routed is a wake it just sent, not a missed one.
-    facilitator_checks(api, project, roster, pr_heads)
+    with skip_unreachable("facilitator-checks"):
+        facilitator_checks(api, project, roster, pr_heads)
     # Before release_holds: a hold on a cancelled duplicate reads as released, so it
     # must move to the surviving copy first or the waiting task is freed early.
-    dedupe_duplicates(api, project)
+    with skip_unreachable("dedupe") as deduped:
+        dedupe_duplicates(api, project)
     # Before promotion, so a task parked here is a candidate this same sweep.
-    park_stranded_todos(api)
-    released = release_holds(api, pr_heads, agents.get("Planner"))
-    promoted, judged = promotion.promote(api, agents, project, pr_heads)
+    with skip_unreachable("park-stranded-todos"):
+        park_stranded_todos(api)
+    released = promoted = judged = 0
+    # A dedupe cut short may have left a hold on a duplicate it would have moved,
+    # and releasing that hold frees its task early, so the release waits a sweep.
+    if not deduped.skipped:
+        with skip_unreachable("release-holds"):
+            released = release_holds(api, pr_heads, agents.get("Planner"))
+    with skip_unreachable("promote"):
+        promoted, judged = promotion.promote(api, agents, project, pr_heads)
     in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
 
     # What promote.py could not decide needs the Coordinator's judgment; ask only
@@ -1368,113 +1408,114 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
         if stage_of(v) == "verify" and (v.get("parentId") or is_main_repair(v))
     ]
     for verify in verifies:
-        repair = not verify.get("parentId")
-        parent_issue = None if repair else api.get(f"/issues/{verify['parentId']}")
-        parent = verify["identifier"] if repair else parent_issue["identifier"]
-        mine = verify.get("assigneeAgentId") == agents.get("Dispatcher")
-        if not repair and landing_running(parent):
-            # land.sh may remove the sentinel or start a build mid-run; nothing
-            # here reads either until it has finished.
-            print(f"sentinel {verify['identifier']}: land.sh is still running", flush=True)
-            continue
-        path = VERIFY_DIR / f"{parent}.exit"
-        try:
-            code, mtime = path.read_text().strip(), path.stat().st_mtime
-        except OSError:
-            if mine and not seeding:
-                tend_launch(api, agents, verify, parent)
-            continue  # no result yet: the build is out, or the Architect has not launched it
-        key = f"{code}|{mtime}"
-        if state.get(verify["identifier"]) == key:
-            continue
-        if verify["status"] == "blocked" and not result_after_park(verify, mtime):
-            continue  # its block comment already answers this result
-        if seeding:
-            state[verify["identifier"]] = key
-            continue
-        if being_read(verify, live):
-            # Not recorded: if that run parks the Verify without acting on the
-            # result, the next sweep routes it.
-            continue
-        try:
-            verdict = (VERIFY_DIR / f"{parent}.cloud.verdict").read_text()
-        except OSError:
-            verdict = ""
-        landed = landed_marker(parent)
-        try:
-            verified_base = (VERIFY_DIR / f"{parent}.base").read_text().strip()
-        except OSError:
-            verified_base = ""
-        strike_key = f"{verify['identifier']}#strike"
-        # A main-repair's red is the break it was filed to fix, and the markers
-        # it would match are the ones that filed it: never park it as base-red.
-        action, why = route_sentinel(code, None if repair else by_task.get(parent), verdict, main_sha,
-                                     [] if repair else [m for m in markers if m.task != parent],
-                                     bool(landed and landed[1] >= mtime),
-                                     verified_base, state.get(strike_key) == code)
-        if repair and action == "fresh":
-            # Rebuilding a repair rooted at an older `main` just verifies the old
-            # break again; whether a later merge already fixed it is the Architect's call.
-            action = "wake"
-        if code == "0" and action in ("fresh", "wake") and not repair \
-                and not needs_architect(parent_issue) and not DEPENDENCY_BUMP.match(verify["title"]) \
-                and (verdict or local_landable(parent)):
-            said = landing_handed_back(parent, verify)
-            if said is None:
-                start_landing(api, verify, parent_issue)
-                continue  # not recorded: the next sweep reads the result
-            action, why = "wake", f"{why}; land.sh handed it back ({said})"
-        elif action in ("retry", "fresh"):
-            if not launch_budget_left():
-                print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
-                continue  # not recorded, so the next sweep routes it again
-            relaunched = relaunch(api, verify, parent, action, why, express=priority_verify(parent_issue))
-            if relaunched:
-                state[verify["identifier"]] = key
-                if action == "retry":
-                    state[strike_key] = code
+        with skip_unreachable(f"sentinel {verify['identifier']}"):
+            repair = not verify.get("parentId")
+            parent_issue = None if repair else api.get(f"/issues/{verify['parentId']}")
+            parent = verify["identifier"] if repair else parent_issue["identifier"]
+            mine = verify.get("assigneeAgentId") == agents.get("Dispatcher")
+            if not repair and landing_running(parent):
+                # land.sh may remove the sentinel or start a build mid-run; nothing
+                # here reads either until it has finished.
+                print(f"sentinel {verify['identifier']}: land.sh is still running", flush=True)
                 continue
-            action, why = "wake", f"{why}; relaunch-verify.sh handed it back"
-        if code not in INCONCLUSIVE:
-            state.pop(strike_key, None)
-        if action == "base-red":
-            errors = sorted(error_locations(verdict_errors(verdict)))
-            if not api.dry_run:
-                (VERIFY_DIR / f"{parent}.base-red").write_text(
-                    "\n".join([main_sha, verify["identifier"], *(f"{e} (same failure as main's recorded break)" for e in errors)]) + "\n"
-                )
-            # Parked on the Architect, not the Dispatcher: requeue-base-red.sh
-            # re-dispatches by toggling the assignee, and assigning a `blocked`
-            # task wakes no one, so this costs no run now.
-            api.set_status(
-                verify, {"status": "blocked", **({"assigneeAgentId": agents["Architect"]} if mine else {})},
-                f"Red only on main's known break: the verify of {parent} fails at "
-                + ", ".join(f"`{e}`" for e in errors)
-                + f", the same locations other verifies already recorded against origin/main {main_sha[:9]}. "
-                "Recorded a base-red marker; the requeue re-dispatches this verify once main moves. "
-                "No model run was spent on it.",
-                f"sentinel {verify['identifier']}: base-red ({why})",
-            )
-        elif action == "wake" and verify["status"] == "blocked":
-            rewake_parked(api, agents, verify, f"a verify result arrived after it was parked ({why})")
-        elif action == "wake" and mine:
-            hand_to_architect(api, agents, verify, f"its verify result needs a model ({why})")
-        elif action == "wake":
+            path = VERIFY_DIR / f"{parent}.exit"
             try:
-                api.write(
-                    "POST", f"/agents/{agents['Architect']}/wakeup",
-                    {"source": "automation", "triggerDetail": "callback", "reason": "verify-sentinel-ready",
-                     "payload": {"issueIdentifier": verify["identifier"]}},
-                    f"sentinel {verify['identifier']}: wake Architect ({why})",
-                )
-            except urllib.error.HTTPError as exc:
-                # Not recorded: the next sweep retries, and the callback's own
-                # fallback still woke the Architect while this was refused.
-                print(f"sentinel {verify['identifier']}: wake refused ({exc.code}); left for the next sweep", flush=True)
+                code, mtime = path.read_text().strip(), path.stat().st_mtime
+            except OSError:
+                if mine and not seeding:
+                    tend_launch(api, agents, verify, parent)
+                continue  # no result yet: the build is out, or the Architect has not launched it
+            key = f"{code}|{mtime}"
+            if state.get(verify["identifier"]) == key:
                 continue
-        else:
-            print(f"sentinel {verify['identifier']}: settled ({why})", flush=True)
-        state[verify["identifier"]] = key
+            if verify["status"] == "blocked" and not result_after_park(verify, mtime):
+                continue  # its block comment already answers this result
+            if seeding:
+                state[verify["identifier"]] = key
+                continue
+            if being_read(verify, live):
+                # Not recorded: if that run parks the Verify without acting on the
+                # result, the next sweep routes it.
+                continue
+            try:
+                verdict = (VERIFY_DIR / f"{parent}.cloud.verdict").read_text()
+            except OSError:
+                verdict = ""
+            landed = landed_marker(parent)
+            try:
+                verified_base = (VERIFY_DIR / f"{parent}.base").read_text().strip()
+            except OSError:
+                verified_base = ""
+            strike_key = f"{verify['identifier']}#strike"
+            # A main-repair's red is the break it was filed to fix, and the markers
+            # it would match are the ones that filed it: never park it as base-red.
+            action, why = route_sentinel(code, None if repair else by_task.get(parent), verdict, main_sha,
+                                         [] if repair else [m for m in markers if m.task != parent],
+                                         bool(landed and landed[1] >= mtime),
+                                         verified_base, state.get(strike_key) == code)
+            if repair and action == "fresh":
+                # Rebuilding a repair rooted at an older `main` just verifies the old
+                # break again; whether a later merge already fixed it is the Architect's call.
+                action = "wake"
+            if code == "0" and action in ("fresh", "wake") and not repair \
+                    and not needs_architect(parent_issue) and not DEPENDENCY_BUMP.match(verify["title"]) \
+                    and (verdict or local_landable(parent)):
+                said = landing_handed_back(parent, verify)
+                if said is None:
+                    start_landing(api, verify, parent_issue)
+                    continue  # not recorded: the next sweep reads the result
+                action, why = "wake", f"{why}; land.sh handed it back ({said})"
+            elif action in ("retry", "fresh"):
+                if not launch_budget_left():
+                    print(f"sentinel {verify['identifier']}: relaunch deferred to the next sweep (run time budget)", flush=True)
+                    continue  # not recorded, so the next sweep routes it again
+                relaunched = relaunch(api, verify, parent, action, why, express=priority_verify(parent_issue))
+                if relaunched:
+                    state[verify["identifier"]] = key
+                    if action == "retry":
+                        state[strike_key] = code
+                    continue
+                action, why = "wake", f"{why}; relaunch-verify.sh handed it back"
+            if code not in INCONCLUSIVE:
+                state.pop(strike_key, None)
+            if action == "base-red":
+                errors = sorted(error_locations(verdict_errors(verdict)))
+                if not api.dry_run:
+                    (VERIFY_DIR / f"{parent}.base-red").write_text(
+                        "\n".join([main_sha, verify["identifier"], *(f"{e} (same failure as main's recorded break)" for e in errors)]) + "\n"
+                    )
+                # Parked on the Architect, not the Dispatcher: requeue-base-red.sh
+                # re-dispatches by toggling the assignee, and assigning a `blocked`
+                # task wakes no one, so this costs no run now.
+                api.set_status(
+                    verify, {"status": "blocked", **({"assigneeAgentId": agents["Architect"]} if mine else {})},
+                    f"Red only on main's known break: the verify of {parent} fails at "
+                    + ", ".join(f"`{e}`" for e in errors)
+                    + f", the same locations other verifies already recorded against origin/main {main_sha[:9]}. "
+                    "Recorded a base-red marker; the requeue re-dispatches this verify once main moves. "
+                    "No model run was spent on it.",
+                    f"sentinel {verify['identifier']}: base-red ({why})",
+                )
+            elif action == "wake" and verify["status"] == "blocked":
+                rewake_parked(api, agents, verify, f"a verify result arrived after it was parked ({why})")
+            elif action == "wake" and mine:
+                hand_to_architect(api, agents, verify, f"its verify result needs a model ({why})")
+            elif action == "wake":
+                try:
+                    api.write(
+                        "POST", f"/agents/{agents['Architect']}/wakeup",
+                        {"source": "automation", "triggerDetail": "callback", "reason": "verify-sentinel-ready",
+                         "payload": {"issueIdentifier": verify["identifier"]}},
+                        f"sentinel {verify['identifier']}: wake Architect ({why})",
+                    )
+                except urllib.error.HTTPError as exc:
+                    # Not recorded: the next sweep retries, and the callback's own
+                    # fallback still woke the Architect while this was refused.
+                    print(f"sentinel {verify['identifier']}: wake refused ({exc.code}); left for the next sweep", flush=True)
+                    continue
+            else:
+                print(f"sentinel {verify['identifier']}: settled ({why})", flush=True)
+            state[verify["identifier"]] = key
     state.setdefault("_seeded", "1")
     save_state("sentinels.json", state, api.dry_run)
 

@@ -28,8 +28,12 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from unreachable import skip_unreachable  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 COORDINATOR = HERE.parent / "coordinator"
@@ -333,27 +337,28 @@ def promote(api, agents: dict, project: Path, pr_heads: dict[str, str]) -> tuple
     promoted = judged = 0
     statuses: dict[str, str | None] = {}
     for issue in backlog:
-        if promoted >= budget:
-            break
-        body = api.get(f"/issues/{issue['id']}").get("description") or ""
-        keys = removes_keys(body)
-        refs = {t for t in _TASK_REF.findall(body) if t != issue["identifier"]}
-        closed = {t for t in refs if task_status(api, t, statuses) in ("done", "cancelled")}
-        v = judge(issue, body, board, run_claims(issue, body), keys_still_on_main(project, keys), closed)
-        ident = issue["identifier"]
-        if v.action == "judgment":
-            judged += 1
-            print(f"promote {ident}: left for the Coordinator ({v.reason})", flush=True)
-        elif v.action == "cancel":
-            api.set_status(issue, {"status": "cancelled"}, f"Cancelled at promotion: {v.reason}.",
-                           f"promote {ident}: cancel ({v.reason[:80]})")
-        elif v.action == "hold":
-            api.set_status(issue, {"status": "blocked", "assigneeAgentId": None}, hold_line(v),
-                           f"promote {ident}: hold ({v.reason[:80]})")
-        elif allocate_and_assign(api, agents, project, issue, body):
-            promoted += 1
-            for token in candidate_paths(body):
-                board.in_flight.setdefault(token, set()).add(ident)
+        with skip_unreachable(f"promote {issue['identifier']}"):
+            if promoted >= budget:
+                break
+            body = api.get(f"/issues/{issue['id']}").get("description") or ""
+            keys = removes_keys(body)
+            refs = {t for t in _TASK_REF.findall(body) if t != issue["identifier"]}
+            closed = {t for t in refs if task_status(api, t, statuses) in ("done", "cancelled")}
+            v = judge(issue, body, board, run_claims(issue, body), keys_still_on_main(project, keys), closed)
+            ident = issue["identifier"]
+            if v.action == "judgment":
+                judged += 1
+                print(f"promote {ident}: left for the Coordinator ({v.reason})", flush=True)
+            elif v.action == "cancel":
+                api.set_status(issue, {"status": "cancelled"}, f"Cancelled at promotion: {v.reason}.",
+                               f"promote {ident}: cancel ({v.reason[:80]})")
+            elif v.action == "hold":
+                api.set_status(issue, {"status": "blocked", "assigneeAgentId": None}, hold_line(v),
+                               f"promote {ident}: hold ({v.reason[:80]})")
+            elif allocate_and_assign(api, agents, project, issue, body):
+                promoted += 1
+                for token in candidate_paths(body):
+                    board.in_flight.setdefault(token, set()).add(ident)
     return promoted, judged
 
 
