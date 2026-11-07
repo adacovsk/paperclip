@@ -2037,12 +2037,20 @@ def verify_quiet_since(api: Api):
     None while its build, cloud watcher or landing is still running, or while its
     sentinel waits for route_sentinels; otherwise the sentinel's time, since routing it
     is the wake that may have been missed. Other stages have no off-board work.
+
+    A parent (no stage) the Architect holds with no `Verify:` keys its build on its
+    own identifier. route_sentinels routes only Verifies, so its sentinel is never
+    marked routed: the sentinel's time is used as it stands, or the parent would
+    wait on a routing that never comes.
     """
     routed = load_state("sentinels.json")
     parents: dict[str, str] = {}
 
     def quiet_since(issue: dict) -> float | None:
-        if stage_of(issue) != "verify":
+        stage = stage_of(issue)
+        if stage is None:
+            return build_quiet_since(issue["identifier"], None) if issue["status"] == "in_review" else 0.0
+        if stage != "verify":
             return 0.0
         if issue.get("parentId"):
             if issue["parentId"] not in parents:
@@ -2052,6 +2060,9 @@ def verify_quiet_since(api: Api):
             parent = issue["identifier"]
         else:
             return 0.0
+        return build_quiet_since(parent, issue["identifier"])
+
+    def build_quiet_since(parent: str, routed_as: str | None) -> float | None:
         rec = landing_pid(parent)
         if rec and landing_alive(rec[0]):
             return None
@@ -2065,7 +2076,9 @@ def verify_quiet_since(api: Api):
                 return None if Path(f"/proc/{build}").exists() else 0.0
             except (OSError, ValueError):
                 return 0.0
-        return mtime if routed.get(issue["identifier"]) == f"{code}|{mtime}" else None
+        if routed_as is None:
+            return mtime
+        return mtime if routed.get(routed_as) == f"{code}|{mtime}" else None
 
     return quiet_since
 
