@@ -41,6 +41,19 @@ class MissedWakes(unittest.TestCase):
     def test_a_worker_parent_in_review_is_waiting_on_its_children(self):
         self.assertEqual(stalled([task("A", title="§4.1 Author a thing", agent="worker")]), [])
 
+    def test_an_architect_held_parent_in_review_is_owed_a_run(self):
+        parent = task("A", title="§4.1 Author a thing", agent="architect")
+        self.assertEqual(m.missed_wakes([parent], [], set(), None, NOW, parent_owed=frozenset({"architect"})), [parent])
+
+    def test_a_worker_parent_is_still_waiting_when_architect_parents_are_owed(self):
+        parent = task("A", title="§4.1 Author a thing", agent="worker")
+        self.assertEqual(m.missed_wakes([parent], [], set(), None, NOW, parent_owed=frozenset({"architect"})), [])
+
+    def test_an_architect_held_parent_with_its_build_out_is_not_a_stall(self):
+        parent = task("A", title="§4.1 Author a thing", agent="architect")
+        self.assertEqual(m.missed_wakes([parent], [], set(), None, NOW, lambda i: None,
+                                        parent_owed=frozenset({"architect"})), [])
+
     def test_an_in_progress_task_its_agent_took_is_owed_a_run(self):
         self.assertEqual(stalled([task("A", title="§4.1 Author a thing", status="in_progress")]), ["A"])
 
