@@ -8,6 +8,10 @@
 # wake); a verify not yet blocked keeps everything for a later pass; and a
 # finished one is cleared but not touched, unless a newer `Verify:` subtask of
 # the same task is the one blocked — the marker may still name a cancelled predecessor.
+# A marker that records failing sites is requeued only by a commit touching the
+# break, not by any move of main; a re-dispatch cut off between the null PATCH
+# and the re-assignment is finished by the next sweep; and a second concurrent
+# sweep backs off the lock.
 #
 # Run: bash agents/architect/requeue-base-red.test.sh
 set -u
@@ -140,6 +144,65 @@ case "$p1" in *"/issues/u2 "*'"status":"todo","assigneeAgentId":null'*) ok "fall
 ! grep -q "/issues/u3 " "$D/calls" && ok "a Verify of T-10 is not taken for T-1" || fail "matched the T-10 verify"
 [ ! -e "$V/V-2.exit" ] && ok "successor's stale sentinel deleted" || fail "successor sentinel survived"
 case "$out" in *"requeued V-2"*) ok "reports the successor";; *) fail "no successor report: $out";; esac
+
+# 7. Marker with a failing site; main moved only by an unrelated commit → left blocked.
+reset
+g() { git -C "$PAPERCLIP_PROJECT" "$@"; }
+mkdir -p "$PAPERCLIP_PROJECT/src"
+printf 'struct Ctx { a: i16 }\n' > "$PAPERCLIP_PROJECT/src/def.rs"
+printf 'fn f() { let _ = Ctx {}; }\n' > "$PAPERCLIP_PROJECT/src/site.rs"
+printf 'x\n' > "$PAPERCLIP_PROJECT/other.txt"
+g add -A; g commit -q -m base; B="$(g rev-parse HEAD)"
+printf 'y\n' > "$PAPERCLIP_PROJECT/other.txt"; g commit -q -am unrelated
+g update-ref refs/remotes/origin/main HEAD
+printf '%s\nT-1\nsrc/site.rs:1 E0063 missing field `attack_total` in initializer of `Ctx`\n' "$B" > "$V/T-1.base-red"
+echo 1 > "$V/T-1.exit"
+echo '[{"identifier":"T-1","id":"u1","status":"blocked","assigneeAgentId":"arch"}]' > "$D/issues.json"
+out="$(bash "$R")"
+[ -e "$V/T-1.base-red" ] && [ -e "$V/T-1.exit" ] && ! grep -q PATCH "$D/calls" \
+  && ok "an unrelated merge does not requeue a marker with sites" || fail "unrelated merge requeued: $out"
+
+# 8. A commit touching the failing site's file → requeued.
+printf 'fn f() { let _ = Ctx { a: 0 }; }\n' > "$PAPERCLIP_PROJECT/src/site.rs"; g commit -q -am "fix site"
+g update-ref refs/remotes/origin/main HEAD
+out="$(bash "$R")"
+case "$out" in *"requeued T-1"*"touches src/site.rs"*) ok "a commit on the failing file requeues";; *) fail "site touch did not requeue: $out";; esac
+
+# 9. A commit changing a line naming a quoted identifier, in another file → requeued.
+reset
+g reset -q --hard "$B"
+printf 'struct Ctx { a: i16, attack_total: i16 }\n' > "$PAPERCLIP_PROJECT/src/def.rs"; g commit -q -am "add field"
+g update-ref refs/remotes/origin/main HEAD
+printf '%s\nT-1\nsrc/site.rs:1 E0063 missing field `attack_total` in initializer of `Ctx`\n' "$B" > "$V/T-1.base-red"
+out="$(bash "$R")"
+case "$out" in *"requeued T-1"*"naming \`attack_total\`"*) ok "a fix on the definition side requeues";; *) fail "identifier touch did not requeue: $out";; esac
+
+# 10. A pending record left by a killed sweep, verify still unassigned → re-assigned.
+reset
+printf '%s\nT-1\nsrc/site.rs:1 E0063 x\n' "$B" > "$V/T-1.base-red"
+echo "u1 arch V-1" > "$V/T-1.requeue-pending"
+echo '{"identifier":"V-1","id":"u1","status":"todo","assigneeAgentId":null}' > "$D/issues.json"
+out="$(bash "$R")"
+case "$(grep PATCH "$D/calls" | sed -n 1p)" in *"/issues/u1 "*'"assigneeAgentId":"arch"'*) ok "a cut-off toggle is finished";; *) fail "cut-off toggle not finished: $(cat "$D/calls")";; esac
+[ ! -e "$V/T-1.requeue-pending" ] && [ ! -e "$V/T-1.base-red" ] && ok "pending record and marker cleared once finished" \
+  || fail "pending record or marker survived"
+
+# 11. A pending record whose verify was re-assigned meanwhile → cleared, not patched.
+reset
+echo "u1 arch V-1" > "$V/T-1.requeue-pending"
+echo '{"identifier":"V-1","id":"u1","status":"in_review","assigneeAgentId":"arch"}' > "$D/issues.json"
+bash "$R" >/dev/null
+[ ! -e "$V/T-1.requeue-pending" ] && ! grep -q PATCH "$D/calls" \
+  && ok "an already re-assigned verify is left alone" || fail "re-assigned verify was patched"
+
+# 12. A second sweep while one holds the lock → skips without touching anything.
+reset
+g update-ref refs/remotes/origin/main "$NEW"
+printf '%s\nV-1\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
+echo '[{"identifier":"V-1","id":"u1","status":"blocked","assigneeAgentId":"arch"}]' > "$D/issues.json"
+out="$(flock "$V/.requeue-base-red.lock" bash "$R")"
+case "$out" in *"skipped"*) ok "a concurrent sweep backs off the lock";; *) fail "no back-off: $out";; esac
+[ -e "$V/T-1.base-red" ] && ! grep -q PATCH "$D/calls" && ok "the backed-off sweep changed nothing" || fail "backed-off sweep acted"
 
 # 5. --dry-run changes nothing.
 reset
