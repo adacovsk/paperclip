@@ -117,9 +117,11 @@ CARGO_PATH = re.compile(r"(\.rs$|(^|/)Cargo\.(toml|lock)$|^assets/(data|locales)
 #: Most tasks carry their pipeline label in the body, not as an issue label.
 LABEL_LINE = re.compile(r"(?im)^\W*label\W*:\W*(needs-build|data-only)\b")
 #: Anywhere in the body, not only at a line start: a task body often carries it
-#: mid-line and in markdown emphasis (`**Chain: 3 steps**`), and a chain read as
-#: an ordinary task gets its Review after step 1.
-CHAIN_STEPS = re.compile(r"\bChain:\s*(\d+)\s*steps\b")
+#: mid-line and in markdown emphasis, either around the whole marker
+#: (`**Chain: 3 steps**`) or around the word alone with the colon outside
+#: (`**Chain**: 3 steps`, the shape the Planner writes), and a chain read as an
+#: ordinary task gets its Review after step 1.
+CHAIN_STEPS = re.compile(r"\bChain\**\s*:\s*\**\s*(\d+)\s*steps\b")
 #: Decisions that start a stage over the branch as it stands, which a chain must
 #: not get before every step is committed: its Review and Verify run once over all.
 STAGE_STARTS = ("review", "verify", "reverify", "resume-review")
