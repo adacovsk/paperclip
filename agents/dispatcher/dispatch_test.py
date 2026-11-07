@@ -48,6 +48,13 @@ class WorkerStage(unittest.TestCase):
         body = "- **Add the feature.** **Chain: 3 steps** (see the plan).\n"
         self.assertEqual(decide(parent(description=body), [], CLEAN).kind, "handoff")
 
+    def test_chain_with_emphasis_on_the_word_alone_is_handed_off(self):
+        body = "- **Label**: `needs-build`. **Priority**: medium. **Chain**: 2 steps.\n"
+        self.assertEqual(decide(parent(description=body), [], CLEAN).kind, "handoff")
+
+    def test_chain_step_trailer_is_not_a_chain_marker(self):
+        self.assertEqual(decide(parent(description="Chain-step: 1\n"), [], CLEAN).kind, "review")
+
     def test_missing_worktree_is_handed_off(self):
         self.assertEqual(decide(parent(), [], GitState(exists=False)).kind, "handoff")
 
