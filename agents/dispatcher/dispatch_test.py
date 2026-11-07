@@ -1252,6 +1252,36 @@ class MainHasDir(unittest.TestCase):
         self.assertFalse(dispatch.main_has_dir(self.wt, "gone"))
 
 
+
+class VerifyQuietSince(unittest.TestCase):
+    """quiet_since for a parent the Architect holds with no `Verify:` stage."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = dispatch.VERIFY_DIR, dispatch.STATE_DIR
+        dispatch.VERIFY_DIR = dispatch.STATE_DIR = Path(self.tmp.name)
+        self.quiet = dispatch.verify_quiet_since(api=None)
+
+    def tearDown(self):
+        dispatch.VERIFY_DIR, dispatch.STATE_DIR = self.saved
+        self.tmp.cleanup()
+
+    def issue(self, status="in_review"):
+        return {"identifier": "T-1", "title": "Author a thing", "status": status}
+
+    def test_a_parent_with_its_build_running_is_not_quiet(self):
+        (dispatch.VERIFY_DIR / "T-1.pid").write_text(str(os.getpid()))
+        self.assertIsNone(self.quiet(self.issue()))
+
+    def test_a_parent_sentinel_counts_without_a_routing(self):
+        sentinel = dispatch.VERIFY_DIR / "T-1.exit"
+        sentinel.write_text("0")
+        self.assertEqual(self.quiet(self.issue()), sentinel.stat().st_mtime)
+
+    def test_an_in_progress_parent_has_no_off_board_work(self):
+        (dispatch.VERIFY_DIR / "T-1.pid").write_text(str(os.getpid()))
+        self.assertEqual(self.quiet(self.issue("in_progress")), 0.0)
+
 if __name__ == "__main__":
     unittest.main()
 

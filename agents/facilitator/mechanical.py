@@ -72,12 +72,20 @@ def is_stage(issue: dict) -> bool:
 
 
 def missed_wakes(issues: list[dict], live_runs: list[dict], paused: set[str], skip_agent: str | None,
-                 now: float, quiet_since=None, parent_closed=None) -> list[dict]:
+                 now: float, quiet_since=None, parent_closed=None,
+                 parent_owed: frozenset[str] = frozenset()) -> list[dict]:
     """Assigned tasks whose wake never started a run, oldest stall first.
 
     A Worker parent `in_review` with no run is waiting on its stage children, which is
     healthy; only a stage, or a task its agent had already taken `in_progress`, is owed
     a run. The Dispatcher's own Verifies wait on a cloud build with no run by design.
+
+    `parent_owed` names agents that hold a parent `in_review` only to act on it
+    themselves — the Architect, handed a parent with no `Verify:` stage to open its
+    PR. Such a parent has no children to wait on, so it is owed a run like a stage.
+    Leaving it out stranded one for about 23h, twice: the Architect bound its cloud
+    verdict's wake to the stage-less parent, the verdict came back PASS, and nothing
+    re-fired it.
 
     `quiet_since(issue)` is when the task last did anything off the board, or None
     while work it is waiting on is still running: a Verify has no run for the hours
@@ -96,7 +104,7 @@ def missed_wakes(issues: list[dict], live_runs: list[dict], paused: set[str], sk
             continue
         if issue["status"] not in ("in_review", "in_progress"):
             continue
-        if issue["status"] == "in_review" and not is_stage(issue):
+        if issue["status"] == "in_review" and not is_stage(issue) and agent not in parent_owed:
             continue
         if issue.get("activeRun") or issue["id"] in live_issues:
             continue
@@ -372,8 +380,10 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     live_runs = api.get(f"/companies/{api.company}/live-runs") or []
 
     open_issues = api.issues(status="in_review,in_progress")
+    # By name: the roster is the only place the Architect's id lives.
+    parent_owed = frozenset(a["id"] for a in roster if a.get("name") == "Architect")
     stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
-                           closed_parent_check(api, open_issues))
+                           closed_parent_check(api, open_issues), parent_owed)
     due, failing, history = plan_toggles(stalled, load(TOGGLES_FILE), now)
     for issue in due:
         toggle(api, issue)
