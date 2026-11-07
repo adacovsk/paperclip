@@ -21,7 +21,7 @@ whole instruction set. This script runs those rows directly:
   `Held: planner`, blocked and unassigned  -> todo, assigned to the Planner (its wake)
   `todo`, no assignee, past the grace      -> backlog, so promotion dispatches it
   same work filed twice, copy unstarted     -> cancel it, re-point holds on it (dedupe.py)
-  base-red marker, main moved past it      -> requeue the verify (requeue-base-red.sh)
+  base-red marker, main touched the break -> requeue the verify (requeue-base-red.sh)
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task,
                                              unless a live one already exists
   free Worker slots, promotion open         -> promote backlog (promote.py); candidates
