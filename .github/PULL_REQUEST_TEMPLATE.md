@@ -46,4 +46,4 @@
 - [ ] If this change affects the UI, I have included before/after screenshots
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
-- [ ] I will address all Greptile and reviewer comments before requesting merge
+- [ ] I will address all reviewer comments before requesting merge
