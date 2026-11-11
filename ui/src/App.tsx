@@ -56,9 +56,6 @@ const InstanceExperimentalSettings = lazyPage(
   () => import("./pages/InstanceExperimentalSettings"),
   "InstanceExperimentalSettings",
 );
-const PluginManager = lazyPage(() => import("./pages/PluginManager"), "PluginManager");
-const PluginSettings = lazyPage(() => import("./pages/PluginSettings"), "PluginSettings");
-const PluginPage = lazyPage(() => import("./pages/PluginPage"), "PluginPage");
 const RunTranscriptUxLab = lazyPage(
   () => import("./pages/RunTranscriptUxLab"),
   "RunTranscriptUxLab",
@@ -152,7 +149,6 @@ function operatorRoutes() {
       <Route path="skills/*" element={<Skills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
-      <Route path="plugins/:pluginId" element={<PluginPage />} />
       <Route path="org" element={<OrgChart />} />
       <Route path="agents" element={<Navigate to="/agents/all" replace />} />
       <Route path="agents/all" element={<Agents />} />
@@ -196,7 +192,6 @@ function operatorRoutes() {
       <Route path="inbox/new" element={<Navigate to="/inbox/mine" replace />} />
       <Route path="design-guide" element={<DesignGuide />} />
       <Route path="tests/ux/runs" element={<RunTranscriptUxLab />} />
-      <Route path=":pluginRoutePath" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </>
   );
@@ -273,8 +268,6 @@ export function App() {
               <Route path="profile" element={<InstanceProfileSettings />} />
               <Route path="heartbeats" element={<InstanceSettings />} />
               <Route path="experimental" element={<InstanceExperimentalSettings />} />
-              <Route path="plugins" element={<PluginManager />} />
-              <Route path="plugins/:pluginId" element={<PluginSettings />} />
             </Route>
             <Route element={<Layout />}>
               {operatorRoutes()}

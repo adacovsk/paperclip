@@ -1,16 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { Building2, Clock3, FlaskConical, Puzzle, Settings, SlidersHorizontal } from "lucide-react";
-import { NavLink } from "react-router-dom";
-import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
+import { Building2, Clock3, FlaskConical, Settings, SlidersHorizontal } from "lucide-react";
 import { SidebarNavItem } from "./SidebarNavItem";
 
 export function InstanceSidebar() {
-  const { data: plugins } = useQuery({
-    queryKey: queryKeys.plugins.all,
-    queryFn: () => pluginsApi.list(),
-  });
-
   return (
     <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
       <div className="flex items-center gap-2 px-3 h-12 shrink-0">
@@ -26,27 +17,6 @@ export function InstanceSidebar() {
           <SidebarNavItem to="/instance/settings/profile" label="Profile" icon={Building2} end />
           <SidebarNavItem to="/instance/settings/heartbeats" label="Heartbeats" icon={Clock3} end />
           <SidebarNavItem to="/instance/settings/experimental" label="Experimental" icon={FlaskConical} />
-          <SidebarNavItem to="/instance/settings/plugins" label="Plugins" icon={Puzzle} />
-          {(plugins ?? []).length > 0 ? (
-            <div className="ml-4 mt-1 flex flex-col gap-0.5 border-l border-border/70 pl-3">
-              {(plugins ?? []).map((plugin) => (
-                <NavLink
-                  key={plugin.id}
-                  to={`/instance/settings/plugins/${plugin.id}`}
-                  className={({ isActive }) =>
-                    [
-                      "rounded-md px-2 py-1.5 text-xs transition-colors",
-                      isActive
-                        ? "bg-accent text-foreground"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                    ].join(" ")
-                  }
-                >
-                  {plugin.manifestJson.displayName ?? plugin.packageName}
-                </NavLink>
-              ))}
-            </div>
-          ) : null}
         </div>
       </nav>
     </aside>

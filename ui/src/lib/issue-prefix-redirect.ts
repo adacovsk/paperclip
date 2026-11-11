@@ -6,7 +6,6 @@ const HOST_ROUTE_ROOTS = new Set([
   "dashboard",
   "onboarding",
   "settings",
-  "plugins",
   "org",
   "agents",
   "projects",

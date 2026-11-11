@@ -107,7 +107,6 @@ function readSkillMarkdown(skillName: string): string | null {
   if (
     normalized !== "paperclip" &&
     normalized !== "paperclip-create-agent" &&
-    normalized !== "paperclip-create-plugin" &&
     normalized !== "para-memory-files"
   )
     return null;

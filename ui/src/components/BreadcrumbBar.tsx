@@ -11,37 +11,14 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Fragment, useMemo } from "react";
-import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
-
-type GlobalToolbarContext = Record<string, never>;
-
-function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
-  const { slots } = usePluginSlots({ slotTypes: ["globalToolbarButton"] });
-  const { launchers } = usePluginLaunchers({ placementZones: ["globalToolbarButton"] });
-  if (slots.length === 0 && launchers.length === 0) return null;
-  return (
-    <div className="flex items-center gap-1 ml-auto shrink-0 pl-2">
-      <PluginSlotOutlet slotTypes={["globalToolbarButton"]} context={context} className="flex items-center gap-1" />
-      <PluginLauncherOutlet placementZones={["globalToolbarButton"]} context={context} className="flex items-center gap-1" />
-    </div>
-  );
-}
+import { Fragment } from "react";
 
 export function BreadcrumbBar() {
   const { breadcrumbs } = useBreadcrumbs();
   const { toggleSidebar, isMobile } = useSidebar();
-  const globalToolbarSlotContext = useMemo<GlobalToolbarContext>(() => ({}), []);
-
-  const globalToolbarSlots = <GlobalToolbarPlugins context={globalToolbarSlotContext} />;
 
   if (breadcrumbs.length === 0) {
-    return (
-      <div className="border-b border-border px-4 md:px-6 h-12 shrink-0 flex items-center justify-end">
-        {globalToolbarSlots}
-      </div>
-    );
+    return <div className="border-b border-border px-4 md:px-6 h-12 shrink-0" />;
   }
 
   const menuButton = isMobile && (
@@ -66,7 +43,6 @@ export function BreadcrumbBar() {
             {breadcrumbs[0].label}
           </h1>
         </div>
-        {globalToolbarSlots}
       </div>
     );
   }
@@ -98,7 +74,6 @@ export function BreadcrumbBar() {
           </BreadcrumbList>
         </Breadcrumb>
       </div>
-      {globalToolbarSlots}
     </div>
   );
 }
