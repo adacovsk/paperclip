@@ -22,7 +22,6 @@ import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
 import type { Agent, Issue } from "@paperclipai/shared";
-import { PluginSlotOutlet } from "@/plugins/slots";
 
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
@@ -263,12 +262,6 @@ export function Dashboard() {
             </ChartCard>
           </div>
 
-          <PluginSlotOutlet
-            slotTypes={["dashboardWidget"]}
-            context={{}}
-            className="grid gap-4 md:grid-cols-2"
-            itemClassName="rounded-lg border bg-card p-4 shadow-sm"
-          />
 
           <div className="grid md:grid-cols-2 gap-4">
             {/* Recent Activity */}

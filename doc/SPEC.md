@@ -200,7 +200,7 @@ Agent configuration includes an **adapter** that defines how Paperclip invokes t
 | `openclaw_gateway` | OpenClaw gateway API | Managed OpenClaw agent via gateway |
 | `hermes_local` | Local Hermes process | Hermes agent heartbeat worker |
 
-The `process` and `http` adapters ship as generic defaults. Additional built-in adapters cover common local coding runtimes (see list above), and new adapter types can be registered via the plugin system (see Plugin / Extension Architecture).
+The `process` and `http` adapters ship as generic defaults. Additional built-in adapters cover common local coding runtimes (see list above). A new adapter type is added in source, under `packages/adapters/`.
 
 ### Adapter Interface
 
@@ -427,16 +427,9 @@ When an agent crashes or disappears mid-task, Paperclip does **not** auto-reassi
 
 **Principle: Paperclip reports problems, it doesn't silently fix them.** Automatic recovery hides failures. Good visibility lets the right entity (human or agent) decide what to do.
 
-### Plugin / Extension Architecture
+### Extension
 
-The core Paperclip system must be extensible. Features like knowledge bases, external revenue tracking, and new Agent Adapters should be addable as **plugins** without modifying core. This means:
-
-- Well-defined API boundaries that plugins can hook into
-- Event system or hooks for reacting to task/Agent lifecycle events
-- **Agent Adapter plugins** — new Adapter types can be registered via the plugin system
-- Plugin-registrable UI components (future)
-
-The plugin framework has shipped. Plugins can register new adapter types, hook into lifecycle events, and contribute UI components (e.g. global toolbar buttons). A plugin SDK and CLI commands (`paperclipai plugin`) are available for authoring and installing plugins.
+There is no plugin system. Upstream shipped one (an SDK, out-of-process workers, an event bus, scheduled jobs, UI slots); this repo removed it, because it runs one pipeline whose operator edits the source directly. A new capability is a change to the server, the UI or `agents/**`.
 
 ---
 

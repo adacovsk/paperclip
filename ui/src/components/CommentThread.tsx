@@ -10,7 +10,6 @@ import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./Ma
 import { StatusBadge } from "./StatusBadge";
 import { AgentIcon } from "./AgentIconPicker";
 import { formatDateTime } from "../lib/utils";
-import { PluginSlotOutlet } from "@/plugins/slots";
 
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
@@ -184,19 +183,6 @@ const TimelineList = memo(function TimelineList({
                 <Identity name="You" size="sm" />
               )}
               <span className="flex items-center gap-1.5">
-                <PluginSlotOutlet
-                  slotTypes={["commentContextMenuItem"]}
-                  entityType="comment"
-                  context={{
-                    projectId: projectId ?? null,
-                    entityId: comment.id,
-                    entityType: "comment",
-                    parentEntityId: comment.issueId,
-                  }}
-                  className="flex flex-wrap items-center gap-1.5"
-                  itemClassName="inline-flex"
-                  missingBehavior="placeholder"
-                />
                 <a
                   href={`#comment-${comment.id}`}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
@@ -208,19 +194,6 @@ const TimelineList = memo(function TimelineList({
             </div>
             <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
             <div className="mt-2 space-y-2">
-              <PluginSlotOutlet
-                slotTypes={["commentAnnotation"]}
-                entityType="comment"
-                context={{
-                  projectId: projectId ?? null,
-                  entityId: comment.id,
-                  entityType: "comment",
-                  parentEntityId: comment.issueId,
-                }}
-                className="space-y-2"
-                itemClassName="rounded-md"
-                missingBehavior="placeholder"
-              />
             </div>
             {comment.runId && (
               <div className="mt-2 pt-2 border-t border-border/60">

@@ -17,7 +17,6 @@ import { registerDashboardCommands } from "./commands/client/dashboard.js";
 import { applyDataDirOverride, type DataDirOptionLike } from "./config/data-dir.js";
 import { loadPaperclipEnvFile } from "./config/env.js";
 import { registerWorktreeCommands } from "./commands/worktree.js";
-import { registerPluginCommands } from "./commands/client/plugin.js";
 import { registerClientAuthCommands } from "./commands/client/auth.js";
 
 const program = new Command();
@@ -136,7 +135,6 @@ registerApprovalCommands(program);
 registerActivityCommands(program);
 registerDashboardCommands(program);
 registerWorktreeCommands(program);
-registerPluginCommands(program);
 
 const auth = program.command("auth").description("Authentication and bootstrap utilities");
 

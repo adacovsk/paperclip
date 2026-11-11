@@ -48,7 +48,6 @@ Most of upstream's core model is still here and still works:
 - per-agent budgets and cost tracking
 - approvals and governance
 - routines and triggers
-- the plugin system
 - the mobile layout
 - the adapters: Claude Code, Codex, Cursor, Gemini, OpenCode, Pi, Hermes, OpenClaw gateway, plus plain process and HTTP agents
 

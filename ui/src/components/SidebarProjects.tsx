@@ -25,22 +25,17 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import type { Project } from "@paperclipai/shared";
-
-type ProjectSidebarSlot = ReturnType<typeof usePluginSlots>["slots"][number];
 
 function SortableProjectItem({
   activeProjectRef,
   isMobile,
   project,
-  projectSidebarSlots,
   setSidebarOpen,
 }: {
   activeProjectRef: string | null;
   isMobile: boolean;
   project: Project;
-  projectSidebarSlots: ProjectSidebarSlot[];
   setSidebarOpen: (open: boolean) => void;
 }) {
   const {
@@ -86,23 +81,6 @@ function SortableProjectItem({
           <span className="flex-1 truncate">{project.name}</span>
           {project.pauseReason === "budget" ? <BudgetSidebarMarker title="Project paused by budget" /> : null}
         </NavLink>
-        {projectSidebarSlots.length > 0 && (
-          <div className="ml-5 flex flex-col gap-0.5">
-            {projectSidebarSlots.map((slot) => (
-              <PluginSlotMount
-                key={`${project.id}:${slot.pluginKey}:${slot.id}`}
-                slot={slot}
-                context={{
-                  projectId: project.id,
-                  projectRef: routeRef,
-                  entityId: project.id,
-                  entityType: "project",
-                }}
-                missingBehavior="placeholder"
-              />
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -122,11 +100,6 @@ export function SidebarProjects() {
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
   });
-  const { slots: projectSidebarSlots } = usePluginSlots({
-    slotTypes: ["projectSidebarItem"],
-    entityType: "project",
-  });
-
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
   const visibleProjects = useMemo(
@@ -206,7 +179,6 @@ export function SidebarProjects() {
                   activeProjectRef={activeProjectRef}
                   isMobile={isMobile}
                   project={project}
-                  projectSidebarSlots={projectSidebarSlots}
                   setSidebarOpen={setSidebarOpen}
                 />
               ))}

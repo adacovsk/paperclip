@@ -21,18 +21,10 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { projectRouteRef, cn } from "../lib/utils";
 import { Tabs } from "@/components/ui/tabs";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "overview" | "list" | "configuration" | "budget";
-type ProjectPluginTab = `plugin:${string}`;
-type ProjectTab = ProjectBaseTab | ProjectPluginTab;
-
-function isProjectPluginTab(value: string | null): value is ProjectPluginTab {
-  return typeof value === "string" && value.startsWith("plugin:");
-}
+type ProjectTab = "overview" | "list" | "configuration" | "budget";
 
 function resolveProjectTab(pathname: string, projectId: string): ProjectTab | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -215,11 +207,7 @@ export function ProjectDetail() {
   const routeProjectRef = projectId ?? "";
   const canFetchProject = routeProjectRef.length > 0;
   const activeRouteTab = routeProjectRef ? resolveProjectTab(location.pathname, routeProjectRef) : null;
-  const pluginTabFromSearch = useMemo(() => {
-    const tab = new URLSearchParams(location.search).get("tab");
-    return isProjectPluginTab(tab) ? tab : null;
-  }, [location.search]);
-  const activeTab = activeRouteTab ?? pluginTabFromSearch;
+  const activeTab = activeRouteTab;
 
   const { data: project, isLoading, error } = useQuery({
     queryKey: queryKeys.projects.detail(routeProjectRef),
@@ -228,23 +216,6 @@ export function ProjectDetail() {
   });
   const canonicalProjectRef = project ? projectRouteRef(project) : routeProjectRef;
   const projectLookupRef = project?.id ?? routeProjectRef;
-  const {
-    slots: pluginDetailSlots,
-    isLoading: pluginDetailSlotsLoading,
-  } = usePluginSlots({
-    slotTypes: ["detailTab"],
-    entityType: "project",
-  });
-  const pluginTabItems = useMemo(
-    () => pluginDetailSlots.map((slot) => ({
-      value: `plugin:${slot.pluginKey}:${slot.id}` as ProjectPluginTab,
-      label: slot.displayName,
-      slot,
-    })),
-    [pluginDetailSlots],
-  );
-  const activePluginTab = pluginTabItems.find((item) => item.value === activeTab) ?? null;
-
   const invalidateProject = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(routeProjectRef) });
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectLookupRef) });
@@ -304,10 +275,6 @@ export function ProjectDetail() {
   useEffect(() => {
     if (!project) return;
     if (routeProjectRef === canonicalProjectRef) return;
-    if (isProjectPluginTab(activeTab)) {
-      navigate(`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(activeTab)}`, { replace: true });
-      return;
-    }
     if (activeTab === "overview") {
       navigate(`/projects/${canonicalProjectRef}/overview`, { replace: true });
       return;
@@ -424,10 +391,6 @@ export function ProjectDetail() {
     },
   });
 
-  if (pluginTabFromSearch && !pluginDetailSlotsLoading && !activePluginTab) {
-    return <Navigate to={`/projects/${canonicalProjectRef}/issues`} replace />;
-  }
-
   // Redirect bare /projects/:id to cached tab or default /issues
   if (routeProjectRef && activeTab === null) {
     let cachedTab: string | null = null;
@@ -443,9 +406,6 @@ export function ProjectDetail() {
     if (cachedTab === "budget") {
       return <Navigate to={`/projects/${canonicalProjectRef}/budget`} replace />;
     }
-    if (isProjectPluginTab(cachedTab)) {
-      return <Navigate to={`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(cachedTab)}`} replace />;
-    }
     return <Navigate to={`/projects/${canonicalProjectRef}/issues`} replace />;
   }
 
@@ -457,10 +417,6 @@ export function ProjectDetail() {
     // Cache the active tab per project
     if (project?.id) {
       try { localStorage.setItem(`paperclip:project-tab:${project.id}`, tab); } catch {}
-    }
-    if (isProjectPluginTab(tab)) {
-      navigate(`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(tab)}`);
-      return;
     }
     if (tab === "overview") {
       navigate(`/projects/${canonicalProjectRef}/overview`);
@@ -498,33 +454,6 @@ export function ProjectDetail() {
         </div>
       </div>
 
-      <PluginSlotOutlet
-        slotTypes={["toolbarButton", "contextMenuItem"]}
-        entityType="project"
-        context={{
-          projectId: project.id,
-          projectRef: canonicalProjectRef,
-          entityId: project.id,
-          entityType: "project",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-        missingBehavior="placeholder"
-      />
-
-      <PluginLauncherOutlet
-        placementZones={["toolbarButton"]}
-        entityType="project"
-        context={{
-          projectId: project.id,
-          projectRef: canonicalProjectRef,
-          entityId: project.id,
-          entityType: "project",
-        }}
-        className="flex flex-wrap gap-2"
-        itemClassName="inline-flex"
-      />
-
       <Tabs value={activeTab ?? "list"} onValueChange={(value) => handleTabChange(value as ProjectTab)}>
         <PageTabBar
           items={[
@@ -532,10 +461,6 @@ export function ProjectDetail() {
             { value: "overview", label: "Overview" },
             { value: "configuration", label: "Configuration" },
             { value: "budget", label: "Budget" },
-            ...pluginTabItems.map((item) => ({
-              value: item.value,
-              label: item.label,
-            })),
           ]}
           align="start"
           value={activeTab ?? "list"}
@@ -581,19 +506,6 @@ export function ProjectDetail() {
           />
         </div>
       ) : null}
-
-      {activePluginTab && (
-        <PluginSlotMount
-          slot={activePluginTab.slot}
-          context={{
-            projectId: project.id,
-            projectRef: canonicalProjectRef,
-            entityId: project.id,
-            entityType: "project",
-          }}
-          missingBehavior="placeholder"
-        />
-      )}
     </div>
   );
 }

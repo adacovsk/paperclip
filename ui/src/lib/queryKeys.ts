@@ -123,14 +123,4 @@ export const queryKeys = {
       ["skills", "detail", skillId, "file", relativePath] as const,
     available: ["skills", "available"] as const,
   },
-  plugins: {
-    all: ["plugins"] as const,
-    examples: ["plugins", "examples"] as const,
-    detail: (pluginId: string) => ["plugins", pluginId] as const,
-    health: (pluginId: string) => ["plugins", pluginId, "health"] as const,
-    uiContributions: ["plugins", "ui-contributions"] as const,
-    config: (pluginId: string) => ["plugins", pluginId, "config"] as const,
-    dashboard: (pluginId: string) => ["plugins", pluginId, "dashboard"] as const,
-    logs: (pluginId: string) => ["plugins", pluginId, "logs"] as const,
-  },
 };
