@@ -12,11 +12,11 @@ This plan is now **gateway-only**. Paperclip supports OpenClaw through `openclaw
 3. Device auth stays enabled by default; pairing is persisted via `adapterConfig.devicePrivateKeyPem`.
 4. Invite/access flow must be secure:
 - invite prompt endpoint is operator-permission protected
-- CEO agent is allowed to invoke the invite prompt endpoint for their own company
+- CEO agent is allowed to invoke the invite prompt endpoint
 5. E2E pass criteria must include the 3 functional task cases.
 
 ## Current Product Flow
-1. Operator/CEO opens company settings.
+1. Operator/CEO opens instance settings.
 2. Click `Generate OpenClaw Invite Prompt`.
 3. Paste generated prompt into OpenClaw chat.
 4. OpenClaw submits invite acceptance with:
@@ -71,7 +71,7 @@ curl -fsS http://127.0.0.1:3100/api/health
 ```
 
 ### 2) Invite + join + approval
-- create invite prompt via `POST /api/companies/:companyId/openclaw/invite-prompt`
+- create invite prompt via `POST /api/openclaw/invite-prompt`
 - paste prompt to OpenClaw
 - approve join request
 - assert created agent:

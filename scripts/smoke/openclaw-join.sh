@@ -12,7 +12,6 @@ fi
 
 PAPERCLIP_API_URL="${PAPERCLIP_API_URL:-http://localhost:3100}"
 API_BASE="${PAPERCLIP_API_URL%/}/api"
-COMPANY_ID="${COMPANY_ID:-${PAPERCLIP_COMPANY_ID:-}}"
 OPENCLAW_AGENT_NAME="${OPENCLAW_AGENT_NAME:-OpenClaw Smoke Agent}"
 OPENCLAW_WEBHOOK_URL="${OPENCLAW_WEBHOOK_URL:-}"
 OPENCLAW_WEBHOOK_AUTH="${OPENCLAW_WEBHOOK_AUTH:-Bearer openclaw-smoke-secret}"
@@ -149,19 +148,9 @@ DEPLOYMENT_MODE="$(jq -r '.deploymentMode // "unknown"' <<<"$RESPONSE_BODY")"
 DEPLOYMENT_EXPOSURE="$(jq -r '.deploymentExposure // "unknown"' <<<"$RESPONSE_BODY")"
 log "deployment mode=${DEPLOYMENT_MODE} exposure=${DEPLOYMENT_EXPOSURE}"
 
-if [[ -z "$COMPANY_ID" ]]; then
-  log "resolving company id"
-  api_request "GET" "/companies"
-  assert_status "200"
-  COMPANY_ID="$(jq -r '.[0].id // empty' <<<"$RESPONSE_BODY")"
-  if [[ -z "$COMPANY_ID" ]]; then
-    fail "no companies found; create one before running smoke test"
-  fi
-fi
-
-log "creating agent-only invite for company ${COMPANY_ID}"
+log "creating agent-only invite"
 INVITE_PAYLOAD="$(jq -nc '{allowedJoinTypes:"agent"}')"
-api_request "POST" "/companies/${COMPANY_ID}/invites" "$INVITE_PAYLOAD"
+api_request "POST" "/invites" "$INVITE_PAYLOAD"
 if [[ "$RESPONSE_CODE" == "401" || "$RESPONSE_CODE" == "403" ]]; then
   fail_operator_auth_required "Invite creation"
 fi
@@ -217,7 +206,7 @@ if [[ "$DIAGNOSTICS_JSON" != "[]" ]]; then
 fi
 
 log "approving join request ${JOIN_REQUEST_ID}"
-api_request "POST" "/companies/${COMPANY_ID}/join-requests/${JOIN_REQUEST_ID}/approve" "{}"
+api_request "POST" "/join-requests/${JOIN_REQUEST_ID}/approve" "{}"
 if [[ "$RESPONSE_CODE" == "401" || "$RESPONSE_CODE" == "403" ]]; then
   fail_operator_auth_required "Join approval"
 fi
@@ -282,7 +271,6 @@ if [[ "$USE_DOCKER_RECEIVER" == "1" && "$STARTED_CONTAINER" == "1" && "$FOUND_EV
 fi
 
 log "success"
-log "companyId=${COMPANY_ID}"
 log "inviteId=${INVITE_ID}"
 log "joinRequestId=${JOIN_REQUEST_ID}"
 log "agentId=${CREATED_AGENT_ID}"

@@ -8,8 +8,8 @@ This document summarizes the memory systems referenced in task `PAP-530` and ext
 
 Paperclip is not trying to become a single opinionated memory engine. The more useful target is a control-plane memory surface that:
 
-- stays company-scoped
-- lets each company choose a default memory provider
+- stays instance-wide
+- lets the instance choose a default memory provider
 - lets specific agents override that default
 - keeps provenance back to Paperclip runs, issues, comments, and documents
 - records memory-related cost and latency the same way the rest of the control plane records work
@@ -112,7 +112,7 @@ Paperclip needs both direct request/response operations and background maintenan
 
 ### Paperclip should own these concerns
 
-- binding a provider to a company and optionally overriding it per agent
+- binding a provider to the instance and optionally overriding it per agent
 - mapping Paperclip entities into provider scopes
 - provenance back to issue comments, documents, runs, and activity
 - cost / token / latency reporting for memory work
@@ -141,7 +141,7 @@ Paperclip does not need to standardize every feature from every provider. It nee
 Paperclip should adopt a two-layer memory model:
 
 1. `Memory binding + control plane layer`
-   Paperclip decides which provider key is in effect for a company, agent, or project, and it logs every memory operation with provenance and usage.
+   Paperclip decides which provider key is in effect for the instance, an agent, or a project, and it logs every memory operation with provenance and usage.
 
 2. `Provider adapter layer`
    A built-in or plugin-supplied adapter turns Paperclip memory requests into provider-specific calls.

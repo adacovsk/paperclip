@@ -1,42 +1,34 @@
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, approvals, companies, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
-import { notFound } from "../errors.js";
+import { agents, approvals, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
 import { budgetService } from "./budgets.js";
+import { getOrCreateInstanceSettingsRow } from "./instance-settings.js";
 
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
   return {
-    summary: async (companyId: string) => {
-      const company = await db
-        .select()
-        .from(companies)
-        .where(eq(companies.id, companyId))
-        .then((rows) => rows[0] ?? null);
-
-      if (!company) throw notFound("Company not found");
+    summary: async () => {
+      const instance = await getOrCreateInstanceSettingsRow(db);
 
       const agentRows = await db
         .select({ status: agents.status, count: sql<number>`count(*)` })
         .from(agents)
-        .where(eq(agents.companyId, companyId))
         .groupBy(agents.status);
 
       const taskRows = await db
         .select({ status: issues.status, count: sql<number>`count(*)` })
         .from(issues)
-        .where(eq(issues.companyId, companyId))
         .groupBy(issues.status);
 
       const pendingApprovals = await db
         .select({ count: sql<number>`count(*)` })
         .from(approvals)
-        .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
+        .where(eq(approvals.status, "pending"))
         .then((rows) => Number(rows[0]?.count ?? 0));
 
       // Per-agent queue depth — surfaces the "agent appears idle but has stuck queued
-      // runs" failure mode that bit us on the AA-676 incident. An agent with queued > 0
-      // and running == 0 means wakes are accumulating but never claiming; treat as stuck.
+      // runs" failure mode. An agent with queued > 0 and running == 0 means wakes are
+      // accumulating but never claiming; treat as stuck.
       const agentRunCounts = await db
         .select({
           agentId: heartbeatRuns.agentId,
@@ -44,12 +36,7 @@ export function dashboardService(db: Db) {
           count: sql<number>`count(*)`,
         })
         .from(heartbeatRuns)
-        .where(
-          and(
-            eq(heartbeatRuns.companyId, companyId),
-            inArray(heartbeatRuns.status, ["queued", "running"]),
-          ),
-        )
+        .where(inArray(heartbeatRuns.status, ["queued", "running"]))
         .groupBy(heartbeatRuns.agentId, heartbeatRuns.status);
       const queuedByAgent = new Map<string, number>();
       const runningByAgent = new Map<string, number>();
@@ -99,22 +86,16 @@ export function dashboardService(db: Db) {
           monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
         })
         .from(costEvents)
-        .where(
-          and(
-            eq(costEvents.companyId, companyId),
-            gte(costEvents.occurredAt, monthStart),
-          ),
-        );
+        .where(gte(costEvents.occurredAt, monthStart));
 
       const monthSpendCents = Number(monthSpend);
       const utilization =
-        company.budgetMonthlyCents > 0
-          ? (monthSpendCents / company.budgetMonthlyCents) * 100
+        instance.budgetMonthlyCents > 0
+          ? (monthSpendCents / instance.budgetMonthlyCents) * 100
           : 0;
-      const budgetOverview = await budgets.overview(companyId);
+      const budgetOverview = await budgets.overview();
 
       return {
-        companyId,
         agents: {
           active: agentCounts.active,
           running: agentCounts.running,
@@ -126,7 +107,7 @@ export function dashboardService(db: Db) {
         tasks: taskCounts,
         costs: {
           monthSpendCents,
-          monthBudgetCents: company.budgetMonthlyCents,
+          monthBudgetCents: instance.budgetMonthlyCents,
           monthUtilizationPercent: Number(utilization.toFixed(2)),
         },
         pendingApprovals,

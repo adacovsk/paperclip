@@ -56,7 +56,7 @@
 # Usage: requeue-base-red.sh            # sweep, act
 #        requeue-base-red.sh --dry-run  # sweep, report only
 # Env:   PAPERCLIP_PROJECT (repo whose origin/main is compared; required),
-#        PAPERCLIP_API_URL (default http://localhost:3100), PAPERCLIP_COMPANY_ID,
+#        PAPERCLIP_API_URL (default http://localhost:3100),
 #        PAPERCLIP_API_KEY (optional bearer).
 # Exit:  0 swept (including nothing to do), 2 origin/main unreadable.
 set -uo pipefail
@@ -66,7 +66,6 @@ API="${PAPERCLIP_API_URL:-http://localhost:3100}/api"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 : "${PAPERCLIP_PROJECT:?PAPERCLIP_PROJECT must name the project checkout}"
-: "${PAPERCLIP_COMPANY_ID:?PAPERCLIP_COMPANY_ID must be set}"
 
 mkdir -p "$S"
 exec 9>"$S/.requeue-base-red.lock"
@@ -89,7 +88,7 @@ api() { # method path [json]
 
 # Prints "<uuid> <status> <assigneeAgentId|->" for an exact identifier match.
 lookup() {
-  api GET "/companies/$PAPERCLIP_COMPANY_ID/issues?q=$1" | python3 -c '
+  api GET "/issues?q=$1" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 d = d if isinstance(d, list) else d.get("issues", [])
@@ -102,7 +101,7 @@ for i in d:
 # Prints "<uuid> blocked <assigneeAgentId|-> <identifier>" for the newest
 # blocked issue titled `Verify: <task>` (and not `Verify: <task>0…`).
 lookup_verify() {
-  api GET "/companies/$PAPERCLIP_COMPANY_ID/issues?q=$1" | python3 -c '
+  api GET "/issues?q=$1" | python3 -c '
 import json, re, sys
 d = json.load(sys.stdin)
 d = d if isinstance(d, list) else d.get("issues", [])

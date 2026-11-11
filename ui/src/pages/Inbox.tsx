@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "@/lib/router";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQueries, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { approvalsApi } from "../api/approvals";
 import { accessApi } from "../api/access";
@@ -8,7 +8,6 @@ import { dashboardApi } from "../api/dashboard";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
-import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
@@ -504,7 +503,6 @@ function JoinRequestInboxRow({
 }
 
 export function Inbox() {
-  const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
   const location = useLocation();
@@ -530,9 +528,8 @@ export function Inbox() {
   );
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
 
   useEffect(() => {
@@ -548,19 +545,18 @@ export function Inbox() {
     isLoading: isApprovalsLoading,
     error: approvalsError,
   } = useQuery({
-    queryKey: queryKeys.approvals.list(selectedCompanyId!),
-    queryFn: () => approvalsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.approvals.list(),
+    queryFn: () => approvalsApi.list(),
   });
 
   const {
     data: joinRequests = [],
     isLoading: isJoinRequestsLoading,
   } = useQuery({
-    queryKey: queryKeys.access.joinRequests(selectedCompanyId!),
+    queryKey: queryKeys.access.joinRequests(),
     queryFn: async () => {
       try {
-        return await accessApi.listJoinRequests(selectedCompanyId!, "pending_approval");
+        return await accessApi.listJoinRequests("pending_approval");
       } catch (err) {
         if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
           return [];
@@ -568,45 +564,40 @@ export function Inbox() {
         throw err;
       }
     },
-    enabled: !!selectedCompanyId,
     retry: false,
   });
 
   const { data: dashboard, isLoading: isDashboardLoading } = useQuery({
-    queryKey: queryKeys.dashboard(selectedCompanyId!),
-    queryFn: () => dashboardApi.summary(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.dashboard,
+    queryFn: () => dashboardApi.summary(),
   });
 
   const { data: issues, isLoading: isIssuesLoading } = useQuery({
-    queryKey: queryKeys.issues.listByStatus(selectedCompanyId!, INBOX_ISSUE_STATUSES),
-    queryFn: () => issuesApi.list(selectedCompanyId!, { status: INBOX_ISSUE_STATUSES }),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.issues.listByStatus(INBOX_ISSUE_STATUSES),
+    queryFn: () => issuesApi.list({ status: INBOX_ISSUE_STATUSES }),
   });
   const {
     data: mineIssuesRaw = [],
     isLoading: isMineIssuesLoading,
   } = useQuery({
-    queryKey: queryKeys.issues.listMineByMe(selectedCompanyId!),
+    queryKey: queryKeys.issues.listMineByMe,
     queryFn: () =>
-      issuesApi.list(selectedCompanyId!, {
+      issuesApi.list({
         touchedByUserId: "me",
         inboxArchivedByUserId: "me",
         status: INBOX_ISSUE_STATUSES,
       }),
-    enabled: !!selectedCompanyId,
   });
   const {
     data: touchedIssuesRaw = [],
     isLoading: isTouchedIssuesLoading,
   } = useQuery({
-    queryKey: queryKeys.issues.listTouchedByMe(selectedCompanyId!),
+    queryKey: queryKeys.issues.listTouchedByMe,
     queryFn: () =>
-      issuesApi.list(selectedCompanyId!, {
+      issuesApi.list({
         touchedByUserId: "me",
         status: INBOX_ISSUE_STATUSES,
       }),
-    enabled: !!selectedCompanyId,
   });
 
   // Failed-run rows need only each agent's latest run, and the Live pulse only
@@ -614,14 +605,12 @@ export function Inbox() {
   // already loaded, so opening the inbox reuses their cache instead of pulling
   // the last 200 full runs.
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
-    queryKey: queryKeys.heartbeatsLatestByAgent(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.latestByAgent(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.heartbeatsLatestByAgent,
+    queryFn: () => heartbeatsApi.latestByAgent(),
   });
   const { data: liveRuns } = useQuery({
-    queryKey: queryKeys.liveRuns(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.liveRuns,
+    queryFn: () => heartbeatsApi.liveRuns(),
   });
 
   const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
@@ -731,7 +720,7 @@ export function Inbox() {
     mutationFn: (id: string) => approvalsApi.approve(id),
     onSuccess: (_approval, id) => {
       setActionError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list() });
       navigate(`/approvals/${id}?resolved=approved`);
     },
     onError: (err) => {
@@ -743,7 +732,7 @@ export function Inbox() {
     mutationFn: (id: string) => approvalsApi.reject(id),
     onSuccess: () => {
       setActionError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list() });
     },
     onError: (err) => {
       setActionError(err instanceof Error ? err.message : "Failed to reject");
@@ -752,13 +741,12 @@ export function Inbox() {
 
   const approveJoinMutation = useMutation({
     mutationFn: (joinRequest: JoinRequest) =>
-      accessApi.approveJoinRequest(selectedCompanyId!, joinRequest.id),
+      accessApi.approveJoinRequest(joinRequest.id),
     onSuccess: () => {
       setActionError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.access.joinRequests(selectedCompanyId!) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId!) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.joinRequests() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
     },
     onError: (err) => {
       setActionError(err instanceof Error ? err.message : "Failed to approve join request");
@@ -767,11 +755,11 @@ export function Inbox() {
 
   const rejectJoinMutation = useMutation({
     mutationFn: (joinRequest: JoinRequest) =>
-      accessApi.rejectJoinRequest(selectedCompanyId!, joinRequest.id),
+      accessApi.rejectJoinRequest(joinRequest.id),
     onSuccess: () => {
       setActionError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.access.joinRequests(selectedCompanyId!) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.joinRequests() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges });
     },
     onError: (err) => {
       setActionError(err instanceof Error ? err.message : "Failed to reject join request");
@@ -804,8 +792,7 @@ export function Inbox() {
       setRetryingRunIds((prev) => new Set(prev).add(run.id));
     },
     onSuccess: ({ newRun, originalRun }) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(originalRun.companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(originalRun.companyId, originalRun.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsAll });
       navigate(`/agents/${originalRun.agentId}/runs/${newRun.id}`);
     },
     onSettled: (_data, _error, run) => {
@@ -824,11 +811,10 @@ export function Inbox() {
   const [archivingNonIssueIds, setArchivingNonIssueIds] = useState<Set<string>>(new Set());
 
   const invalidateInboxIssueQueries = () => {
-    if (!selectedCompanyId) return;
-    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe });
+    queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges });
   };
 
   const archiveIssueMutation = useMutation({
@@ -937,9 +923,6 @@ export function Inbox() {
     return "hidden";
   };
 
-  if (!selectedCompanyId) {
-    return <EmptyState icon={InboxIcon} message="Select a company to view inbox." />;
-  }
 
   const hasRunFailures = failedRuns.length > 0;
   const showAggregateAgentError = !!dashboard && dashboard.agents.error > 0 && !hasRunFailures && !dismissed.has("alert:agent-errors");

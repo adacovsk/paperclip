@@ -1,26 +1,26 @@
-export type { Company } from "./company.js";
+export type { InstanceProfile } from "./instance-profile.js";
 export type { InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
 export type {
-  CompanySkillSourceType,
-  CompanySkillTrustLevel,
-  CompanySkillCompatibility,
-  CompanySkillSourceBadge,
-  CompanySkillFileInventoryEntry,
-  CompanySkill,
-  CompanySkillListItem,
-  CompanySkillUsageAgent,
-  CompanySkillDetail,
-  CompanySkillUpdateStatus,
-  CompanySkillImportRequest,
-  CompanySkillImportResult,
-  CompanySkillProjectScanRequest,
-  CompanySkillProjectScanSkipped,
-  CompanySkillProjectScanConflict,
-  CompanySkillProjectScanResult,
-  CompanySkillCreateRequest,
-  CompanySkillFileDetail,
-  CompanySkillFileUpdateRequest,
-} from "./company-skill.js";
+  SkillSourceType,
+  SkillTrustLevel,
+  SkillCompatibility,
+  SkillSourceBadge,
+  SkillFileInventoryEntry,
+  Skill,
+  SkillListItem,
+  SkillUsageAgent,
+  SkillDetail,
+  SkillUpdateStatus,
+  SkillImportRequest,
+  SkillImportResult,
+  SkillProjectScanRequest,
+  SkillProjectScanSkipped,
+  SkillProjectScanConflict,
+  SkillProjectScanResult,
+  SkillCreateRequest,
+  SkillFileDetail,
+  SkillFileUpdateRequest,
+} from "./skill.js";
 export type {
   AgentSkillSyncMode,
   AgentSkillState,
@@ -104,7 +104,7 @@ export type {
   EnvSecretRefBinding,
   EnvBinding,
   AgentEnvConfig,
-  CompanySecret,
+  Secret,
   SecretProviderDescriptor,
 } from "./secrets.js";
 export type {
@@ -132,7 +132,7 @@ export type { DashboardSummary } from "./dashboard.js";
 export type { ActivityEvent } from "./activity.js";
 export type { SidebarBadges } from "./sidebar-badges.js";
 export type {
-  CompanyMembership,
+  Membership,
   PrincipalPermissionGrant,
   Invite,
   JoinRequest,

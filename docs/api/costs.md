@@ -3,12 +3,12 @@ title: Costs
 summary: Cost events, summaries, and budget management
 ---
 
-Track token usage and spending across agents, projects, and the company.
+Track token usage and spending across agents, projects, and the instance.
 
 ## Report Cost Event
 
 ```
-POST /api/companies/{companyId}/cost-events
+POST /api/cost-events
 {
   "agentId": "{agentId}",
   "provider": "anthropic",
@@ -21,10 +21,10 @@ POST /api/companies/{companyId}/cost-events
 
 Typically reported automatically by adapters after each heartbeat.
 
-## Company Cost Summary
+## Instance Cost Summary
 
 ```
-GET /api/companies/{companyId}/costs/summary
+GET /api/costs/summary
 ```
 
 Returns total spend, budget, and utilization for the current month.
@@ -32,7 +32,7 @@ Returns total spend, budget, and utilization for the current month.
 ## Costs by Agent
 
 ```
-GET /api/companies/{companyId}/costs/by-agent
+GET /api/costs/by-agent
 ```
 
 Returns per-agent cost breakdown for the current month.
@@ -40,17 +40,17 @@ Returns per-agent cost breakdown for the current month.
 ## Costs by Project
 
 ```
-GET /api/companies/{companyId}/costs/by-project
+GET /api/costs/by-project
 ```
 
 Returns per-project cost breakdown for the current month.
 
 ## Budget Management
 
-### Set Company Budget
+### Set Instance Budget
 
 ```
-PATCH /api/companies/{companyId}
+PATCH /api/instance/profile
 { "budgetMonthlyCents": 100000 }
 ```
 

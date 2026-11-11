@@ -13,7 +13,6 @@ import {
 import { agents } from "./agents.js";
 import { projects } from "./projects.js";
 import { goals } from "./goals.js";
-import { companies } from "./companies.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { projectWorkspaces } from "./project_workspaces.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
@@ -22,7 +21,6 @@ export const issues = pgTable(
   "issues",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     projectId: uuid("project_id").references(() => projects.id),
     projectWorkspaceId: uuid("project_workspace_id").references(() => projectWorkspaces.id, { onDelete: "set null" }),
     goalId: uuid("goal_id").references(() => goals.id),
@@ -65,22 +63,20 @@ export const issues = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyStatusIdx: index("issues_company_status_idx").on(table.companyId, table.status),
-    assigneeStatusIdx: index("issues_company_assignee_status_idx").on(
-      table.companyId,
+    statusIdx: index("issues_status_idx").on(table.status),
+    assigneeStatusIdx: index("issues_assignee_status_idx").on(
       table.assigneeAgentId,
       table.status,
     ),
-    assigneeUserStatusIdx: index("issues_company_assignee_user_status_idx").on(
-      table.companyId,
+    assigneeUserStatusIdx: index("issues_assignee_user_status_idx").on(
       table.assigneeUserId,
       table.status,
     ),
-    parentIdx: index("issues_company_parent_idx").on(table.companyId, table.parentId),
-    projectIdx: index("issues_company_project_idx").on(table.companyId, table.projectId),
-    originIdx: index("issues_company_origin_idx").on(table.companyId, table.originKind, table.originId),
-    projectWorkspaceIdx: index("issues_company_project_workspace_idx").on(table.companyId, table.projectWorkspaceId),
-    executionWorkspaceIdx: index("issues_company_execution_workspace_idx").on(table.companyId, table.executionWorkspaceId),
+    parentIdx: index("issues_parent_idx").on(table.parentId),
+    projectIdx: index("issues_project_idx").on(table.projectId),
+    originIdx: index("issues_origin_idx").on(table.originKind, table.originId),
+    projectWorkspaceIdx: index("issues_project_workspace_idx").on(table.projectWorkspaceId),
+    executionWorkspaceIdx: index("issues_execution_workspace_idx").on(table.executionWorkspaceId),
     identifierIdx: uniqueIndex("issues_identifier_idx").on(table.identifier),
     openSubtaskDedupeIdx: uniqueIndex("issues_open_subtask_dedupe_uq")
       .on(table.parentId, table.dedupeKey)
@@ -91,7 +87,7 @@ export const issues = pgTable(
           and ${table.status} in ('backlog', 'todo', 'in_progress', 'in_review', 'blocked')`,
       ),
     openRoutineExecutionIdx: uniqueIndex("issues_open_routine_execution_uq")
-      .on(table.companyId, table.originKind, table.originId)
+      .on(table.originKind, table.originId)
       .where(
         sql`${table.originKind} = 'routine_execution'
           and ${table.originId} is not null

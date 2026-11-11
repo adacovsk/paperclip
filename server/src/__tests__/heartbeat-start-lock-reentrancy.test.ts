@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   agentWakeupRequests,
-  companies,
   createDb,
   heartbeatRuns,
   issues,
@@ -65,24 +64,15 @@ describeEmbeddedPostgres("agent start lock re-entrancy", () => {
    * successor to promote, which is what triggers the nested dispatch).
    */
   async function seedFinishedIssueWithQueuedRun() {
-    const companyId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
     const deferredWakeupId = randomUUID();
     const issueId = randomUUID();
-    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const issuePrefix = `T${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const now = new Date();
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix,
-      requireOperatorApprovalForNewAgents: false,
-    });
 
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "Worker",
       role: "engineer",
       status: "active",
@@ -95,7 +85,6 @@ describeEmbeddedPostgres("agent start lock re-entrancy", () => {
     // The run is inserted first: `issues.execution_run_id` is an FK onto it.
     await db.insert(heartbeatRuns).values({
       id: runId,
-      companyId,
       agentId,
       invocationSource: "automation",
       triggerDetail: "system",
@@ -108,7 +97,6 @@ describeEmbeddedPostgres("agent start lock re-entrancy", () => {
 
     await db.insert(issues).values({
       id: issueId,
-      companyId,
       title: "Finished before the queued run could be claimed",
       status: "done",
       priority: "medium",
@@ -123,7 +111,6 @@ describeEmbeddedPostgres("agent start lock re-entrancy", () => {
     // `releaseIssueExecutionAndPromote` returns early and never re-enters.
     await db.insert(agentWakeupRequests).values({
       id: deferredWakeupId,
-      companyId,
       agentId,
       source: "assignment",
       triggerDetail: "system",
@@ -135,7 +122,7 @@ describeEmbeddedPostgres("agent start lock re-entrancy", () => {
       updatedAt: now,
     });
 
-    return { companyId, agentId, issueId, runId, deferredWakeupId };
+    return { agentId, issueId, runId, deferredWakeupId };
   }
 
   it("dispatches instead of deadlocking when an auto-cancel promotes a successor", async () => {

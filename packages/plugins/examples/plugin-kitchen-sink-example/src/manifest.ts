@@ -20,7 +20,7 @@ const manifest: PaperclipPluginManifestV1 = {
   author: "Paperclip",
   categories: ["ui", "automation", "workspace", "connector"],
   capabilities: [
-    "companies.read",
+    "instance.read",
     "projects.read",
     "project.workspaces.read",
     "issues.read",
@@ -156,9 +156,9 @@ const manifest: PaperclipPluginManifestV1 = {
       },
     },
     {
-      name: TOOL_NAMES.companySummary,
-      displayName: "Kitchen Sink Company Summary",
-      description: "Summarizes the current company using the Paperclip domain APIs.",
+      name: TOOL_NAMES.instanceSummary,
+      displayName: "Kitchen Sink Instance Summary",
+      description: "Summarizes the current instance using the Paperclip domain APIs.",
       parametersSchema: {
         type: "object",
         properties: {},

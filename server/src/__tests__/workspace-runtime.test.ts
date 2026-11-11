@@ -89,7 +89,6 @@ function createWorkspaceOperationRecorderDouble() {
       });
       return {
         id: `op-${operations.length}`,
-        companyId: "company-1",
         executionWorkspaceId,
         heartbeatRunId: "run-1",
         phase: input.phase,
@@ -157,7 +156,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -190,7 +188,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -240,7 +237,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -278,7 +274,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -396,7 +391,6 @@ describe("realizeExecutionWorkspace", () => {
         agent: {
           id: "agent-1",
           name: "Codex Coder",
-          companyId: "company-1",
         },
       });
 
@@ -476,7 +470,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       recorder,
     });
@@ -527,7 +520,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -563,7 +555,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -625,7 +616,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -692,7 +682,6 @@ describe("realizeExecutionWorkspace", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
     });
 
@@ -778,7 +767,6 @@ describe("ensureRuntimeServicesForRun", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       issue: null,
       workspace,
@@ -797,7 +785,6 @@ describe("ensureRuntimeServicesForRun", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       issue: null,
       workspace,
@@ -821,7 +808,6 @@ describe("ensureRuntimeServicesForRun", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       issue: null,
       workspace,
@@ -869,7 +855,6 @@ describe("ensureRuntimeServicesForRun", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       issue: null,
       workspace,
@@ -925,7 +910,6 @@ describe("ensureRuntimeServicesForRun", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       issue: null,
       workspace,
@@ -984,7 +968,6 @@ describe("ensureRuntimeServicesForRun", () => {
       agent: {
         id: "agent-1",
         name: "Codex Coder",
-        companyId: "company-1",
       },
       issue: null,
       workspace: siblingWorkspace,
@@ -1039,7 +1022,6 @@ describe("normalizeAdapterManagedRuntimeServices", () => {
       agent: {
         id: "agent-1",
         name: "Gateway Agent",
-        companyId: "company-1",
       },
       issue: {
         id: "issue-1",
@@ -1064,7 +1046,6 @@ describe("normalizeAdapterManagedRuntimeServices", () => {
       agent: {
         id: "agent-1",
         name: "Gateway Agent",
-        companyId: "company-1",
       },
       issue: {
         id: "issue-1",
@@ -1085,7 +1066,6 @@ describe("normalizeAdapterManagedRuntimeServices", () => {
 
     expect(first).toHaveLength(1);
     expect(first[0]).toMatchObject({
-      companyId: "company-1",
       projectId: "project-1",
       projectWorkspaceId: "workspace-1",
       executionWorkspaceId: null,
@@ -1108,7 +1088,6 @@ describe("normalizeAdapterManagedRuntimeServices", () => {
       agent: {
         id: "agent-1",
         name: "Gateway Agent",
-        companyId: "company-1",
       },
       issue: null,
       workspace,

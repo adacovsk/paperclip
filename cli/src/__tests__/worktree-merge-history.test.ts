@@ -4,7 +4,6 @@ import { buildWorktreeMergePlan, parseWorktreeMergeScopes } from "../commands/wo
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return {
     id: "issue-1",
-    companyId: "company-1",
     projectId: null,
     projectWorkspaceId: null,
     goalId: "goal-1",
@@ -42,7 +41,6 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
 function makeComment(overrides: Record<string, unknown> = {}) {
   return {
     id: "comment-1",
-    companyId: "company-1",
     issueId: "issue-1",
     authorAgentId: null,
     authorUserId: "local-operator",
@@ -56,7 +54,6 @@ function makeComment(overrides: Record<string, unknown> = {}) {
 function makeIssueDocument(overrides: Record<string, unknown> = {}) {
   return {
     id: "issue-document-1",
-    companyId: "company-1",
     issueId: "issue-1",
     documentId: "document-1",
     key: "plan",
@@ -80,7 +77,6 @@ function makeIssueDocument(overrides: Record<string, unknown> = {}) {
 function makeDocumentRevision(overrides: Record<string, unknown> = {}) {
   return {
     id: "revision-1",
-    companyId: "company-1",
     documentId: "document-1",
     revisionNumber: 1,
     body: "# Plan",
@@ -95,12 +91,11 @@ function makeDocumentRevision(overrides: Record<string, unknown> = {}) {
 function makeAttachment(overrides: Record<string, unknown> = {}) {
   return {
     id: "attachment-1",
-    companyId: "company-1",
     issueId: "issue-1",
     issueCommentId: null,
     assetId: "asset-1",
     provider: "local_disk",
-    objectKey: "company-1/issues/issue-1/2026/03/20/asset.png",
+    objectKey: "issues/issue-1/2026/03/20/asset.png",
     contentType: "image/png",
     byteSize: 12,
     sha256: "deadbeef",
@@ -118,7 +113,6 @@ function makeAttachment(overrides: Record<string, unknown> = {}) {
 function makeProject(overrides: Record<string, unknown> = {}) {
   return {
     id: "project-1",
-    companyId: "company-1",
     goalId: null,
     name: "Project",
     description: null,
@@ -139,7 +133,6 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 function makeProjectWorkspace(overrides: Record<string, unknown> = {}) {
   return {
     id: "workspace-1",
-    companyId: "company-1",
     projectId: "project-1",
     name: "Workspace",
     sourceType: "local_path",
@@ -183,8 +176,7 @@ describe("worktree merge history planner", () => {
     });
 
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 500,
       scopes: ["issues", "comments"],
@@ -207,8 +199,7 @@ describe("worktree merge history planner", () => {
 
   it("clears missing references and coerces in_progress without an assignee", () => {
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 10,
       scopes: ["issues"],
@@ -249,8 +240,7 @@ describe("worktree merge history planner", () => {
 
   it("applies an explicit project mapping override instead of clearing the project", () => {
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 10,
       scopes: ["issues"],
@@ -296,8 +286,7 @@ describe("worktree merge history planner", () => {
     });
 
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 10,
       scopes: ["issues"],
@@ -353,8 +342,7 @@ describe("worktree merge history planner", () => {
     });
 
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 10,
       scopes: ["issues", "comments"],
@@ -415,8 +403,7 @@ describe("worktree merge history planner", () => {
     });
 
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 10,
       scopes: ["issues", "comments"],
@@ -460,8 +447,7 @@ describe("worktree merge history planner", () => {
     });
 
     const plan = buildWorktreeMergePlan({
-      companyId: "company-1",
-      companyName: "Paperclip",
+      instanceName: "Paperclip",
       issuePrefix: "PAP",
       previewIssueCounterStart: 10,
       scopes: ["issues"],

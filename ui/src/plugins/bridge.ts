@@ -68,8 +68,6 @@ export type PluginToastFn = (input: PluginToastInput) => string | null;
 // ---------------------------------------------------------------------------
 
 export interface PluginHostContext {
-  companyId: string | null;
-  companyPrefix: string | null;
   projectId: string | null;
   entityId: string | null;
   entityType: string | null;
@@ -234,7 +232,6 @@ export function usePluginData<T = unknown>(
   params?: Record<string, unknown>,
 ): PluginDataResult<T> {
   const { pluginId, hostContext } = usePluginBridgeContext();
-  const companyId = hostContext.companyId;
   const renderEnvironmentSnapshot = serializeRenderEnvironment(hostContext.renderEnvironment);
   const renderEnvironmentKey = serializeRenderEnvironmentSnapshot(renderEnvironmentSnapshot);
 
@@ -259,7 +256,6 @@ export function usePluginData<T = unknown>(
           pluginId,
           key,
           params,
-          companyId,
           renderEnvironmentSnapshot,
         )
         .then((response) => {
@@ -295,7 +291,7 @@ export function usePluginData<T = unknown>(
       if (retryTimer) clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pluginId, key, paramsKey, refreshCounter, companyId, renderEnvironmentKey]);
+  }, [pluginId, key, paramsKey, refreshCounter, renderEnvironmentKey]);
 
   const refresh = useCallback(() => {
     setRefreshCounter((c) => c + 1);
@@ -329,7 +325,6 @@ export function usePluginAction(key: string): PluginActionFn {
   return useCallback(
     async (params?: Record<string, unknown>): Promise<unknown> => {
       const { pluginId, hostContext } = contextRef.current;
-      const companyId = hostContext.companyId;
       const renderEnvironment = serializeRenderEnvironment(hostContext.renderEnvironment);
 
       try {
@@ -337,7 +332,6 @@ export function usePluginAction(key: string): PluginActionFn {
           pluginId,
           key,
           params,
-          companyId,
           renderEnvironment,
         );
         return response.data;
@@ -356,7 +350,7 @@ export function usePluginAction(key: string): PluginActionFn {
 /**
  * Concrete implementation of `useHostContext()`.
  *
- * Returns the current host context (company, project, entity, user)
+ * Returns the current host context (project, entity, user)
  * from the enclosing `PluginBridgeContext.Provider`.
  */
 export function useHostContext(): PluginHostContext {
@@ -391,13 +385,11 @@ export interface PluginStreamResult<T = unknown> {
 
 export function usePluginStream<T = unknown>(
   channel: string,
-  options?: { companyId?: string },
 ): PluginStreamResult<T> {
-  const { pluginId, hostContext } = usePluginBridgeContext();
-  const effectiveCompanyId = options?.companyId ?? hostContext.companyId ?? undefined;
+  const { pluginId } = usePluginBridgeContext();
   const [events, setEvents] = useState<T[]>([]);
   const [lastEvent, setLastEvent] = useState<T | null>(null);
-  const [connecting, setConnecting] = useState<boolean>(Boolean(effectiveCompanyId));
+  const [connecting, setConnecting] = useState<boolean>(true);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
@@ -414,14 +406,8 @@ export function usePluginStream<T = unknown>(
     setLastEvent(null);
     setError(null);
 
-    if (!effectiveCompanyId) {
-      close();
-      return;
-    }
-
-    const params = new URLSearchParams({ companyId: effectiveCompanyId });
     const source = new EventSource(
-      `/api/plugins/${encodeURIComponent(pluginId)}/bridge/stream/${encodeURIComponent(channel)}?${params.toString()}`,
+      `/api/plugins/${encodeURIComponent(pluginId)}/bridge/stream/${encodeURIComponent(channel)}`,
       { withCredentials: true },
     );
     sourceRef.current = source;
@@ -469,7 +455,7 @@ export function usePluginStream<T = unknown>(
         sourceRef.current = null;
       }
     };
-  }, [channel, close, effectiveCompanyId, pluginId]);
+  }, [channel, pluginId]);
 
   return { events, lastEvent, connecting, connected, error, close };
 }

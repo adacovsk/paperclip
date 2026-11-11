@@ -16,7 +16,6 @@ describe("LiveUpdatesProvider issue invalidation", () => {
 
     __liveUpdatesTestUtils.invalidateActivityQueries(
       queryClient as never,
-      "company-1",
       {
         entityType: "issue",
         entityId: "issue-1",
@@ -25,13 +24,13 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     );
 
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listMineByMe("company-1"),
+      queryKey: queryKeys.issues.listMineByMe,
     });
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listTouchedByMe("company-1"),
+      queryKey: queryKeys.issues.listTouchedByMe,
     });
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listUnreadTouchedByMe("company-1"),
+      queryKey: queryKeys.issues.listUnreadTouchedByMe,
     });
   });
 });
@@ -54,7 +53,7 @@ describe("LiveUpdatesProvider visible issue toast suppression", () => {
     expect(
       __liveUpdatesTestUtils.shouldSuppressActivityToastForVisibleIssue(
         queryClient as never,
-        "/PAP/issues/PAP-759",
+        "/issues/PAP-759",
         {
           entityType: "issue",
           entityId: "issue-1",
@@ -67,7 +66,7 @@ describe("LiveUpdatesProvider visible issue toast suppression", () => {
     expect(
       __liveUpdatesTestUtils.shouldSuppressActivityToastForVisibleIssue(
         queryClient as never,
-        "/PAP/issues/PAP-759",
+        "/issues/PAP-759",
         {
           entityType: "issue",
           entityId: "issue-2",
@@ -95,7 +94,7 @@ describe("LiveUpdatesProvider visible issue toast suppression", () => {
     expect(
       __liveUpdatesTestUtils.shouldSuppressRunStatusToastForVisibleIssue(
         queryClient as never,
-        "/PAP/issues/PAP-759",
+        "/issues/PAP-759",
         {
           runId: "run-1",
           agentId: "agent-1",
@@ -107,7 +106,7 @@ describe("LiveUpdatesProvider visible issue toast suppression", () => {
     expect(
       __liveUpdatesTestUtils.shouldSuppressAgentStatusToastForVisibleIssue(
         queryClient as never,
-        "/PAP/issues/PAP-759",
+        "/issues/PAP-759",
         {
           agentId: "agent-1",
           status: "running",

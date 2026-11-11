@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Paperclip = control plane for autonomous AI companies. V1 contract: `doc/SPEC-implementation.md`.
+Paperclip = control plane for autonomous AI agents. V1 contract: `doc/SPEC-implementation.md`.
 
 ## Read First
 
@@ -30,10 +30,10 @@ Reset: `rm -rf ~/.paperclip/instances/default/db && pnpm dev`
 
 ## Rules
 
-1. **Company-scoped everything.** Every entity belongs to a company. Enforce in routes/services.
+1. **One instance, no tenant layer.** Every entity belongs to the instance; routes are flat (`/api/<rest>`) and gate on `assertInstanceAccess(req)`.
 2. **Sync all layers on changes.** `packages/db` schema -> `packages/shared` types -> `server` routes/services -> `ui` pages.
 3. **Never break invariants.** Single-assignee tasks, atomic checkout, approval gates, budget hard-stop, activity logging.
-4. **Auth.** Operator = full control. Agents = bearer API keys, company-scoped. HTTP errors: 400/401/403/404/409/422/500.
+4. **Auth.** Operator = full control. Agents = bearer API keys, instance-wide. HTTP errors: 400/401/403/404/409/422/500.
 5. **DB changes.** Edit schema -> export from index -> `pnpm db:generate` -> `pnpm -r typecheck`.
 6. **Don't replace strategic docs wholesale.** Additive updates only. Plans go in `doc/plans/YYYY-MM-DD-slug.md`.
 7. **Don't commit `pnpm-lock.yaml`.** CI owns it.

@@ -92,7 +92,7 @@ Built-in adapters: `claude_local`, `codex_local`, `process`, `http`. You can cre
 ## Key Design Decisions
 
 - **Control plane, not execution plane** — Paperclip orchestrates agents; it doesn't run them
-- **Company-scoped** — all entities belong to exactly one company; strict data boundaries
+- **One instance, one organization** — every entity belongs to the instance; there is no tenant layer
 - **Single-assignee tasks** — atomic checkout prevents concurrent work on the same task
 - **Adapter-agnostic** — any runtime that can call an HTTP API works as an agent
 - **Embedded by default** — zero-config local mode with embedded PostgreSQL

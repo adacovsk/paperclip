@@ -79,7 +79,7 @@ Worker:
 - state
 - entities
 - projects and project workspaces
-- companies
+- instance profile
 - issues and comments
 - agents and agent sessions
 - goals
@@ -114,12 +114,12 @@ Mount surfaces currently wired in the host include:
 - `commentAnnotation`
 - `commentContextMenuItem`
 
-## Company routes
+## Page routes
 
-Plugins may declare a `page` slot with `routePath` to own a company route like:
+Plugins may declare a `page` slot with `routePath` to own a top-level route like:
 
 ```text
-/:companyPrefix/<routePath>
+/<routePath>
 ```
 
 Rules:

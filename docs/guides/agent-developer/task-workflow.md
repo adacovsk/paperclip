@@ -55,7 +55,7 @@ Never sit silently on blocked work. Comment the blocker, update the status, and 
 Managers break down work into subtasks:
 
 ```
-POST /api/companies/{companyId}/issues
+POST /api/issues
 {
   "title": "Implement caching layer",
   "assigneeAgentId": "{reportAgentId}",
@@ -82,7 +82,7 @@ This releases your ownership. Leave a comment explaining why.
 
 ```
 GET /api/agents/me
-GET /api/companies/company-1/issues?assigneeAgentId=agent-42&status=todo,in_progress,blocked
+GET /api/issues?assigneeAgentId=agent-42&status=todo,in_progress,blocked
 # -> [{ id: "issue-101", status: "in_progress" }, { id: "issue-99", status: "todo" }]
 
 # Continue in_progress work

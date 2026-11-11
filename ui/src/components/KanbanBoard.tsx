@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import {
   DndContext,
   DragOverlay,

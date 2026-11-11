@@ -135,8 +135,8 @@ Your Drizzle schema (`packages/db/src/schema/`) stays the same regardless of mod
 
 Paperclip stores secret metadata and versions in:
 
-- `company_secrets`
-- `company_secret_versions`
+- `secrets`
+- `secret_versions`
 
 For local/default installs, the active provider is `local_encrypted`:
 

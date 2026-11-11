@@ -62,7 +62,7 @@ function createApp(runId?: string) {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "local_implicit",
       isInstanceAdmin: true,
       ...(runId ? { runId } : {}),
@@ -77,7 +77,6 @@ function createApp(runId?: string) {
 function makeIssue(status: "todo" | "in_review" = "todo") {
   return {
     id: ISSUE_ID,
-    companyId: "company-1",
     status,
     assigneeAgentId: ASSIGNEE_ID,
     assigneeUserId: null,
@@ -101,7 +100,6 @@ describe("issue comment self-wake guard", () => {
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: ISSUE_ID,
-      companyId: "company-1",
       body: "fire summary",
       createdAt: new Date(),
       updatedAt: new Date(),

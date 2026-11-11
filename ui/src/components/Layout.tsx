@@ -1,7 +1,7 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, Moon, Settings, Sun } from "lucide-react";
-import { Link, Outlet, useLocation, useNavigate, useParams } from "@/lib/router";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { InstanceSidebar } from "./InstanceSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
@@ -17,20 +17,18 @@ import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
 import { useDialog } from "../context/DialogContext";
 import { usePanel } from "../context/PanelContext";
-import { useCompany } from "../context/CompanyContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useTheme } from "../context/ThemeContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
-import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
 import { healthApi } from "../api/health";
-import { shouldSyncCompanySelectionFromRoute } from "../lib/company-selection";
+import { agentsApi } from "../api/agents";
+import { shouldAutoOpenOnboarding } from "../lib/onboarding-route";
 import {
   DEFAULT_INSTANCE_SETTINGS_PATH,
   normalizeRememberedInstanceSettingsPath,
 } from "../lib/instance-settings";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
-import { NotFoundPage } from "../pages/NotFound";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -49,17 +47,7 @@ export function Layout() {
   const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
   const { openNewIssue, openOnboarding } = useDialog();
   const { togglePanelVisible } = usePanel();
-  const {
-    companies,
-    loading: companiesLoading,
-    selectedCompany,
-    selectedCompanyId,
-    selectionSource,
-    setSelectedCompanyId,
-  } = useCompany();
   const { theme, toggleTheme } = useTheme();
-  const { companyPrefix } = useParams<{ companyPrefix: string }>();
-  const navigate = useNavigate();
   const location = useLocation();
   const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
   const onboardingTriggered = useRef(false);
@@ -67,13 +55,6 @@ export function Layout() {
   const [mobileNavVisible, setMobileNavVisible] = useState(true);
   const [instanceSettingsTarget, setInstanceSettingsTarget] = useState<string>(() => readRememberedInstanceSettingsPath());
   const nextTheme = theme === "dark" ? "light" : "dark";
-  const matchedCompany = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix) ?? null;
-  }, [companies, companyPrefix]);
-  const hasUnknownCompanyPrefix =
-    Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -85,59 +66,21 @@ export function Layout() {
     refetchIntervalInBackground: true,
   });
 
+  const { data: agents, isLoading: agentsLoading } = useQuery({
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+  });
+
   useEffect(() => {
-    if (companiesLoading || onboardingTriggered.current) return;
+    if (agentsLoading || !agents || onboardingTriggered.current) return;
     if (health?.deploymentMode === "authenticated") return;
-    if (companies.length === 0) {
+    if (shouldAutoOpenOnboarding({ pathname: location.pathname, agentCount: agents.length })) {
       onboardingTriggered.current = true;
       openOnboarding();
     }
-  }, [companies, companiesLoading, openOnboarding, health?.deploymentMode]);
-
-  useEffect(() => {
-    if (!companyPrefix || companiesLoading || companies.length === 0) return;
-
-    if (!matchedCompany) {
-      const fallback = (selectedCompanyId ? companies.find((company) => company.id === selectedCompanyId) : null)
-        ?? companies[0]
-        ?? null;
-      if (fallback && selectedCompanyId !== fallback.id) {
-        setSelectedCompanyId(fallback.id, { source: "route_sync" });
-      }
-      return;
-    }
-
-    if (companyPrefix !== matchedCompany.issuePrefix) {
-      const suffix = location.pathname.replace(/^\/[^/]+/, "");
-      navigate(`/${matchedCompany.issuePrefix}${suffix}${location.search}`, { replace: true });
-      return;
-    }
-
-    if (
-      shouldSyncCompanySelectionFromRoute({
-        selectionSource,
-        selectedCompanyId,
-        routeCompanyId: matchedCompany.id,
-      })
-    ) {
-      setSelectedCompanyId(matchedCompany.id, { source: "route_sync" });
-    }
-  }, [
-    companyPrefix,
-    companies,
-    companiesLoading,
-    matchedCompany,
-    location.pathname,
-    location.search,
-    navigate,
-    selectionSource,
-    selectedCompanyId,
-    setSelectedCompanyId,
-  ]);
+  }, [agents, agentsLoading, openOnboarding, health?.deploymentMode, location.pathname]);
 
   const togglePanel = togglePanelVisible;
-
-  useCompanyPageMemory();
 
   useKeyboardShortcuts({
     onNewIssue: () => openNewIssue(),
@@ -413,19 +356,12 @@ export function Layout() {
                 isMobile ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]" : "overflow-auto",
               )}
             >
-              {hasUnknownCompanyPrefix ? (
-                <NotFoundPage
-                  scope="invalid_company_prefix"
-                  requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
-                />
-              ) : (
-                // Content routes are lazy-loaded; this boundary keeps the sidebar and
-                // chrome mounted while a route chunk loads, so only the main area
-                // shows the fallback.
-                <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading...</div>}>
-                  <Outlet />
-                </Suspense>
-              )}
+              {/* Content routes are lazy-loaded; this boundary keeps the sidebar and
+                  chrome mounted while a route chunk loads, so only the main area
+                  shows the fallback. */}
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading...</div>}>
+                <Outlet />
+              </Suspense>
             </main>
             <PropertiesPanel />
           </div>

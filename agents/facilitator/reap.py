@@ -330,10 +330,10 @@ def plan_watchers(units: list[str], tasks: dict, now: float) -> list[Action]:
 # --------------------------------------------------------------------------- I/O
 
 
-def tasks_by_id(base: str, company: str) -> dict[str, dict]:
+def tasks_by_id(base: str) -> dict[str, dict]:
     found = {}
     for status in ("done,cancelled", "backlog,todo,in_progress,in_review,blocked"):
-        with urllib.request.urlopen(f"{base}/api/companies/{company}/issues?status={status}", timeout=120) as r:
+        with urllib.request.urlopen(f"{base}/api/issues?status={status}", timeout=120) as r:
             for issue in json.load(r):
                 found[issue["identifier"]] = issue
     return found
@@ -442,10 +442,10 @@ def ordered(acts: list[Action]) -> list[list[Action]]:
     return list(groups.values())
 
 
-def reap(project: Path, paperclip: Path, base: str, company: str, act: bool, limit: int,
+def reap(project: Path, paperclip: Path, base: str, act: bool, limit: int,
          now: float | None = None) -> dict:
     now = now or time.time()
-    tasks = tasks_by_id(base, company)
+    tasks = tasks_by_id(base)
     acts: list[Action] = []
     kept: list[str] = []
     for repo, task_repo in ((project, True), (paperclip, False)):
@@ -497,8 +497,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=LIMIT, help="destructive actions per run; 0 = no cap")
     args = parser.parse_args()
     report = reap(Path(os.environ["PAPERCLIP_PROJECT"]), HERE.parent.parent,
-                  os.environ.get("PAPERCLIP_API_URL", "http://localhost:3100").rstrip("/"),
-                  os.environ["PAPERCLIP_COMPANY_ID"], args.act, args.limit)
+                  os.environ.get("PAPERCLIP_API_URL", "http://localhost:3100").rstrip("/"), args.act, args.limit)
     for line in report["actions"]:
         print(line)
     for line in report["kept"]:

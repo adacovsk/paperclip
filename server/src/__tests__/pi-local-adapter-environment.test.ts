@@ -51,7 +51,6 @@ describe("pi_local environment diagnostics", () => {
     await writeFakePiCommand(binDir, "success");
 
     const result = await testEnvironment({
-      companyId: "company-1",
       adapterType: "pi_local",
       config: {
         command: "pi",
@@ -82,7 +81,6 @@ describe("pi_local environment diagnostics", () => {
     await writeFakePiCommand(binDir, "stale-package");
 
     const result = await testEnvironment({
-      companyId: "company-1",
       adapterType: "pi_local",
       config: {
         command: "pi",

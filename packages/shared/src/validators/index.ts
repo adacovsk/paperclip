@@ -17,37 +17,35 @@ export {
 } from "./budget.js";
 
 export {
-  createCompanySchema,
-  updateCompanySchema,
-  updateCompanyBrandingSchema,
-  type CreateCompany,
-  type UpdateCompany,
-  type UpdateCompanyBranding,
-} from "./company.js";
+  updateInstanceProfileSchema,
+  updateInstanceBrandingSchema,
+  type UpdateInstanceProfile,
+  type UpdateInstanceBranding,
+} from "./instance-profile.js";
 export {
-  companySkillSourceTypeSchema,
-  companySkillTrustLevelSchema,
-  companySkillCompatibilitySchema,
-  companySkillSourceBadgeSchema,
-  companySkillFileInventoryEntrySchema,
-  companySkillSchema,
-  companySkillListItemSchema,
-  companySkillUsageAgentSchema,
-  companySkillDetailSchema,
-  companySkillUpdateStatusSchema,
-  companySkillImportSchema,
-  companySkillProjectScanRequestSchema,
-  companySkillProjectScanSkippedSchema,
-  companySkillProjectScanConflictSchema,
-  companySkillProjectScanResultSchema,
-  companySkillCreateSchema,
-  companySkillFileDetailSchema,
-  companySkillFileUpdateSchema,
-  type CompanySkillImport,
-  type CompanySkillProjectScan,
-  type CompanySkillCreate,
-  type CompanySkillFileUpdate,
-} from "./company-skill.js";
+  skillSourceTypeSchema,
+  skillTrustLevelSchema,
+  skillCompatibilitySchema,
+  skillSourceBadgeSchema,
+  skillFileInventoryEntrySchema,
+  skillSchema,
+  skillListItemSchema,
+  skillUsageAgentSchema,
+  skillDetailSchema,
+  skillUpdateStatusSchema,
+  skillImportSchema,
+  skillProjectScanRequestSchema,
+  skillProjectScanSkippedSchema,
+  skillProjectScanConflictSchema,
+  skillProjectScanResultSchema,
+  skillCreateSchema,
+  skillFileDetailSchema,
+  skillFileUpdateSchema,
+  type SkillImport,
+  type SkillProjectScan,
+  type SkillCreate,
+  type SkillFileUpdate,
+} from "./skill.js";
 export {
   agentSkillStateSchema,
   agentSkillSyncModeSchema,
@@ -203,7 +201,7 @@ export {
 } from "./asset.js";
 
 export {
-  createCompanyInviteSchema,
+  createInviteSchema,
   createOpenClawInvitePromptSchema,
   acceptInviteSchema,
   listJoinRequestsQuerySchema,
@@ -212,8 +210,8 @@ export {
   createCliAuthChallengeSchema,
   resolveCliAuthChallengeSchema,
   updateMemberPermissionsSchema,
-  updateUserCompanyAccessSchema,
-  type CreateCompanyInvite,
+  updateUserAccessSchema,
+  type CreateInvite,
   type CreateOpenClawInvitePrompt,
   type AcceptInvite,
   type ListJoinRequestsQuery,
@@ -222,7 +220,7 @@ export {
   type CreateCliAuthChallenge,
   type ResolveCliAuthChallenge,
   type UpdateMemberPermissions,
-  type UpdateUserCompanyAccess,
+  type UpdateUserAccess,
 } from "./access.js";
 
 export {

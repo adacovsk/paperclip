@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { executionWorkspaces } from "@paperclipai/db";
 import type { ExecutionWorkspace } from "@paperclipai/shared";
@@ -8,7 +8,6 @@ type ExecutionWorkspaceRow = typeof executionWorkspaces.$inferSelect;
 function toExecutionWorkspace(row: ExecutionWorkspaceRow): ExecutionWorkspace {
   return {
     id: row.id,
-    companyId: row.companyId,
     projectId: row.projectId,
     projectWorkspaceId: row.projectWorkspaceId ?? null,
     sourceIssueId: row.sourceIssueId ?? null,
@@ -36,14 +35,14 @@ function toExecutionWorkspace(row: ExecutionWorkspaceRow): ExecutionWorkspace {
 
 export function executionWorkspaceService(db: Db) {
   return {
-    list: async (companyId: string, filters?: {
+    list: async (filters?: {
       projectId?: string;
       projectWorkspaceId?: string;
       issueId?: string;
       status?: string;
       reuseEligible?: boolean;
     }) => {
-      const conditions = [eq(executionWorkspaces.companyId, companyId)];
+      const conditions: SQL[] = [];
       if (filters?.projectId) conditions.push(eq(executionWorkspaces.projectId, filters.projectId));
       if (filters?.projectWorkspaceId) {
         conditions.push(eq(executionWorkspaces.projectWorkspaceId, filters.projectWorkspaceId));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
+import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   agentsApi,
@@ -7,7 +7,7 @@ import {
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
 } from "../api/agents";
-import { companySkillsApi } from "../api/companySkills";
+import { skillsApi } from "../api/skills";
 import { budgetsApi } from "../api/budgets";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -17,7 +17,6 @@ import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
 import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
-import { useCompany } from "../context/CompanyContext";
 import { useToast } from "../context/ToastContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -77,7 +76,6 @@ import { Input } from "@/components/ui/input";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
 import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
 import {
-  isUuidLike,
   type Agent,
   type AgentSkillEntry,
   type AgentSkillSnapshot,
@@ -515,13 +513,11 @@ function WorkspaceOperationsSection({
 }
 
 export function AgentDetail() {
-  const { companyPrefix, agentId, tab: urlTab, runId: urlRunId } = useParams<{
-    companyPrefix?: string;
+  const { agentId, tab: urlTab, runId: urlRunId } = useParams<{
     agentId: string;
     tab?: string;
     runId?: string;
   }>();
-  const { companies, selectedCompanyId, setSelectedCompanyId } = useCompany();
   const { closePanel } = usePanel();
   const { openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -539,48 +535,40 @@ export function AgentDetail() {
   const cancelConfigActionRef = useRef<(() => void) | null>(null);
   const { isMobile } = useSidebar();
   const routeAgentRef = agentId ?? "";
-  const routeCompanyId = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix)?.id ?? null;
-  }, [companies, companyPrefix]);
-  const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
-  const canFetchAgent = routeAgentRef.length > 0 && (isUuidLike(routeAgentRef) || Boolean(lookupCompanyId));
+  const canFetchAgent = routeAgentRef.length > 0;
   const setSaveConfigAction = useCallback((fn: (() => void) | null) => { saveConfigActionRef.current = fn; }, []);
   const setCancelConfigAction = useCallback((fn: (() => void) | null) => { cancelConfigActionRef.current = fn; }, []);
 
   const { data: agent, isLoading, error } = useQuery<AgentDetailRecord>({
-    queryKey: [...queryKeys.agents.detail(routeAgentRef), lookupCompanyId ?? null],
-    queryFn: () => agentsApi.get(routeAgentRef, lookupCompanyId),
+    queryKey: queryKeys.agents.detail(routeAgentRef),
+    queryFn: () => agentsApi.get(routeAgentRef),
     enabled: canFetchAgent,
   });
-  const resolvedCompanyId = agent?.companyId ?? selectedCompanyId;
   const canonicalAgentRef = agent ? agentRouteRef(agent) : routeAgentRef;
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
 
   const { data: heartbeats } = useQuery({
-    queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
-    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
-    enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
+    queryKey: queryKeys.heartbeats(agent?.id ?? undefined),
+    queryFn: () => heartbeatsApi.list(agent?.id ?? undefined),
+    enabled: !!agent?.id && shouldLoadHeartbeats,
   });
 
   const { data: allIssues } = useQuery({
-    queryKey: [...queryKeys.issues.list(resolvedCompanyId!), "participant-agent", resolvedAgentId ?? "__none__"],
-    queryFn: () => issuesApi.list(resolvedCompanyId!, { participantAgentId: resolvedAgentId! }),
-    enabled: !!resolvedCompanyId && !!resolvedAgentId && needsDashboardData,
+    queryKey: [...queryKeys.issues.list, "participant-agent", resolvedAgentId ?? "__none__"],
+    queryFn: () => issuesApi.list({ participantAgentId: resolvedAgentId! }),
+    enabled: !!resolvedAgentId && needsDashboardData,
   });
 
   const { data: allAgents } = useQuery({
-    queryKey: queryKeys.agents.list(resolvedCompanyId!),
-    queryFn: () => agentsApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId && needsDashboardData,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+    enabled: needsDashboardData,
   });
 
   const { data: budgetOverview } = useQuery({
-    queryKey: queryKeys.budgets.overview(resolvedCompanyId ?? "__none__"),
-    queryFn: () => budgetsApi.overview(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId,
+    queryKey: queryKeys.budgets.overview,
+    queryFn: () => budgetsApi.overview(),
     refetchInterval: 30_000,
     staleTime: 5_000,
   });
@@ -598,7 +586,6 @@ export function AgentDetail() {
     const spentMonthlyCents = agent?.spentMonthlyCents ?? 0;
     return {
       policyId: "",
-      companyId: resolvedCompanyId ?? "",
       scopeType: "agent",
       scopeId: agent?.id ?? routeAgentRef,
       scopeName: agent?.name ?? "Agent",
@@ -619,7 +606,7 @@ export function AgentDetail() {
       windowStart: new Date(),
       windowEnd: new Date(),
     } satisfies BudgetPolicySummary;
-  }, [agent, budgetOverview?.policies, resolvedCompanyId, routeAgentRef]);
+  }, [agent, budgetOverview?.policies, routeAgentRef]);
   const mobileLiveRun = useMemo(
     () => (heartbeats ?? []).find((r) => r.status === "running" || r.status === "queued") ?? null,
     [heartbeats],
@@ -651,19 +638,14 @@ export function AgentDetail() {
     }
   }, [agent, routeAgentRef, canonicalAgentRef, urlRunId, urlTab, activeView, navigate]);
 
-  useEffect(() => {
-    if (!agent?.companyId || agent.companyId === selectedCompanyId) return;
-    setSelectedCompanyId(agent.companyId, { source: "route_sync" });
-  }, [agent?.companyId, selectedCompanyId, setSelectedCompanyId]);
-
   const agentAction = useMutation({
     mutationFn: async (action: "invoke" | "pause" | "resume" | "terminate") => {
       if (!agentLookupRef) return Promise.reject(new Error("No agent reference"));
       switch (action) {
-        case "invoke": return agentsApi.invoke(agentLookupRef, resolvedCompanyId ?? undefined);
-        case "pause": return agentsApi.pause(agentLookupRef, resolvedCompanyId ?? undefined);
-        case "resume": return agentsApi.resume(agentLookupRef, resolvedCompanyId ?? undefined);
-        case "terminate": return agentsApi.terminate(agentLookupRef, resolvedCompanyId ?? undefined);
+        case "invoke": return agentsApi.invoke(agentLookupRef);
+        case "pause": return agentsApi.pause(agentLookupRef);
+        case "resume": return agentsApi.resume(agentLookupRef);
+        case "terminate": return agentsApi.terminate(agentLookupRef);
       }
     },
     onSuccess: (data, action) => {
@@ -672,11 +654,9 @@ export function AgentDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.runtimeState(agentLookupRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.taskSessions(agentLookupRef) });
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
-        if (agent?.id) {
-          queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(resolvedCompanyId, agent.id) });
-        }
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
+      if (agent?.id) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(agent.id) });
       }
       if (action === "invoke" && data && typeof data === "object" && "id" in data) {
         navigate(`/agents/${canonicalAgentRef}/runs/${(data as HeartbeatRun).id}`);
@@ -689,36 +669,33 @@ export function AgentDetail() {
 
   const budgetMutation = useMutation({
     mutationFn: (amount: number) =>
-      budgetsApi.upsertPolicy(resolvedCompanyId!, {
+      budgetsApi.upsertPolicy({
         scopeType: "agent",
         scopeId: agent?.id ?? routeAgentRef,
         amount,
         windowKind: "calendar_month_utc",
       }),
     onSuccess: () => {
-      if (!resolvedCompanyId) return;
-      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(resolvedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(resolvedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     },
   });
 
   const updateIcon = useMutation({
-    mutationFn: (icon: string) => agentsApi.update(agentLookupRef, { icon }, resolvedCompanyId ?? undefined),
+    mutationFn: (icon: string) => agentsApi.update(agentLookupRef, { icon }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
-      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
     },
   });
 
   const resetTaskSession = useMutation({
     mutationFn: (taskKey: string | null) =>
-      agentsApi.resetSession(agentLookupRef, taskKey, resolvedCompanyId ?? undefined),
+      agentsApi.resetSession(agentLookupRef, taskKey),
     onSuccess: () => {
       setActionError(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.runtimeState(agentLookupRef) });
@@ -731,14 +708,12 @@ export function AgentDetail() {
 
   const updatePermissions = useMutation({
     mutationFn: (permissions: AgentPermissionUpdate) =>
-      agentsApi.updatePermissions(agentLookupRef, permissions, resolvedCompanyId ?? undefined),
+      agentsApi.updatePermissions(agentLookupRef, permissions),
     onSuccess: () => {
       setActionError(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
-      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
     },
     onError: (err) => {
       setActionError(err instanceof Error ? err.message : "Failed to update permissions");
@@ -991,7 +966,6 @@ export function AgentDetail() {
       {activeView === "instructions" && (
         <PromptsTab
           agent={agent}
-          companyId={resolvedCompanyId ?? undefined}
           onDirtyChange={setConfigDirty}
           onSaveActionChange={setSaveConfigAction}
           onCancelActionChange={setCancelConfigAction}
@@ -1003,7 +977,6 @@ export function AgentDetail() {
         <AgentConfigurePage
           agent={agent}
           agentId={agent.id}
-          companyId={resolvedCompanyId ?? undefined}
           onDirtyChange={setConfigDirty}
           onSaveActionChange={setSaveConfigAction}
           onCancelActionChange={setCancelConfigAction}
@@ -1015,14 +988,12 @@ export function AgentDetail() {
       {activeView === "skills" && (
         <AgentSkillsTab
           agent={agent}
-          companyId={resolvedCompanyId ?? undefined}
         />
       )}
 
       {activeView === "runs" && (
         <RunsTab
           runs={heartbeats ?? []}
-          companyId={resolvedCompanyId!}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
           selectedRunId={urlRunId ?? null}
@@ -1030,7 +1001,7 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "budget" && resolvedCompanyId ? (
+      {activeView === "budget" ? (
         <div className="max-w-3xl">
           <BudgetPolicyCard
             summary={agentBudgetSummary}
@@ -1279,7 +1250,6 @@ function CostsSection({
 function AgentConfigurePage({
   agent,
   agentId,
-  companyId,
   onDirtyChange,
   onSaveActionChange,
   onCancelActionChange,
@@ -1288,7 +1258,6 @@ function AgentConfigurePage({
 }: {
   agent: AgentDetailRecord;
   agentId: string;
-  companyId?: string;
   onDirtyChange: (dirty: boolean) => void;
   onSaveActionChange: (save: (() => void) | null) => void;
   onCancelActionChange: (cancel: (() => void) | null) => void;
@@ -1300,11 +1269,11 @@ function AgentConfigurePage({
 
   const { data: configRevisions } = useQuery({
     queryKey: queryKeys.agents.configRevisions(agent.id),
-    queryFn: () => agentsApi.listConfigRevisions(agent.id, companyId),
+    queryFn: () => agentsApi.listConfigRevisions(agent.id),
   });
 
   const rollbackConfig = useMutation({
-    mutationFn: (revisionId: string) => agentsApi.rollbackConfigRevision(agent.id, revisionId, companyId),
+    mutationFn: (revisionId: string) => agentsApi.rollbackConfigRevision(agent.id, revisionId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) });
@@ -1321,13 +1290,12 @@ function AgentConfigurePage({
         onCancelActionChange={onCancelActionChange}
         onSavingChange={onSavingChange}
         updatePermissions={updatePermissions}
-        companyId={companyId}
         hidePromptTemplate
         hideInstructionsFile
       />
       <div>
         <h3 className="text-sm font-medium mb-3">API Keys</h3>
-        <KeysTab agentId={agentId} companyId={companyId} />
+        <KeysTab agentId={agentId} />
       </div>
 
       {/* Configuration Revisions — collapsible at the bottom */}
@@ -1388,7 +1356,6 @@ function AgentConfigurePage({
 
 function ConfigurationTab({
   agent,
-  companyId,
   onDirtyChange,
   onSaveActionChange,
   onCancelActionChange,
@@ -1398,7 +1365,6 @@ function ConfigurationTab({
   hideInstructionsFile,
 }: {
   agent: AgentDetailRecord;
-  companyId?: string;
   onDirtyChange: (dirty: boolean) => void;
   onSaveActionChange: (save: (() => void) | null) => void;
   onCancelActionChange: (cancel: (() => void) | null) => void;
@@ -1413,16 +1379,12 @@ function ConfigurationTab({
   const lastAgentRef = useRef(agent);
 
   const { data: adapterModels } = useQuery({
-    queryKey:
-      companyId
-        ? queryKeys.agents.adapterModels(companyId, agent.adapterType)
-        : ["agents", "none", "adapter-models", agent.adapterType],
-    queryFn: () => agentsApi.adapterModels(companyId!, agent.adapterType),
-    enabled: Boolean(companyId),
+    queryKey: queryKeys.agents.adapterModels(agent.adapterType),
+    queryFn: () => agentsApi.adapterModels(agent.adapterType),
   });
 
   const updateAgent = useMutation({
-    mutationFn: (data: Record<string, unknown>) => agentsApi.update(agent.id, data, companyId),
+    mutationFn: (data: Record<string, unknown>) => agentsApi.update(agent.id, data),
     onMutate: () => {
       setAwaitingRefreshAfterSave(true);
     },
@@ -1430,7 +1392,7 @@ function ConfigurationTab({
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.configRevisions(agent.id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(agent.companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
     },
     onError: (err) => {
       setAwaitingRefreshAfterSave(false);
@@ -1466,7 +1428,7 @@ function ConfigurationTab({
       : taskAssignSource === "agent_creator"
         ? "Enabled automatically while this agent can create new agents."
         : taskAssignSource === "explicit_grant"
-          ? "Enabled via explicit company permission grant."
+          ? "Enabled via explicit instance permission grant."
           : "Disabled unless explicitly granted.";
 
   return (
@@ -1563,21 +1525,18 @@ function ConfigurationTab({
 
 function PromptsTab({
   agent,
-  companyId,
   onDirtyChange,
   onSaveActionChange,
   onCancelActionChange,
   onSavingChange,
 }: {
   agent: Agent;
-  companyId?: string;
   onDirtyChange: (dirty: boolean) => void;
   onSaveActionChange: (save: (() => void) | null) => void;
   onCancelActionChange: (cancel: (() => void) | null) => void;
   onSavingChange: (saving: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const { selectedCompanyId } = useCompany();
   const { isMobile } = useSidebar();
   const [selectedFile, setSelectedFile] = useState<string>("AGENTS.md");
   const [showFilePanel, setShowFilePanel] = useState(false);
@@ -1625,8 +1584,8 @@ function PromptsTab({
 
   const { data: bundle, isLoading: bundleLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsBundle(agent.id),
-    queryFn: () => agentsApi.instructionsBundle(agent.id, companyId),
-    enabled: Boolean(companyId && isLocal),
+    queryFn: () => agentsApi.instructionsBundle(agent.id),
+    enabled: isLocal,
   });
 
   const persistedMode = bundle?.mode ?? "managed";
@@ -1662,8 +1621,8 @@ function PromptsTab({
 
   const { data: selectedFileDetail, isLoading: fileLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsFile(agent.id, selectedOrEntryFile),
-    queryFn: () => agentsApi.instructionsFile(agent.id, selectedOrEntryFile, companyId),
-    enabled: Boolean(companyId && isLocal && selectedFileExists),
+    queryFn: () => agentsApi.instructionsFile(agent.id, selectedOrEntryFile),
+    enabled: isLocal && selectedFileExists,
   });
 
   const updateBundle = useMutation({
@@ -1672,7 +1631,7 @@ function PromptsTab({
       rootPath?: string | null;
       entryFile?: string;
       clearLegacyPromptTemplate?: boolean;
-    }) => agentsApi.updateInstructionsBundle(agent.id, data, companyId),
+    }) => agentsApi.updateInstructionsBundle(agent.id, data),
     onMutate: () => setAwaitingRefresh(true),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.instructionsBundle(agent.id) });
@@ -1684,7 +1643,7 @@ function PromptsTab({
 
   const saveFile = useMutation({
     mutationFn: (data: { path: string; content: string; clearLegacyPromptTemplate?: boolean }) =>
-      agentsApi.saveInstructionsFile(agent.id, data, companyId),
+      agentsApi.saveInstructionsFile(agent.id, data),
     onMutate: () => setAwaitingRefresh(true),
     onSuccess: (_, variables) => {
       setPendingFiles((prev) => prev.filter((f) => f !== variables.path));
@@ -1697,7 +1656,7 @@ function PromptsTab({
   });
 
   const deleteFile = useMutation({
-    mutationFn: (relativePath: string) => agentsApi.deleteInstructionsFile(agent.id, relativePath, companyId),
+    mutationFn: (relativePath: string) => agentsApi.deleteInstructionsFile(agent.id, relativePath),
     onMutate: () => setAwaitingRefresh(true),
     onSuccess: (_, relativePath) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.instructionsBundle(agent.id) });
@@ -1710,8 +1669,7 @@ function PromptsTab({
 
   const uploadMarkdownImage = useMutation({
     mutationFn: async ({ file, namespace }: { file: File; namespace: string }) => {
-      if (!selectedCompanyId) throw new Error("Select a company to upload images");
-      return assetsApi.uploadImage(selectedCompanyId, file, namespace);
+      return assetsApi.uploadImage(file, namespace);
     },
   });
 
@@ -2314,10 +2272,8 @@ function PromptEditorSkeleton() {
 
 function AgentSkillsTab({
   agent,
-  companyId,
 }: {
   agent: Agent;
-  companyId?: string;
 }) {
   type SkillRow = {
     id: string;
@@ -2342,18 +2298,16 @@ function AgentSkillsTab({
 
   const { data: skillSnapshot, isLoading } = useQuery({
     queryKey: queryKeys.agents.skills(agent.id),
-    queryFn: () => agentsApi.skills(agent.id, companyId),
-    enabled: Boolean(companyId),
+    queryFn: () => agentsApi.skills(agent.id),
   });
 
-  const { data: companySkills } = useQuery({
-    queryKey: queryKeys.companySkills.list(companyId ?? ""),
-    queryFn: () => companySkillsApi.list(companyId!),
-    enabled: Boolean(companyId),
+  const { data: librarySkills } = useQuery({
+    queryKey: queryKeys.skills.list,
+    queryFn: () => skillsApi.list(),
   });
 
   const syncSkills = useMutation({
-    mutationFn: (desiredSkills: string[]) => agentsApi.syncSkills(agent.id, desiredSkills, companyId),
+    mutationFn: (desiredSkills: string[]) => agentsApi.syncSkills(agent.id, desiredSkills),
     onSuccess: async (snapshot) => {
       queryClient.setQueryData(queryKeys.agents.skills(agent.id), snapshot);
       lastSavedSkillsRef.current = snapshot.desiredSkills;
@@ -2408,13 +2362,13 @@ function AgentSkillsTab({
     return () => window.clearTimeout(timeout);
   }, [skillDraft, skillSnapshot, syncSkills.isPending, syncSkills.mutate]);
 
-  const companySkillByKey = useMemo(
-    () => new Map((companySkills ?? []).map((skill) => [skill.key, skill])),
-    [companySkills],
+  const librarySkillByKey = useMemo(
+    () => new Map((librarySkills ?? []).map((skill) => [skill.key, skill])),
+    [librarySkills],
   );
-  const companySkillKeys = useMemo(
-    () => new Set((companySkills ?? []).map((skill) => skill.key)),
-    [companySkills],
+  const librarySkillKeys = useMemo(
+    () => new Set((librarySkills ?? []).map((skill) => skill.key)),
+    [librarySkills],
   );
   const adapterEntryByKey = useMemo(
     () => new Map((skillSnapshot?.entries ?? []).map((entry) => [entry.key, entry])),
@@ -2422,7 +2376,7 @@ function AgentSkillsTab({
   );
   const optionalSkillRows = useMemo<SkillRow[]>(
     () =>
-      (companySkills ?? [])
+      (librarySkills ?? [])
         .filter((skill) => !adapterEntryByKey.get(skill.key)?.required)
         .map((skill) => ({
           id: skill.id,
@@ -2436,33 +2390,33 @@ function AgentSkillsTab({
           readOnly: false,
           adapterEntry: adapterEntryByKey.get(skill.key) ?? null,
         })),
-    [adapterEntryByKey, companySkills],
+    [adapterEntryByKey, librarySkills],
   );
   const requiredSkillRows = useMemo<SkillRow[]>(
     () =>
       (skillSnapshot?.entries ?? [])
         .filter((entry) => entry.required)
         .map((entry) => {
-          const companySkill = companySkillByKey.get(entry.key);
+          const librarySkill = librarySkillByKey.get(entry.key);
           return {
-            id: companySkill?.id ?? `required:${entry.key}`,
+            id: librarySkill?.id ?? `required:${entry.key}`,
             key: entry.key,
-            name: companySkill?.name ?? entry.key,
-            description: companySkill?.description ?? null,
+            name: librarySkill?.name ?? entry.key,
+            description: librarySkill?.description ?? null,
             detail: entry.detail ?? null,
             locationLabel: entry.locationLabel ?? null,
             originLabel: entry.originLabel ?? null,
-            linkTo: companySkill ? `/skills/${companySkill.id}` : null,
+            linkTo: librarySkill ? `/skills/${librarySkill.id}` : null,
             readOnly: false,
             adapterEntry: entry,
           };
         }),
-    [companySkillByKey, skillSnapshot],
+    [librarySkillByKey, skillSnapshot],
   );
   const unmanagedSkillRows = useMemo<SkillRow[]>(
     () =>
       (skillSnapshot?.entries ?? [])
-        .filter((entry) => isReadOnlyUnmanagedSkillEntry(entry, companySkillKeys))
+        .filter((entry) => isReadOnlyUnmanagedSkillEntry(entry, librarySkillKeys))
         .map((entry) => ({
           id: `external:${entry.key}`,
           key: entry.key,
@@ -2475,11 +2429,11 @@ function AgentSkillsTab({
           readOnly: true,
           adapterEntry: entry,
         })),
-    [companySkillKeys, skillSnapshot],
+    [librarySkillKeys, skillSnapshot],
   );
   const desiredOnlyMissingSkills = useMemo(
-    () => skillDraft.filter((key) => !companySkillByKey.has(key)),
-    [companySkillByKey, skillDraft],
+    () => skillDraft.filter((key) => !librarySkillByKey.has(key)),
+    [librarySkillByKey, skillDraft],
   );
   const skillApplicationLabel = useMemo(() => {
     switch (skillSnapshot?.mode) {
@@ -2514,7 +2468,7 @@ function AgentSkillsTab({
           to="/skills"
           className="text-sm font-medium text-foreground underline-offset-4 no-underline transition-colors hover:text-foreground/70 hover:underline"
         >
-          View company skills library
+          View skill library
         </Link>
         {saveStatusLabel ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -2638,7 +2592,7 @@ function AgentSkillsTab({
               return (
                 <section className="border-y border-border">
                   <div className="px-3 py-6 text-sm text-muted-foreground">
-                    Import skills into the company library first, then attach them here.
+                    Import skills into the skill library first, then attach them here.
                   </div>
                 </section>
               );
@@ -2686,7 +2640,7 @@ function AgentSkillsTab({
 
           {desiredOnlyMissingSkills.length > 0 && (
             <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">
-              <div className="font-medium">Requested skills missing from the company library</div>
+              <div className="font-medium">Requested skills missing from the skill library</div>
               <div className="mt-1 text-xs">
                 {desiredOnlyMissingSkills.join(", ")}
               </div>
@@ -2774,14 +2728,12 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
 
 function RunsTab({
   runs,
-  companyId,
   agentId,
   agentRouteId,
   selectedRunId,
   adapterType,
 }: {
   runs: HeartbeatRun[];
-  companyId: string;
   agentId: string;
   agentRouteId: string;
   selectedRunId: string | null;
@@ -2874,7 +2826,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
   const cancelRun = useMutation({
     mutationFn: () => heartbeatsApi.cancel(run.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.agentId) });
     },
   });
   const canResumeLostRun = run.errorCode === "process_lost" && run.status === "failed";
@@ -2901,14 +2853,14 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
         triggerDetail: "manual",
         reason: "resume_process_lost_run",
         payload: resumePayload,
-      }, run.companyId);
+      });
       if (!("id" in result)) {
         throw new Error("Resume request was skipped because the agent is not currently invokable.");
       }
       return result;
     },
     onSuccess: (resumedRun) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.agentId) });
       navigate(`/agents/${agentRouteId}/runs/${resumedRun.id}`);
     },
   });
@@ -2933,14 +2885,14 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
         triggerDetail: "manual",
         reason: "retry_failed_run",
         payload: retryPayload,
-      }, run.companyId);
+      });
       if (!("id" in result)) {
         throw new Error("Retry was skipped because the agent is not currently invokable.");
       }
       return result;
     },
     onSuccess: (newRun) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.agentId) });
       navigate(`/agents/${agentRouteId}/runs/${newRun.id}`);
     },
   });
@@ -2957,7 +2909,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
   const clearSessionsForTouchedIssues = useMutation({
     mutationFn: async () => {
       if (touchedIssueIds.length === 0) return 0;
-      await Promise.all(touchedIssueIds.map((issueId) => agentsApi.resetSession(run.agentId, issueId, run.companyId)));
+      await Promise.all(touchedIssueIds.map((issueId) => agentsApi.resetSession(run.agentId, issueId)));
       return touchedIssueIds.length;
     },
     onSuccess: () => {
@@ -2968,7 +2920,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
   });
 
   const runClaudeLogin = useMutation({
-    mutationFn: () => agentsApi.loginWithClaude(run.agentId, run.companyId),
+    mutationFn: () => agentsApi.loginWithClaude(run.agentId),
     onSuccess: (data) => {
       setClaudeLoginResult(data);
     },
@@ -3531,7 +3483,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
     const connect = () => {
       if (closed) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/companies/${encodeURIComponent(run.companyId)}/events/ws`;
+      const url = `${protocol}://${window.location.host}/api/events/ws`;
       socket = new WebSocket(url);
 
       socket.onopen = () => {
@@ -3549,7 +3501,6 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
           return;
         }
 
-        if (event.companyId !== run.companyId) return;
         const payload = asRecord(event.payload);
         const eventRunId = asNonEmptyString(payload?.runId);
         if (!payload || eventRunId !== run.id) return;
@@ -3582,7 +3533,6 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
 
         const liveEvent: HeartbeatRunEvent = {
           id: seq,
-          companyId: run.companyId,
           runId: run.id,
           agentId: run.agentId,
           seq,
@@ -3625,7 +3575,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
         socket.close(1000, "run_detail_unmount");
       }
     };
-  }, [isLive, run.companyId, run.id, run.agentId]);
+  }, [isLive, run.id, run.agentId]);
 
   const censorUsernameInLogs = useQuery({
     queryKey: queryKeys.instance.generalSettings,
@@ -3888,7 +3838,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
 
 /* ---- Keys Tab ---- */
 
-function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }) {
+function KeysTab({ agentId }: { agentId: string }) {
   const queryClient = useQueryClient();
   const [newKeyName, setNewKeyName] = useState("");
   const [newToken, setNewToken] = useState<string | null>(null);
@@ -3897,11 +3847,11 @@ function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }
 
   const { data: keys, isLoading } = useQuery({
     queryKey: queryKeys.agents.keys(agentId),
-    queryFn: () => agentsApi.listKeys(agentId, companyId),
+    queryFn: () => agentsApi.listKeys(agentId),
   });
 
   const createKey = useMutation({
-    mutationFn: () => agentsApi.createKey(agentId, newKeyName.trim() || "Default", companyId),
+    mutationFn: () => agentsApi.createKey(agentId, newKeyName.trim() || "Default"),
     onSuccess: (data) => {
       setNewToken(data.token);
       setTokenVisible(true);
@@ -3911,7 +3861,7 @@ function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }
   });
 
   const revokeKey = useMutation({
-    mutationFn: (keyId: string) => agentsApi.revokeKey(agentId, keyId, companyId),
+    mutationFn: (keyId: string) => agentsApi.revokeKey(agentId, keyId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.keys(agentId) });
     },

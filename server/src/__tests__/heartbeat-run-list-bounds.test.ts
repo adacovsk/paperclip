@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { agents, companies, createDb, heartbeatRuns } from "@paperclipai/db";
+import { agents, createDb, heartbeatRuns } from "@paperclipai/db";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT } from "@paperclipai/shared";
 import {
   getEmbeddedPostgresTestSupport,
@@ -29,7 +29,6 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   let svc!: ReturnType<typeof heartbeatService>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
-  const companyId = randomUUID();
   const agentA = randomUUID();
   const agentB = randomUUID();
 
@@ -42,7 +41,6 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   afterEach(async () => {
     await db.delete(heartbeatRuns);
     await db.delete(agents);
-    await db.delete(companies);
   });
 
   afterAll(async () => {
@@ -51,17 +49,9 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
 
   // Runs end shortly before now so they fall inside the badge probe's one-day window.
   async function seedRuns(count: number, base = Date.now() - count * 1000 - 60_000) {
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
-
     await db.insert(agents).values(
       [agentA, agentB].map((id, index) => ({
         id,
-        companyId,
         name: `Agent${index}`,
         role: "engineer",
         status: "active",
@@ -75,7 +65,6 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
     await db.insert(heartbeatRuns).values(
       Array.from({ length: count }, (_, i) => ({
         id: randomUUID(),
-        companyId,
         agentId: i % 2 === 0 ? agentA : agentB,
         invocationSource: "scheduled" as const,
         // Ascending time: the last row inserted per agent is that agent's latest.
@@ -89,7 +78,7 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   it("bounds the run list when the caller passes no limit", async () => {
     await seedRuns(HEARTBEAT_RUN_LIST_DEFAULT_LIMIT + 25);
 
-    const runs = await svc.list(companyId);
+    const runs = await svc.list();
 
     expect(runs).toHaveLength(HEARTBEAT_RUN_LIST_DEFAULT_LIMIT);
   });
@@ -97,7 +86,7 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   it("returns the newest runs first when it truncates", async () => {
     await seedRuns(HEARTBEAT_RUN_LIST_DEFAULT_LIMIT + 25);
 
-    const runs = await svc.list(companyId);
+    const runs = await svc.list();
     const timestamps = runs.map((run) => run.createdAt.getTime());
 
     expect(timestamps).toEqual([...timestamps].sort((a, b) => b - a));
@@ -108,7 +97,7 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   it("honours an explicit limit below the default", async () => {
     await seedRuns(50);
 
-    const runs = await svc.list(companyId, undefined, 5);
+    const runs = await svc.list(undefined, 5);
 
     expect(runs).toHaveLength(5);
   });
@@ -116,7 +105,7 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   it("returns exactly one run per agent for the badge probe", async () => {
     await seedRuns(60);
 
-    const latest = await svc.latestRunsByAgent(companyId);
+    const latest = await svc.latestRunsByAgent();
 
     expect(latest).toHaveLength(2);
     expect(new Set(latest.map((run) => run.agentId))).toEqual(new Set([agentA, agentB]));
@@ -126,7 +115,7 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
     const count = 60;
     await seedRuns(count);
 
-    const latest = await svc.latestRunsByAgent(companyId);
+    const latest = await svc.latestRunsByAgent();
 
     // The final two seeded rows are the newest per agent and the only "succeeded" ones,
     // so status doubles as a marker that the newest row won.
@@ -136,7 +125,7 @@ describeEmbeddedPostgres("heartbeatService run list bounds", () => {
   it("omits agents whose latest run is older than a day from the badge probe", async () => {
     await seedRuns(60, Date.now() - 2 * 24 * 60 * 60 * 1000);
 
-    const latest = await svc.latestRunsByAgent(companyId);
+    const latest = await svc.latestRunsByAgent();
 
     expect(latest).toEqual([]);
   });

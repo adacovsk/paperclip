@@ -33,7 +33,6 @@ describe("cursor local skill sync", () => {
 
     const ctx = {
       agentId: "agent-1",
-      companyId: "company-1",
       adapterType: "cursor",
       config: {
         env: {
@@ -56,7 +55,7 @@ describe("cursor local skill sync", () => {
     expect((await fs.lstat(path.join(home, ".cursor", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
   });
 
-  it("recognizes company-library runtime skills supplied outside the bundled Paperclip directory", async () => {
+  it("recognizes library runtime skills supplied outside the bundled Paperclip directory", async () => {
     const home = await makeTempDir("paperclip-cursor-runtime-skills-home-");
     const runtimeSkills = await makeTempDir("paperclip-cursor-runtime-skills-src-");
     cleanupDirs.add(home);
@@ -67,7 +66,6 @@ describe("cursor local skill sync", () => {
 
     const ctx = {
       agentId: "agent-3",
-      companyId: "company-1",
       adapterType: "cursor",
       config: {
         env: {
@@ -110,7 +108,6 @@ describe("cursor local skill sync", () => {
 
     const configuredCtx = {
       agentId: "agent-2",
-      companyId: "company-1",
       adapterType: "cursor",
       config: {
         env: {

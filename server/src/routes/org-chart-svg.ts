@@ -570,8 +570,8 @@ const TARGET_W = 1280;
 const TARGET_H = 640;
 
 export interface OrgChartOverlay {
-  /** Company name displayed top-left */
-  companyName?: string;
+  /** Instance name displayed top-left */
+  instanceName?: string;
   /** Summary stats displayed bottom-right, e.g. "Agents: 5, Skills: 8" */
   stats?: string;
 }
@@ -738,8 +738,8 @@ export function renderOrgChartSvg(orgTree: OrgNode[], style: OrgChartStyle = "wa
   const logoY = LOGO_PADDING;
 
   // Optional overlay elements
-  const overlayNameSvg = overlay?.companyName
-    ? `<text x="${LOGO_PADDING}" y="${LOGO_PADDING + 16}" font-family="'Inter', -apple-system, BlinkMacSystemFont, sans-serif" font-size="22" font-weight="700" fill="${theme.nameColor}">${svgEscape(overlay.companyName)}</text>`
+  const overlayNameSvg = overlay?.instanceName
+    ? `<text x="${LOGO_PADDING}" y="${LOGO_PADDING + 16}" font-family="'Inter', -apple-system, BlinkMacSystemFont, sans-serif" font-size="22" font-weight="700" fill="${theme.nameColor}">${svgEscape(overlay.instanceName)}</text>`
     : "";
   const overlayStatsSvg = overlay?.stats
     ? `<text x="${TARGET_W - LOGO_PADDING}" y="${TARGET_H - LOGO_PADDING}" text-anchor="end" font-family="'Inter', -apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="500" fill="${theme.roleColor}">${svgEscape(overlay.stats)}</text>`

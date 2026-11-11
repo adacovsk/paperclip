@@ -21,7 +21,7 @@ cancelled task, a hold lifted by hand.
 
 Usage: check_backlog_repoke.py   exit 0: re-poke (the reason is printed)
                                   exit 1: skip this sweep (the reason is printed)
-Env:   PAPERCLIP_PROJECT (required), PAPERCLIP_COMPANY_ID (required),
+Env:   PAPERCLIP_PROJECT (required),
        PAPERCLIP_API_URL (default http://127.0.0.1:3100), PAPERCLIP_API_KEY,
        BACKLOG_REPOKE_MAX_AGE_S (default 21600, six hours)
 """
@@ -63,9 +63,8 @@ def api(path: str):
 
 
 def last_planner_fire() -> datetime | None:
-    company = os.environ["PAPERCLIP_COMPANY_ID"]
-    planner = next(a["id"] for a in api(f"/companies/{company}/agents") if a["name"] == "Planner")
-    runs = api(f"/companies/{company}/heartbeat-runs?agentId={planner}&limit=10")
+    planner = next(a["id"] for a in api("/agents") if a["name"] == "Planner")
+    runs = api(f"/heartbeat-runs?agentId={planner}&limit=10")
     started = [r["startedAt"] for r in runs if r.get("startedAt")]
     return max(datetime.fromisoformat(s.replace("Z", "+00:00")) for s in started) if started else None
 

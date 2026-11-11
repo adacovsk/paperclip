@@ -1,51 +1,15 @@
-type OnboardingRouteCompany = {
-  id: string;
-  issuePrefix: string;
-};
-
 export function isOnboardingPath(pathname: string): boolean {
   const segments = pathname.split("/").filter(Boolean);
-
-  if (segments.length === 1) {
-    return segments[0]?.toLowerCase() === "onboarding";
-  }
-
-  if (segments.length === 2) {
-    return segments[1]?.toLowerCase() === "onboarding";
-  }
-
-  return false;
+  return segments.length === 1 && segments[0]?.toLowerCase() === "onboarding";
 }
 
-export function resolveRouteOnboardingOptions(params: {
+/**
+ * Onboarding opens on its own when the instance has no agents yet, except on
+ * the onboarding route itself, which opens it explicitly.
+ */
+export function shouldAutoOpenOnboarding(params: {
   pathname: string;
-  companyPrefix?: string;
-  companies: OnboardingRouteCompany[];
-}): { initialStep: 1 | 2; companyId?: string } | null {
-  const { pathname, companyPrefix, companies } = params;
-
-  if (!isOnboardingPath(pathname)) return null;
-
-  // An instance holds exactly one company, so the company step only runs when
-  // none exists yet; otherwise onboarding adds an agent to the one there is.
-  const matchedCompany =
-    (companyPrefix
-      ? companies.find(
-          (company) =>
-            company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase(),
-        )
-      : undefined) ?? companies[0];
-
-  if (!matchedCompany) {
-    return { initialStep: 1 };
-  }
-
-  return { initialStep: 2, companyId: matchedCompany.id };
-}
-
-export function shouldRedirectCompanylessRouteToOnboarding(params: {
-  pathname: string;
-  hasCompanies: boolean;
+  agentCount: number;
 }): boolean {
-  return !params.hasCompanies && !isOnboardingPath(params.pathname);
+  return params.agentCount === 0 && !isOnboardingPath(params.pathname);
 }

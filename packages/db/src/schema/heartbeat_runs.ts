@@ -1,5 +1,4 @@
 import { type AnyPgColumn, pgTable, uuid, text, timestamp, jsonb, index, integer, bigint, boolean } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 
@@ -7,7 +6,6 @@ export const heartbeatRuns = pgTable(
   "heartbeat_runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     agentId: uuid("agent_id").notNull().references(() => agents.id),
     invocationSource: text("invocation_source").notNull().default("on_demand"),
     triggerDetail: text("trigger_detail"),
@@ -42,21 +40,18 @@ export const heartbeatRuns = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyAgentStartedIdx: index("heartbeat_runs_company_agent_started_idx").on(
-      table.companyId,
+    agentStartedIdx: index("heartbeat_runs_agent_started_idx").on(
       table.agentId,
       table.startedAt,
     ),
     // Run lists order by created_at DESC, not started_at, so the index above cannot
-    // serve them. Without these the company-wide list is a full scan + sort.
-    companyCreatedIdx: index("heartbeat_runs_company_created_idx").on(
-      table.companyId,
+    // serve them. Without these the instance-wide list is a full scan + sort.
+    createdIdx: index("heartbeat_runs_created_idx").on(
       table.createdAt.desc(),
     ),
     // Serves the DISTINCT ON (agent_id) latest-run-per-agent probe and the
     // agentId-filtered list.
-    companyAgentCreatedIdx: index("heartbeat_runs_company_agent_created_idx").on(
-      table.companyId,
+    agentCreatedIdx: index("heartbeat_runs_agent_created_idx").on(
       table.agentId,
       table.createdAt.desc(),
     ),

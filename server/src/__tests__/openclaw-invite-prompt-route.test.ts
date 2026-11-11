@@ -14,8 +14,8 @@ const mockAccessService = vi.hoisted(() => ({
   setMemberPermissions: vi.fn(),
   promoteInstanceAdmin: vi.fn(),
   demoteInstanceAdmin: vi.fn(),
-  listUserCompanyAccess: vi.fn(),
-  setUserCompanyAccess: vi.fn(),
+  getUserAccess: vi.fn(),
+  setUserAccess: vi.fn(),
   setPrincipalGrants: vi.fn(),
 }));
 
@@ -47,8 +47,7 @@ vi.mock("../services/index.js", () => ({
 function createDbStub() {
   const createdInvite = {
     id: "invite-1",
-    companyId: "company-1",
-    inviteType: "company_join",
+    inviteType: "join",
     allowedJoinTypes: "agent",
     defaultsPayload: null,
     expiresAt: new Date("2026-03-07T00:10:00.000Z"),
@@ -87,7 +86,7 @@ function createApp(actor: Record<string, unknown>, db: Record<string, unknown>) 
   return app;
 }
 
-describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
+describe("POST /openclaw/invite-prompt", () => {
   beforeEach(() => {
     mockAccessService.canUser.mockResolvedValue(false);
     mockAgentService.getById.mockReset();
@@ -98,21 +97,19 @@ describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
     const db = createDbStub();
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       role: "engineer",
     });
     const app = createApp(
       {
         type: "agent",
         agentId: "agent-1",
-        companyId: "company-1",
-        source: "agent_key",
+          source: "agent_key",
       },
       db,
     );
 
     const res = await request(app)
-      .post("/api/companies/company-1/openclaw/invite-prompt")
+      .post("/api/openclaw/invite-prompt")
       .send({});
 
     expect(res.status).toBe(403);
@@ -123,21 +120,19 @@ describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
     const db = createDbStub();
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       role: "ceo",
     });
     const app = createApp(
       {
         type: "agent",
         agentId: "agent-1",
-        companyId: "company-1",
-        source: "agent_key",
+          source: "agent_key",
       },
       db,
     );
 
     const res = await request(app)
-      .post("/api/companies/company-1/openclaw/invite-prompt")
+      .post("/api/openclaw/invite-prompt")
       .send({ agentMessage: "Join and configure OpenClaw gateway." });
 
     expect(res.status).toBe(201);
@@ -153,7 +148,7 @@ describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
       {
         type: "operator",
         userId: "user-1",
-        companyIds: ["company-1"],
+        isMember: true,
         source: "session",
         isInstanceAdmin: false,
       },
@@ -161,7 +156,7 @@ describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
     );
 
     const res = await request(app)
-      .post("/api/companies/company-1/openclaw/invite-prompt")
+      .post("/api/openclaw/invite-prompt")
       .send({});
 
     expect(res.status).toBe(201);
@@ -175,7 +170,7 @@ describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
       {
         type: "operator",
         userId: "user-1",
-        companyIds: ["company-1"],
+        isMember: true,
         source: "session",
         isInstanceAdmin: false,
       },
@@ -183,7 +178,7 @@ describe("POST /companies/:companyId/openclaw/invite-prompt", () => {
     );
 
     const res = await request(app)
-      .post("/api/companies/company-1/openclaw/invite-prompt")
+      .post("/api/openclaw/invite-prompt")
       .send({});
 
     expect(res.status).toBe(403);

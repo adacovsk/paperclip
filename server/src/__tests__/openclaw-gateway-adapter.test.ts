@@ -16,7 +16,6 @@ function buildContext(
     runId: "run-123",
     agent: {
       id: "agent-123",
-      companyId: "company-123",
       name: "OpenClaw Gateway Agent",
       adapterType: "openclaw_gateway",
       adapterConfig: {},
@@ -614,7 +613,6 @@ describe("openclaw gateway ui build config", () => {
 describe("openclaw gateway testEnvironment", () => {
   it("reports missing url as failure", async () => {
     const result = await testEnvironment({
-      companyId: "company-123",
       adapterType: "openclaw_gateway",
       config: {},
     });

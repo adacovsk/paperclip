@@ -1,8 +1,7 @@
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { Menu } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
-import { useCompany } from "../context/CompanyContext";
 import { Button } from "@/components/ui/button";
 import {
   Breadcrumb,
@@ -16,11 +15,11 @@ import { Fragment, useMemo } from "react";
 import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
 
-type GlobalToolbarContext = { companyId: string | null; companyPrefix: string | null };
+type GlobalToolbarContext = Record<string, never>;
 
 function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
-  const { slots } = usePluginSlots({ slotTypes: ["globalToolbarButton"], companyId: context.companyId });
-  const { launchers } = usePluginLaunchers({ placementZones: ["globalToolbarButton"], companyId: context.companyId, enabled: !!context.companyId });
+  const { slots } = usePluginSlots({ slotTypes: ["globalToolbarButton"] });
+  const { launchers } = usePluginLaunchers({ placementZones: ["globalToolbarButton"] });
   if (slots.length === 0 && launchers.length === 0) return null;
   return (
     <div className="flex items-center gap-1 ml-auto shrink-0 pl-2">
@@ -33,15 +32,7 @@ function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
 export function BreadcrumbBar() {
   const { breadcrumbs } = useBreadcrumbs();
   const { toggleSidebar, isMobile } = useSidebar();
-  const { selectedCompanyId, selectedCompany } = useCompany();
-
-  const globalToolbarSlotContext = useMemo(
-    () => ({
-      companyId: selectedCompanyId ?? null,
-      companyPrefix: selectedCompany?.issuePrefix ?? null,
-    }),
-    [selectedCompanyId, selectedCompany?.issuePrefix],
-  );
+  const globalToolbarSlotContext = useMemo<GlobalToolbarContext>(() => ({}), []);
 
   const globalToolbarSlots = <GlobalToolbarPlugins context={globalToolbarSlotContext} />;
 

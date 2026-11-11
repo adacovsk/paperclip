@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   agentWakeupRequests,
-  companies,
   createDb,
   heartbeatRuns,
   issues,
@@ -46,7 +45,7 @@ describeEmbeddedPostgres("stale queued execution lock", () => {
 
   // No afterEach teardown: every fixture below is keyed on fresh UUIDs, so the
   // rows cannot collide across tests. Deleting them in dependency order means
-  // chasing the whole FK graph (agent_runtime_state, company_skills, ...) for no
+  // chasing the whole FK graph (agent_runtime_state, skills, ...) for no
   // isolation benefit, and the embedded database is discarded in afterAll.
 
   afterAll(async () => {
@@ -59,20 +58,12 @@ describeEmbeddedPostgres("stale queued execution lock", () => {
    * run was adopted as the lock for a Worker-assigned task.
    */
   async function seedLockedIssue(lockAgeMs: number) {
-    const companyId = randomUUID();
     const holderAgentId = randomUUID();
     const assigneeAgentId = randomUUID();
     const runId = randomUUID();
     const issueId = randomUUID();
-    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const issuePrefix = `T${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const lockedAt = new Date(Date.now() - lockAgeMs);
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix,
-      requireOperatorApprovalForNewAgents: false,
-    });
 
     for (const [id, name] of [
       [holderAgentId, "Coordinator"],
@@ -80,7 +71,6 @@ describeEmbeddedPostgres("stale queued execution lock", () => {
     ] as const) {
       await db.insert(agents).values({
         id,
-        companyId,
         name,
         role: "engineer",
         status: "active",
@@ -95,7 +85,6 @@ describeEmbeddedPostgres("stale queued execution lock", () => {
     // this is an agent that is paused or already at maxConcurrentRuns.
     await db.insert(heartbeatRuns).values({
       id: runId,
-      companyId,
       agentId: holderAgentId,
       invocationSource: "assignment",
       triggerDetail: "system",
@@ -108,7 +97,6 @@ describeEmbeddedPostgres("stale queued execution lock", () => {
 
     await db.insert(issues).values({
       id: issueId,
-      companyId,
       title: "Locked out of dispatch by a queued run",
       status: "todo",
       priority: "medium",
@@ -119,7 +107,7 @@ describeEmbeddedPostgres("stale queued execution lock", () => {
       identifier: `${issuePrefix}-1`,
     });
 
-    return { companyId, assigneeAgentId, holderAgentId, runId, issueId };
+    return { assigneeAgentId, holderAgentId, runId, issueId };
   }
 
   async function readLock(issueId: string) {

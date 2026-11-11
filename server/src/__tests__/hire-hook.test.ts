@@ -14,7 +14,7 @@ vi.mock("../services/activity-log.js", () => ({
 const { findServerAdapter } = await import("../adapters/registry.js");
 const { logActivity } = await import("../services/activity-log.js");
 
-function mockDbWithAgent(agent: { id: string; companyId: string; name: string; adapterType: string; adapterConfig?: Record<string, unknown> }): Db {
+function mockDbWithAgent(agent: { id: string; name: string; adapterType: string; adapterConfig?: Record<string, unknown> }): Db {
   return {
     select: () => ({
       from: () => ({
@@ -22,7 +22,6 @@ function mockDbWithAgent(agent: { id: string; companyId: string; name: string; a
           Promise.resolve([
             {
               id: agent.id,
-              companyId: agent.companyId,
               name: agent.name,
               adapterType: agent.adapterType,
               adapterConfig: agent.adapterConfig ?? {},
@@ -46,14 +45,12 @@ describe("notifyHireApproved", () => {
 
     const db = mockDbWithAgent({
       id: "a1",
-      companyId: "c1",
       name: "OpenClaw Agent",
       adapterType: "openclaw_gateway",
     });
 
     await expect(
       notifyHireApproved(db, {
-        companyId: "c1",
         agentId: "a1",
         source: "approval",
         sourceId: "ap1",
@@ -81,7 +78,6 @@ describe("notifyHireApproved", () => {
 
     await expect(
       notifyHireApproved(db, {
-        companyId: "c1",
         agentId: "a1",
         source: "join_request",
         sourceId: "jr1",
@@ -96,14 +92,12 @@ describe("notifyHireApproved", () => {
 
     const db = mockDbWithAgent({
       id: "a1",
-      companyId: "c1",
       name: "Agent",
       adapterType: "process",
     });
 
     await expect(
       notifyHireApproved(db, {
-        companyId: "c1",
         agentId: "a1",
         source: "approval",
         sourceId: "ap1",
@@ -122,14 +116,12 @@ describe("notifyHireApproved", () => {
 
     const db = mockDbWithAgent({
       id: "a1",
-      companyId: "c1",
       name: "OpenClaw Agent",
       adapterType: "openclaw_gateway",
     });
 
     await expect(
       notifyHireApproved(db, {
-        companyId: "c1",
         agentId: "a1",
         source: "join_request",
         sourceId: "jr1",
@@ -154,14 +146,12 @@ describe("notifyHireApproved", () => {
 
     const db = mockDbWithAgent({
       id: "a1",
-      companyId: "c1",
       name: "OpenClaw Agent",
       adapterType: "openclaw_gateway",
     });
 
     await expect(
       notifyHireApproved(db, {
-        companyId: "c1",
         agentId: "a1",
         source: "join_request",
         sourceId: "jr1",

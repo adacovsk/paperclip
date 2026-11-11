@@ -7,7 +7,6 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { projects } from "./projects.js";
 import { projectWorkspaces } from "./project_workspaces.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
@@ -19,7 +18,6 @@ export const workspaceRuntimeServices = pgTable(
   "workspace_runtime_services",
   {
     id: uuid("id").primaryKey(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     projectWorkspaceId: uuid("project_workspace_id").references(() => projectWorkspaces.id, { onDelete: "set null" }),
     executionWorkspaceId: uuid("execution_workspace_id").references(() => executionWorkspaces.id, { onDelete: "set null" }),
@@ -47,24 +45,20 @@ export const workspaceRuntimeServices = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyWorkspaceStatusIdx: index("workspace_runtime_services_company_workspace_status_idx").on(
-      table.companyId,
+    workspaceStatusIdx: index("workspace_runtime_services_workspace_status_idx").on(
       table.projectWorkspaceId,
       table.status,
     ),
-    companyExecutionWorkspaceStatusIdx: index("workspace_runtime_services_company_execution_workspace_status_idx").on(
-      table.companyId,
+    executionWorkspaceStatusIdx: index("workspace_runtime_services_execution_workspace_status_idx").on(
       table.executionWorkspaceId,
       table.status,
     ),
-    companyProjectStatusIdx: index("workspace_runtime_services_company_project_status_idx").on(
-      table.companyId,
+    projectStatusIdx: index("workspace_runtime_services_project_status_idx").on(
       table.projectId,
       table.status,
     ),
     runIdx: index("workspace_runtime_services_run_idx").on(table.startedByRunId),
-    companyUpdatedIdx: index("workspace_runtime_services_company_updated_idx").on(
-      table.companyId,
+    updatedIdx: index("workspace_runtime_services_updated_idx").on(
       table.updatedAt,
     ),
   }),

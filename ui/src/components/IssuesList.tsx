@@ -2,7 +2,6 @@ import { startTransition, useEffect, useMemo, useState, useCallback, useRef } fr
 import { useQuery } from "@tanstack/react-query";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
-import { useCompany } from "../context/CompanyContext";
 import { issuesApi } from "../api/issues";
 import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
@@ -229,7 +228,6 @@ export function IssuesList({
   onSearchChange,
   onUpdateIssue,
 }: IssuesListProps) {
-  const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialog();
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -237,14 +235,11 @@ export function IssuesList({
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
-  // Scope the storage key per company so folding/view state is independent across companies.
-  const scopedKey = selectedCompanyId ? `${viewStateKey}:${selectedCompanyId}` : viewStateKey;
-
   const [viewState, setViewState] = useState<IssueViewState>(() => {
     if (initialAssignees) {
       return { ...defaultViewState, assignees: initialAssignees, statuses: [] };
     }
-    return getViewState(scopedKey);
+    return getViewState(viewStateKey);
   });
   const [assigneePickerIssueId, setAssigneePickerIssueId] = useState<string | null>(null);
   const [assigneeSearch, setAssigneeSearch] = useState("");
@@ -255,16 +250,16 @@ export function IssuesList({
     setIssueSearch(initialSearch ?? "");
   }, [initialSearch]);
 
-  // Reload view state from localStorage when company changes (scopedKey changes).
-  const prevScopedKey = useRef(scopedKey);
+  // Reload view state from localStorage when the storage key changes.
+  const prevViewStateKey = useRef(viewStateKey);
   useEffect(() => {
-    if (prevScopedKey.current !== scopedKey) {
-      prevScopedKey.current = scopedKey;
+    if (prevViewStateKey.current !== viewStateKey) {
+      prevViewStateKey.current = viewStateKey;
       setViewState(initialAssignees
         ? { ...defaultViewState, assignees: initialAssignees, statuses: [] }
-        : getViewState(scopedKey));
+        : getViewState(viewStateKey));
     }
-  }, [scopedKey, initialAssignees]);
+  }, [viewStateKey, initialAssignees]);
 
   const handleIssueSearchCommit = useCallback((nextSearch: string) => {
     startTransition(() => {
@@ -276,18 +271,18 @@ export function IssuesList({
   const updateView = useCallback((patch: Partial<IssueViewState>) => {
     setViewState((prev) => {
       const next = { ...prev, ...patch };
-      saveViewState(scopedKey, next);
+      saveViewState(viewStateKey, next);
       return next;
     });
-  }, [scopedKey]);
+  }, [viewStateKey]);
 
   const { data: searchedIssues = [] } = useQuery({
     queryKey: [
-      ...queryKeys.issues.search(selectedCompanyId!, normalizedIssueSearch, projectId),
+      ...queryKeys.issues.search(normalizedIssueSearch, projectId),
       searchFilters ?? {},
     ],
-    queryFn: () => issuesApi.list(selectedCompanyId!, { q: normalizedIssueSearch, projectId, ...searchFilters }),
-    enabled: !!selectedCompanyId && normalizedIssueSearch.length > 0,
+    queryFn: () => issuesApi.list({ q: normalizedIssueSearch, projectId, ...searchFilters }),
+    enabled: normalizedIssueSearch.length > 0,
     placeholderData: (previousData) => previousData,
   });
 
@@ -303,9 +298,8 @@ export function IssuesList({
   }, [issues, searchedIssues, viewState, normalizedIssueSearch, currentUserId]);
 
   const { data: labels } = useQuery({
-    queryKey: queryKeys.issues.labels(selectedCompanyId!),
-    queryFn: () => issuesApi.listLabels(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.issues.labels,
+    queryFn: () => issuesApi.listLabels(),
   });
 
   const activeFilterCount = countActiveFilters(viewState);

@@ -1,59 +1,57 @@
-export type CompanySkillSourceType = "local_path" | "github" | "url" | "catalog" | "skills_sh";
+export type SkillSourceType = "local_path" | "github" | "url" | "catalog" | "skills_sh";
 
-export type CompanySkillTrustLevel = "markdown_only" | "assets" | "scripts_executables";
+export type SkillTrustLevel = "markdown_only" | "assets" | "scripts_executables";
 
-export type CompanySkillCompatibility = "compatible" | "unknown" | "invalid";
+export type SkillCompatibility = "compatible" | "unknown" | "invalid";
 
-export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh";
+export type SkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh";
 
-export interface CompanySkillFileInventoryEntry {
+export interface SkillFileInventoryEntry {
   path: string;
   kind: "skill" | "markdown" | "reference" | "script" | "asset" | "other";
 }
 
-export interface CompanySkill {
+export interface Skill {
   id: string;
-  companyId: string;
   key: string;
   slug: string;
   name: string;
   description: string | null;
   markdown: string;
-  sourceType: CompanySkillSourceType;
+  sourceType: SkillSourceType;
   sourceLocator: string | null;
   sourceRef: string | null;
-  trustLevel: CompanySkillTrustLevel;
-  compatibility: CompanySkillCompatibility;
-  fileInventory: CompanySkillFileInventoryEntry[];
+  trustLevel: SkillTrustLevel;
+  compatibility: SkillCompatibility;
+  fileInventory: SkillFileInventoryEntry[];
   metadata: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface CompanySkillListItem {
+export interface SkillListItem {
   id: string;
-  companyId: string;
   key: string;
   slug: string;
   name: string;
   description: string | null;
-  sourceType: CompanySkillSourceType;
+  sourceType: SkillSourceType;
   sourceLocator: string | null;
   sourceRef: string | null;
-  trustLevel: CompanySkillTrustLevel;
-  compatibility: CompanySkillCompatibility;
-  fileInventory: CompanySkillFileInventoryEntry[];
+  trustLevel: SkillTrustLevel;
+  compatibility: SkillCompatibility;
+  fileInventory: SkillFileInventoryEntry[];
   createdAt: Date;
   updatedAt: Date;
   attachedAgentCount: number;
   editable: boolean;
   editableReason: string | null;
   sourceLabel: string | null;
-  sourceBadge: CompanySkillSourceBadge;
+  sourceBadge: SkillSourceBadge;
   sourcePath: string | null;
 }
 
-export interface CompanySkillUsageAgent {
+export interface SkillUsageAgent {
   id: string;
   name: string;
   urlKey: string;
@@ -62,17 +60,17 @@ export interface CompanySkillUsageAgent {
   actualState: string | null;
 }
 
-export interface CompanySkillDetail extends CompanySkill {
+export interface SkillDetail extends Skill {
   attachedAgentCount: number;
-  usedByAgents: CompanySkillUsageAgent[];
+  usedByAgents: SkillUsageAgent[];
   editable: boolean;
   editableReason: string | null;
   sourceLabel: string | null;
-  sourceBadge: CompanySkillSourceBadge;
+  sourceBadge: SkillSourceBadge;
   sourcePath: string | null;
 }
 
-export interface CompanySkillUpdateStatus {
+export interface SkillUpdateStatus {
   supported: boolean;
   reason: string | null;
   trackingRef: string | null;
@@ -81,21 +79,21 @@ export interface CompanySkillUpdateStatus {
   hasUpdate: boolean;
 }
 
-export interface CompanySkillImportRequest {
+export interface SkillImportRequest {
   source: string;
 }
 
-export interface CompanySkillImportResult {
-  imported: CompanySkill[];
+export interface SkillImportResult {
+  imported: Skill[];
   warnings: string[];
 }
 
-export interface CompanySkillProjectScanRequest {
+export interface SkillProjectScanRequest {
   projectIds?: string[];
   workspaceIds?: string[];
 }
 
-export interface CompanySkillProjectScanSkipped {
+export interface SkillProjectScanSkipped {
   projectId: string;
   projectName: string;
   workspaceId: string | null;
@@ -104,7 +102,7 @@ export interface CompanySkillProjectScanSkipped {
   reason: string;
 }
 
-export interface CompanySkillProjectScanConflict {
+export interface SkillProjectScanConflict {
   slug: string;
   key: string;
   projectId: string;
@@ -118,35 +116,35 @@ export interface CompanySkillProjectScanConflict {
   reason: string;
 }
 
-export interface CompanySkillProjectScanResult {
+export interface SkillProjectScanResult {
   scannedProjects: number;
   scannedWorkspaces: number;
   discovered: number;
-  imported: CompanySkill[];
-  updated: CompanySkill[];
-  skipped: CompanySkillProjectScanSkipped[];
-  conflicts: CompanySkillProjectScanConflict[];
+  imported: Skill[];
+  updated: Skill[];
+  skipped: SkillProjectScanSkipped[];
+  conflicts: SkillProjectScanConflict[];
   warnings: string[];
 }
 
-export interface CompanySkillCreateRequest {
+export interface SkillCreateRequest {
   name: string;
   slug?: string | null;
   description?: string | null;
   markdown?: string | null;
 }
 
-export interface CompanySkillFileDetail {
+export interface SkillFileDetail {
   skillId: string;
   path: string;
-  kind: CompanySkillFileInventoryEntry["kind"];
+  kind: SkillFileInventoryEntry["kind"];
   content: string;
   language: string | null;
   markdown: boolean;
   editable: boolean;
 }
 
-export interface CompanySkillFileUpdateRequest {
+export interface SkillFileUpdateRequest {
   path: string;
   content: string;
 }

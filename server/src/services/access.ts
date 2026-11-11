@@ -1,13 +1,13 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
-  companyMemberships,
+  memberships,
   instanceUserRoles,
   principalPermissionGrants,
 } from "@paperclipai/db";
 import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
 
-type MembershipRow = typeof companyMemberships.$inferSelect;
+type MembershipRow = typeof memberships.$inferSelect;
 type GrantInput = {
   permissionKey: PermissionKey;
   scope?: Record<string, unknown> | null;
@@ -25,37 +25,33 @@ export function accessService(db: Db) {
   }
 
   async function getMembership(
-    companyId: string,
     principalType: PrincipalType,
     principalId: string,
   ): Promise<MembershipRow | null> {
     return db
       .select()
-      .from(companyMemberships)
+      .from(memberships)
       .where(
         and(
-          eq(companyMemberships.companyId, companyId),
-          eq(companyMemberships.principalType, principalType),
-          eq(companyMemberships.principalId, principalId),
+          eq(memberships.principalType, principalType),
+          eq(memberships.principalId, principalId),
         ),
       )
       .then((rows) => rows[0] ?? null);
   }
 
   async function hasPermission(
-    companyId: string,
     principalType: PrincipalType,
     principalId: string,
     permissionKey: PermissionKey,
   ): Promise<boolean> {
-    const membership = await getMembership(companyId, principalType, principalId);
+    const membership = await getMembership(principalType, principalId);
     if (!membership || membership.status !== "active") return false;
     const grant = await db
       .select({ id: principalPermissionGrants.id })
       .from(principalPermissionGrants)
       .where(
         and(
-          eq(principalPermissionGrants.companyId, companyId),
           eq(principalPermissionGrants.principalType, principalType),
           eq(principalPermissionGrants.principalId, principalId),
           eq(principalPermissionGrants.permissionKey, permissionKey),
@@ -66,47 +62,43 @@ export function accessService(db: Db) {
   }
 
   async function canUser(
-    companyId: string,
     userId: string | null | undefined,
     permissionKey: PermissionKey,
   ): Promise<boolean> {
     if (!userId) return false;
     if (await isInstanceAdmin(userId)) return true;
-    return hasPermission(companyId, "user", userId, permissionKey);
+    return hasPermission("user", userId, permissionKey);
   }
 
-  async function listMembers(companyId: string) {
+  async function listMembers() {
     return db
       .select()
-      .from(companyMemberships)
-      .where(eq(companyMemberships.companyId, companyId))
-      .orderBy(sql`${companyMemberships.createdAt} desc`);
+      .from(memberships)
+      .orderBy(sql`${memberships.createdAt} desc`);
   }
 
-  async function listActiveUserMemberships(companyId: string) {
+  async function listActiveUserMemberships() {
     return db
       .select()
-      .from(companyMemberships)
+      .from(memberships)
       .where(
         and(
-          eq(companyMemberships.companyId, companyId),
-          eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.status, "active"),
+          eq(memberships.principalType, "user"),
+          eq(memberships.status, "active"),
         ),
       )
-      .orderBy(sql`${companyMemberships.createdAt} asc`);
+      .orderBy(sql`${memberships.createdAt} asc`);
   }
 
   async function setMemberPermissions(
-    companyId: string,
     memberId: string,
     grants: GrantInput[],
     grantedByUserId: string | null,
   ) {
     const member = await db
       .select()
-      .from(companyMemberships)
-      .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.id, memberId)))
+      .from(memberships)
+      .where(eq(memberships.id, memberId))
       .then((rows) => rows[0] ?? null);
     if (!member) return null;
 
@@ -115,7 +107,6 @@ export function accessService(db: Db) {
         .delete(principalPermissionGrants)
         .where(
           and(
-            eq(principalPermissionGrants.companyId, companyId),
             eq(principalPermissionGrants.principalType, member.principalType),
             eq(principalPermissionGrants.principalId, member.principalId),
           ),
@@ -123,7 +114,6 @@ export function accessService(db: Db) {
       if (grants.length > 0) {
         await tx.insert(principalPermissionGrants).values(
           grants.map((grant) => ({
-            companyId,
             principalType: member.principalType,
             principalId: member.principalId,
             permissionKey: grant.permissionKey,
@@ -164,54 +154,35 @@ export function accessService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
-  async function listUserCompanyAccess(userId: string) {
-    return db
-      .select()
-      .from(companyMemberships)
-      .where(and(eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, userId)))
-      .orderBy(sql`${companyMemberships.createdAt} desc`);
+  async function getUserAccess(userId: string): Promise<MembershipRow | null> {
+    return getMembership("user", userId);
   }
 
-  async function setUserCompanyAccess(userId: string, companyIds: string[]) {
-    const existing = await listUserCompanyAccess(userId);
-    const existingByCompany = new Map(existing.map((row) => [row.companyId, row]));
-    const target = new Set(companyIds);
-
-    await db.transaction(async (tx) => {
-      const toDelete = existing.filter((row) => !target.has(row.companyId)).map((row) => row.id);
-      if (toDelete.length > 0) {
-        await tx.delete(companyMemberships).where(inArray(companyMemberships.id, toDelete));
-      }
-
-      for (const companyId of target) {
-        if (existingByCompany.has(companyId)) continue;
-        await tx.insert(companyMemberships).values({
-          companyId,
-          principalType: "user",
-          principalId: userId,
-          status: "active",
-          membershipRole: "member",
-        });
-      }
-    });
-
-    return listUserCompanyAccess(userId);
+  async function setUserAccess(userId: string, hasAccess: boolean) {
+    if (hasAccess) {
+      const existing = await getMembership("user", userId);
+      if (existing?.status === "active") return existing;
+      return ensureMembership("user", userId, existing?.membershipRole ?? "member", "active");
+    }
+    await db
+      .delete(memberships)
+      .where(and(eq(memberships.principalType, "user"), eq(memberships.principalId, userId)));
+    return null;
   }
 
   async function ensureMembership(
-    companyId: string,
     principalType: PrincipalType,
     principalId: string,
     membershipRole: string | null = "member",
     status: "pending" | "active" | "suspended" = "active",
   ) {
-    const existing = await getMembership(companyId, principalType, principalId);
+    const existing = await getMembership(principalType, principalId);
     if (existing) {
       if (existing.status !== status || existing.membershipRole !== membershipRole) {
         const updated = await db
-          .update(companyMemberships)
+          .update(memberships)
           .set({ status, membershipRole, updatedAt: new Date() })
-          .where(eq(companyMemberships.id, existing.id))
+          .where(eq(memberships.id, existing.id))
           .returning()
           .then((rows) => rows[0] ?? null);
         return updated ?? existing;
@@ -220,9 +191,8 @@ export function accessService(db: Db) {
     }
 
     return db
-      .insert(companyMemberships)
+      .insert(memberships)
       .values({
-        companyId,
         principalType,
         principalId,
         status,
@@ -233,7 +203,6 @@ export function accessService(db: Db) {
   }
 
   async function setPrincipalGrants(
-    companyId: string,
     principalType: PrincipalType,
     principalId: string,
     grants: GrantInput[],
@@ -244,7 +213,6 @@ export function accessService(db: Db) {
         .delete(principalPermissionGrants)
         .where(
           and(
-            eq(principalPermissionGrants.companyId, companyId),
             eq(principalPermissionGrants.principalType, principalType),
             eq(principalPermissionGrants.principalId, principalId),
           ),
@@ -252,7 +220,6 @@ export function accessService(db: Db) {
       if (grants.length === 0) return;
       await tx.insert(principalPermissionGrants).values(
         grants.map((grant) => ({
-          companyId,
           principalType,
           principalId,
           permissionKey: grant.permissionKey,
@@ -265,22 +232,7 @@ export function accessService(db: Db) {
     });
   }
 
-  async function copyActiveUserMemberships(sourceCompanyId: string, targetCompanyId: string) {
-    const sourceMemberships = await listActiveUserMemberships(sourceCompanyId);
-    for (const membership of sourceMemberships) {
-      await ensureMembership(
-        targetCompanyId,
-        "user",
-        membership.principalId,
-        membership.membershipRole,
-        "active",
-      );
-    }
-    return sourceMemberships;
-  }
-
   async function listPrincipalGrants(
-    companyId: string,
     principalType: PrincipalType,
     principalId: string,
   ) {
@@ -289,7 +241,6 @@ export function accessService(db: Db) {
       .from(principalPermissionGrants)
       .where(
         and(
-          eq(principalPermissionGrants.companyId, companyId),
           eq(principalPermissionGrants.principalType, principalType),
           eq(principalPermissionGrants.principalId, principalId),
         ),
@@ -298,7 +249,6 @@ export function accessService(db: Db) {
   }
 
   async function setPrincipalPermission(
-    companyId: string,
     principalType: PrincipalType,
     principalId: string,
     permissionKey: PermissionKey,
@@ -311,7 +261,6 @@ export function accessService(db: Db) {
         .delete(principalPermissionGrants)
         .where(
           and(
-            eq(principalPermissionGrants.companyId, companyId),
             eq(principalPermissionGrants.principalType, principalType),
             eq(principalPermissionGrants.principalId, principalId),
             eq(principalPermissionGrants.permissionKey, permissionKey),
@@ -320,14 +269,13 @@ export function accessService(db: Db) {
       return;
     }
 
-    await ensureMembership(companyId, principalType, principalId, "member", "active");
+    await ensureMembership(principalType, principalId, "member", "active");
 
     const existing = await db
       .select()
       .from(principalPermissionGrants)
       .where(
         and(
-          eq(principalPermissionGrants.companyId, companyId),
           eq(principalPermissionGrants.principalType, principalType),
           eq(principalPermissionGrants.principalId, principalId),
           eq(principalPermissionGrants.permissionKey, permissionKey),
@@ -348,7 +296,6 @@ export function accessService(db: Db) {
     }
 
     await db.insert(principalPermissionGrants).values({
-      companyId,
       principalType,
       principalId,
       permissionKey,
@@ -367,12 +314,11 @@ export function accessService(db: Db) {
     ensureMembership,
     listMembers,
     listActiveUserMemberships,
-    copyActiveUserMemberships,
     setMemberPermissions,
     promoteInstanceAdmin,
     demoteInstanceAdmin,
-    listUserCompanyAccess,
-    setUserCompanyAccess,
+    getUserAccess,
+    setUserAccess,
     setPrincipalGrants,
     listPrincipalGrants,
     setPrincipalPermission,

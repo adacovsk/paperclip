@@ -8,7 +8,7 @@ interface BillerSpendCardProps {
   row: CostByBiller;
   weekSpendCents: number;
   budgetMonthlyCents: number;
-  totalCompanySpendCents: number;
+  totalInstanceSpendCents: number;
   providerRows: CostByProviderModel[];
 }
 
@@ -16,7 +16,7 @@ export function BillerSpendCard({
   row,
   weekSpendCents,
   budgetMonthlyCents,
-  totalCompanySpendCents,
+  totalInstanceSpendCents,
   providerRows,
 }: BillerSpendCardProps) {
   const providerBreakdown = useMemo(() => {
@@ -45,8 +45,8 @@ export function BillerSpendCard({
   }, [providerRows]);
 
   const providerBudgetShare =
-    budgetMonthlyCents > 0 && totalCompanySpendCents > 0
-      ? (row.costCents / totalCompanySpendCents) * budgetMonthlyCents
+    budgetMonthlyCents > 0 && totalInstanceSpendCents > 0
+      ? (row.costCents / totalInstanceSpendCents) * budgetMonthlyCents
       : budgetMonthlyCents;
   const budgetPct =
     providerBudgetShare > 0

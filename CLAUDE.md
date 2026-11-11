@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Paperclip = open-source control plane for autonomous AI companies. Node.js server + React UI. Orchestrates agent teams with org charts, tasks, budgets, heartbeats, governance.
+Paperclip = open-source control plane for autonomous AI agents. Node.js server + React UI. Orchestrates agent teams with org charts, tasks, budgets, heartbeats, governance.
 
 ## Repo
 
@@ -58,10 +58,10 @@ Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite,
 
 ## Rules
 
-1. **Company-scoped.** Every entity belongs to a company. Enforce boundaries in routes/services.
+1. **One instance, no tenant layer.** Every entity belongs to the instance, with no tenant id or URL prefix. Routes are flat (`/api/<rest>`) and gate on `assertInstanceAccess(req)`.
 2. **Sync layers.** Schema change -> update `packages/db` -> `packages/shared` -> `server` -> `ui`.
 3. **Invariants.** Single-assignee tasks, atomic checkout, approval gates, budget hard-stop, activity logging.
-4. **Auth.** Operator = full control. Agents = bearer API keys (hashed, company-scoped). Errors: 400/401/403/404/409/422/500.
+4. **Auth.** Operator = full control. Agents = bearer API keys (hashed, instance-wide). Errors: 400/401/403/404/409/422/500.
 5. **DB changes.** Edit schema -> export from index.ts -> `pnpm db:generate` -> `pnpm -r typecheck`.
 6. **Modes.** `local_trusted` (loopback, no login) | `authenticated/private` (LAN/Tailscale) | `authenticated/public` (internet).
 7. **No lockfile commits *without a manifest reason*.** Commit `pnpm-lock.yaml` only in the same PR as the `package.json` / `pnpm-workspace.yaml` / `.npmrc` change that moved it — that is a dependency bump, and it is allowed. A lockfile-only edit is rejected by `pr.yml`'s `policy` job; CI owns those via `refresh-lockfile.yml` (`gh workflow run refresh-lockfile.yml --repo adacovsk/paperclip`). Never hand-resolve a lockfile conflict — regenerate it. This rule used to read "no lockfile commits" flatly, and the gate implemented it that way, which made *every* dependency change unmergeable in both directions: with the lockfile `policy` rejected it, and without the lockfile `verify`/`e2e` rejected it, since both install with `--frozen-lockfile`.

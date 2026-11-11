@@ -13,7 +13,6 @@ import { api } from "./client";
 
 export const issuesApi = {
   list: (
-    companyId: string,
     filters?: {
       status?: string;
       projectId?: string;
@@ -45,11 +44,11 @@ export const issuesApi = {
     if (filters?.includeRoutineExecutions) params.set("includeRoutineExecutions", "true");
     if (filters?.q) params.set("q", filters.q);
     const qs = params.toString();
-    return api.get<Issue[]>(`/companies/${companyId}/issues${qs ? `?${qs}` : ""}`);
+    return api.get<Issue[]>(`/issues${qs ? `?${qs}` : ""}`);
   },
-  listLabels: (companyId: string) => api.get<IssueLabel[]>(`/companies/${companyId}/labels`),
-  createLabel: (companyId: string, data: { name: string; color: string }) =>
-    api.post<IssueLabel>(`/companies/${companyId}/labels`, data),
+  listLabels: () => api.get<IssueLabel[]>(`/labels`),
+  createLabel: (data: { name: string; color: string }) =>
+    api.post<IssueLabel>(`/labels`, data),
   deleteLabel: (id: string) => api.delete<IssueLabel>(`/labels/${id}`),
   get: (id: string) => api.get<Issue>(`/issues/${id}`),
   markRead: (id: string) => api.post<{ id: string; lastReadAt: Date }>(`/issues/${id}/read`, {}),
@@ -57,8 +56,8 @@ export const issuesApi = {
     api.post<{ id: string; archivedAt: Date }>(`/issues/${id}/inbox-archive`, {}),
   unarchiveFromInbox: (id: string) =>
     api.delete<{ id: string; archivedAt: Date } | { ok: true }>(`/issues/${id}/inbox-archive`),
-  create: (companyId: string, data: Record<string, unknown>) =>
-    api.post<Issue>(`/companies/${companyId}/issues`, data),
+  create: (data: Record<string, unknown>) =>
+    api.post<Issue>(`/issues`, data),
   update: (id: string, data: Record<string, unknown>) => api.patch<Issue>(`/issues/${id}`, data),
   remove: (id: string) => api.delete<Issue>(`/issues/${id}`),
   checkout: (id: string, agentId: string) =>
@@ -87,7 +86,6 @@ export const issuesApi = {
     api.delete<{ ok: true }>(`/issues/${id}/documents/${encodeURIComponent(key)}`),
   listAttachments: (id: string) => api.get<IssueAttachment[]>(`/issues/${id}/attachments`),
   uploadAttachment: (
-    companyId: string,
     issueId: string,
     file: File,
     issueCommentId?: string | null,
@@ -97,7 +95,7 @@ export const issuesApi = {
     if (issueCommentId) {
       form.append("issueCommentId", issueCommentId);
     }
-    return api.postForm<IssueAttachment>(`/companies/${companyId}/issues/${issueId}/attachments`, form);
+    return api.postForm<IssueAttachment>(`/issues/${issueId}/attachments`, form);
   },
   deleteAttachment: (id: string) => api.delete<{ ok: true }>(`/attachments/${id}`),
   listApprovals: (id: string) => api.get<Approval[]>(`/issues/${id}/approvals`),

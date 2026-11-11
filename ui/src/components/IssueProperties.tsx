@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import type { Issue } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
-import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -118,9 +117,7 @@ function PropertyPicker({
 }
 
 export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProps) {
-  const { selectedCompanyId } = useCompany();
   const queryClient = useQueryClient();
-  const companyId = issue.companyId ?? selectedCompanyId;
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
@@ -137,15 +134,13 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const currentUserId = session?.user?.id ?? session?.session?.userId;
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(companyId!),
-    queryFn: () => agentsApi.list(companyId!),
-    enabled: !!companyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
 
   const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(companyId!),
-    queryFn: () => projectsApi.list(companyId!),
-    enabled: !!companyId,
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
   });
   const activeProjects = useMemo(
     () => (projects ?? []).filter((p) => !p.archivedAt || p.id === issue.projectId),
@@ -153,20 +148,18 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   );
   const { orderedProjects } = useProjectOrder({
     projects: activeProjects,
-    companyId,
     userId: currentUserId,
   });
 
   const { data: labels } = useQuery({
-    queryKey: queryKeys.issues.labels(companyId!),
-    queryFn: () => issuesApi.listLabels(companyId!),
-    enabled: !!companyId,
+    queryKey: queryKeys.issues.labels,
+    queryFn: () => issuesApi.listLabels(),
   });
 
   const createLabel = useMutation({
-    mutationFn: (data: { name: string; color: string }) => issuesApi.createLabel(companyId!, data),
+    mutationFn: (data: { name: string; color: string }) => issuesApi.createLabel(data),
     onSuccess: async (created) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.labels(companyId!) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.labels });
       onUpdate({ labelIds: [...(issue.labelIds ?? []), created.id] });
       setNewLabelName("");
     },
@@ -175,8 +168,8 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const deleteLabel = useMutation({
     mutationFn: (labelId: string) => issuesApi.deleteLabel(labelId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.labels(companyId!) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.labels });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) });
     },
   });

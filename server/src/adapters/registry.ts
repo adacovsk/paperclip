@@ -175,8 +175,10 @@ const hermesLocalAdapter: ServerAdapterModule = {
   execute: hermesExecute,
   testEnvironment: hermesTestEnvironment,
   sessionCodec: hermesSessionCodec,
-  listSkills: hermesListSkills,
-  syncSkills: hermesSyncSkills,
+  // hermes-paperclip-adapter is built against the published adapter-utils, whose skill
+  // context still requires an owner-id field this server no longer has.
+  listSkills: hermesListSkills as unknown as ServerAdapterModule["listSkills"],
+  syncSkills: hermesSyncSkills as unknown as ServerAdapterModule["syncSkills"],
   models: hermesModels,
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: hermesAgentConfigurationDoc,

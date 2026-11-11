@@ -20,8 +20,8 @@ function resolveUserId(userId: string | null | undefined): string {
   return trimmed.length > 0 ? trimmed : ANONYMOUS_USER_ID;
 }
 
-export function getAgentOrderStorageKey(companyId: string, userId: string | null | undefined): string {
-  return `${AGENT_ORDER_STORAGE_PREFIX}:${companyId}:${resolveUserId(userId)}`;
+export function getAgentOrderStorageKey(userId: string | null | undefined): string {
+  return `${AGENT_ORDER_STORAGE_PREFIX}:${resolveUserId(userId)}`;
 }
 
 export function readAgentOrder(storageKey: string): string[] {

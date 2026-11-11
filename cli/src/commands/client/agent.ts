@@ -17,12 +17,7 @@ import {
   type BaseClientOptions,
 } from "./common.js";
 
-interface AgentListOptions extends BaseClientOptions {
-  companyId?: string;
-}
-
 interface AgentLocalCliOptions extends BaseClientOptions {
-  companyId?: string;
   keyName?: string;
   installSkills?: boolean;
 }
@@ -143,14 +138,12 @@ async function installSkillsForTarget(
 
 function buildAgentEnvExports(input: {
   apiBase: string;
-  companyId: string;
   agentId: string;
   apiKey: string;
 }): string {
   const escaped = (value: string) => value.replace(/'/g, "'\"'\"'");
   return [
     `export PAPERCLIP_API_URL='${escaped(input.apiBase)}'`,
-    `export PAPERCLIP_COMPANY_ID='${escaped(input.companyId)}'`,
     `export PAPERCLIP_AGENT_ID='${escaped(input.agentId)}'`,
     `export PAPERCLIP_API_KEY='${escaped(input.apiKey)}'`,
   ].join("\n");
@@ -162,12 +155,11 @@ export function registerAgentCommands(program: Command): void {
   addCommonClientOptions(
     agent
       .command("list")
-      .description("List agents for a company")
-      .requiredOption("-C, --company-id <id>", "Company ID")
-      .action(async (opts: AgentListOptions) => {
+      .description("List agents")
+      .action(async (opts: BaseClientOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const rows = (await ctx.api.get<Agent[]>(`/api/companies/${ctx.companyId}/agents`)) ?? [];
+          const ctx = resolveCommandContext(opts);
+          const rows = (await ctx.api.get<Agent[]>("/api/agents")) ?? [];
 
           if (ctx.json) {
             printOutput(rows, { json: true });
@@ -196,7 +188,6 @@ export function registerAgentCommands(program: Command): void {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 
   addCommonClientOptions(
@@ -222,7 +213,6 @@ export function registerAgentCommands(program: Command): void {
         "Create an agent API key, install local Paperclip skills for Codex/Claude, and print shell exports",
       )
       .argument("<agentRef>", "Agent ID or shortname/url-key")
-      .requiredOption("-C, --company-id <id>", "Company ID")
       .option("--key-name <name>", "API key label", "local-cli")
       .option(
         "--no-install-skills",
@@ -230,11 +220,8 @@ export function registerAgentCommands(program: Command): void {
       )
       .action(async (agentRef: string, opts: AgentLocalCliOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const query = new URLSearchParams({ companyId: ctx.companyId ?? "" });
-          const agentRow = await ctx.api.get<Agent>(
-            `/api/agents/${encodeURIComponent(agentRef)}?${query.toString()}`,
-          );
+          const ctx = resolveCommandContext(opts);
+          const agentRow = await ctx.api.get<Agent>(`/api/agents/${encodeURIComponent(agentRef)}`);
           if (!agentRow) {
             throw new Error(`Agent not found: ${agentRef}`);
           }
@@ -263,7 +250,6 @@ export function registerAgentCommands(program: Command): void {
 
           const exportsText = buildAgentEnvExports({
             apiBase: ctx.api.apiBase,
-            companyId: agentRow.companyId,
             agentId: agentRow.id,
             apiKey: key.token,
           });
@@ -275,8 +261,7 @@ export function registerAgentCommands(program: Command): void {
                   id: agentRow.id,
                   name: agentRow.name,
                   urlKey: agentRow.urlKey,
-                  companyId: agentRow.companyId,
-                },
+                      },
                 key: {
                   id: key.id,
                   name: key.name,
@@ -310,6 +295,5 @@ export function registerAgentCommands(program: Command): void {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 }

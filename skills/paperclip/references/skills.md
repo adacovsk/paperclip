@@ -1,38 +1,38 @@
-# Company Skills Workflow
+# Skills Workflow
 
-Use this reference when a operator user, CEO, or manager asks you to find a skill, install it into the company library, or assign it to an agent.
+Use this reference when an operator user, CEO, or manager asks you to find a skill, install it into the skill library, or assign it to an agent.
 
 ## What Exists
 
-- Company skill library: install, inspect, update, and read imported skills for the whole company.
-- Agent skill assignment: add or remove company skills on an existing agent.
+- Skill library: install, inspect, update, and read imported skills for the whole instance.
+- Agent skill assignment: add or remove library skills on an existing agent.
 - Hire/create composition: pass `desiredSkills` when creating or hiring an agent so the same assignment model applies immediately.
 
 The canonical model is:
 
-1. install the skill into the company
-2. assign the company skill to the agent
+1. install the skill into the library
+2. assign the library skill to the agent
 3. optionally do step 2 during hire/create with `desiredSkills`
 
 ## Permission Model
 
-- Company skill reads: any same-company actor
-- Company skill mutations: operator, CEO, or an agent with the effective `agents:create` capability
+- Skill reads: any authenticated actor
+- Skill mutations: operator, CEO, or an agent with the effective `agents:create` capability
 - Agent skill assignment: same permission model as updating that agent
 
 ## Core Endpoints
 
-- `GET /api/companies/:companyId/skills`
-- `GET /api/companies/:companyId/skills/:skillId`
-- `POST /api/companies/:companyId/skills/import`
-- `POST /api/companies/:companyId/skills/scan-projects`
-- `POST /api/companies/:companyId/skills/:skillId/install-update`
+- `GET /api/skills`
+- `GET /api/skills/:skillId`
+- `POST /api/skills/import`
+- `POST /api/skills/scan-projects`
+- `POST /api/skills/:skillId/install-update`
 - `GET /api/agents/:agentId/skills`
 - `POST /api/agents/:agentId/skills/sync`
-- `POST /api/companies/:companyId/agent-hires`
-- `POST /api/companies/:companyId/agents`
+- `POST /api/agent-hires`
+- `POST /api/agents`
 
-## Install A Skill Into The Company
+## Install A Skill Into The Library
 
 Import using a **skills.sh URL**, a key-style source string, a GitHub URL, or a local path.
 
@@ -50,7 +50,7 @@ Import using a **skills.sh URL**, a key-style source string, a GitHub URL, or a 
 ### Example: skills.sh import (preferred)
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/import" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/skills/import" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -61,7 +61,7 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/
 Or equivalently using the key-style string:
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/import" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/skills/import" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -72,7 +72,7 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/
 ### Example: GitHub import
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/import" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/skills/import" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -86,10 +86,10 @@ You can also use source strings such as:
 - `vercel-labs/agent-browser/agent-browser`
 - `npx skills add https://github.com/vercel-labs/agent-browser --skill agent-browser`
 
-If the task is to discover skills from the company project workspaces first:
+If the task is to discover skills from the project workspaces first:
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/scan-projects" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/skills/scan-projects" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -98,17 +98,17 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/
 ## Inspect What Was Installed
 
 ```sh
-curl -sS "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills" \
+curl -sS "$PAPERCLIP_API_URL/api/skills" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY"
 ```
 
 Read the skill entry and its `SKILL.md`:
 
 ```sh
-curl -sS "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/<skill-id>" \
+curl -sS "$PAPERCLIP_API_URL/api/skills/<skill-id>" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY"
 
-curl -sS "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/<skill-id>/files?path=SKILL.md" \
+curl -sS "$PAPERCLIP_API_URL/api/skills/<skill-id>/files?path=SKILL.md" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY"
 ```
 
@@ -116,11 +116,11 @@ curl -sS "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/skills/<skill-i
 
 `desiredSkills` accepts:
 
-- exact company skill key
-- exact company skill id
-- exact slug when it is unique in the company
+- exact skill key
+- exact skill id
+- exact slug when it is unique in the library
 
-The server persists canonical company skill keys.
+The server persists canonical skill keys.
 
 ```sh
 curl -sS -X POST "$PAPERCLIP_API_URL/api/agents/<agent-id>/skills/sync" \
@@ -142,10 +142,10 @@ curl -sS "$PAPERCLIP_API_URL/api/agents/<agent-id>/skills" \
 
 ## Include Skills During Hire Or Create
 
-Use the same company skill keys or references in `desiredSkills` when hiring or creating an agent:
+Use the same skill keys or references in `desiredSkills` when hiring or creating an agent:
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agent-hires" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/agent-hires" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -164,7 +164,7 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agent-h
 For direct create without approval:
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agents" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/agents" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -185,4 +185,4 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agents"
 - Built-in Paperclip runtime skills are still added automatically when required by the adapter.
 - If a reference is missing or ambiguous, the API returns `422`.
 - Prefer linking back to the relevant issue, approval, and agent when you comment about skill changes.
-- Use skill-only import when the task is specifically to add a skill to the company library without importing the surrounding company/team/package structure.
+- Use skill-only import when the task is specifically to add a skill to the library without importing the surrounding team/package structure.

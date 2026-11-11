@@ -9,7 +9,6 @@ const mockInstanceSettingsService = vi.hoisted(() => ({
   getExperimental: vi.fn(),
   updateGeneral: vi.fn(),
   updateExperimental: vi.fn(),
-  listCompanyIds: vi.fn(),
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
@@ -53,7 +52,6 @@ describe("instance settings routes", () => {
         autoRestartDevServerWhenIdle: false,
       },
     });
-    mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1", "company-2"]);
   });
 
   it("allows local operator users to read and update experimental settings", async () => {
@@ -79,7 +77,7 @@ describe("instance settings routes", () => {
     expect(mockInstanceSettingsService.updateExperimental).toHaveBeenCalledWith({
       enableIsolatedWorkspaces: true,
     });
-    expect(mockLogActivity).toHaveBeenCalledTimes(2);
+    expect(mockLogActivity).toHaveBeenCalledTimes(1);
   });
 
   it("allows local operator users to update guarded dev-server auto-restart", async () => {
@@ -120,7 +118,7 @@ describe("instance settings routes", () => {
     expect(mockInstanceSettingsService.updateGeneral).toHaveBeenCalledWith({
       censorUsernameInLogs: true,
     });
-    expect(mockLogActivity).toHaveBeenCalledTimes(2);
+    expect(mockLogActivity).toHaveBeenCalledTimes(1);
   });
 
   it("rejects non-admin operator users", async () => {
@@ -129,7 +127,7 @@ describe("instance settings routes", () => {
       userId: "user-1",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: ["company-1"],
+      isMember: true,
     });
 
     const res = await request(app).get("/api/instance/settings/general");
@@ -142,7 +140,6 @@ describe("instance settings routes", () => {
     const app = createApp({
       type: "agent",
       agentId: "agent-1",
-      companyId: "company-1",
       source: "agent_key",
     });
 

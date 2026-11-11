@@ -22,10 +22,9 @@
  *       // ... sync implementation
  *     });
  *
- *     ctx.data.register("sync-health", async ({ companyId }) => {
+ *     ctx.data.register("sync-health", async () => {
  *       const state = await ctx.state.get({
- *         scopeKind: "company",
- *         scopeId: String(companyId),
+ *         scopeKind: "instance",
  *         stateKey: "last-sync-at",
  *       });
  *       return { lastSync: state };
@@ -169,7 +168,7 @@ export type {
   PluginStateClient,
   PluginEntitiesClient,
   PluginProjectsClient,
-  PluginCompaniesClient,
+  PluginInstanceClient,
   PluginIssuesClient,
   PluginAgentsClient,
   PluginAgentSessionsClient,
@@ -198,7 +197,7 @@ export type {
   PluginEntityRecord,
   PluginEntityQuery,
   PluginWorkspace,
-  Company,
+  InstanceProfile,
   Project,
   Issue,
   IssueComment,

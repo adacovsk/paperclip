@@ -39,7 +39,6 @@ export interface IssueAncestor {
 
 export interface IssueLabel {
   id: string;
-  companyId: string;
   name: string;
   color: string;
   createdAt: Date;
@@ -55,7 +54,6 @@ export type DocumentFormat = "markdown";
 
 export interface IssueDocumentSummary {
   id: string;
-  companyId: string;
   issueId: string;
   key: string;
   title: string | null;
@@ -76,7 +74,6 @@ export interface IssueDocument extends IssueDocumentSummary {
 
 export interface DocumentRevision {
   id: string;
-  companyId: string;
   documentId: string;
   issueId: string;
   key: string;
@@ -96,7 +93,6 @@ export interface LegacyPlanDocument {
 
 export interface Issue {
   id: string;
-  companyId: string;
   projectId: string | null;
   projectWorkspaceId: string | null;
   goalId: string | null;
@@ -148,7 +144,6 @@ export interface Issue {
 
 export interface IssueComment {
   id: string;
-  companyId: string;
   issueId: string;
   authorAgentId: string | null;
   authorUserId: string | null;
@@ -159,7 +154,6 @@ export interface IssueComment {
 
 export interface IssueAttachment {
   id: string;
-  companyId: string;
   issueId: string;
   issueCommentId: string | null;
   assetId: string;

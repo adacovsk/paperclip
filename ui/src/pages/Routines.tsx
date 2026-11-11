@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@/lib/router";
+import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronRight, MoreHorizontal, Play, Plus, Repeat } from "lucide-react";
 import { routinesApi } from "../api/routines";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
-import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -63,7 +62,6 @@ function nextRoutineStatus(currentStatus: string, enabled: boolean) {
 }
 
 export function Routines() {
-  const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -91,19 +89,16 @@ export function Routines() {
   }, [setBreadcrumbs]);
 
   const { data: routines, isLoading, error } = useQuery({
-    queryKey: queryKeys.routines.list(selectedCompanyId!),
-    queryFn: () => routinesApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.routines.list,
+    queryFn: () => routinesApi.list(),
   });
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
   const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(selectedCompanyId!),
-    queryFn: () => projectsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
   });
 
   useEffect(() => {
@@ -112,7 +107,7 @@ export function Routines() {
 
   const createRoutine = useMutation({
     mutationFn: () =>
-      routinesApi.create(selectedCompanyId!, {
+      routinesApi.create({
         ...draft,
         description: draft.description.trim() || null,
       }),
@@ -128,7 +123,7 @@ export function Routines() {
       });
       setComposerOpen(false);
       setAdvancedOpen(false);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.routines.list(selectedCompanyId!) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.routines.list });
       pushToast({
         title: "Routine created",
         body: "Add the first trigger to turn it into a live workflow.",
@@ -145,7 +140,7 @@ export function Routines() {
     },
     onSuccess: async (_, variables) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.routines.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.routines.list }),
         queryClient.invalidateQueries({ queryKey: queryKeys.routines.detail(variables.id) }),
       ]);
     },
@@ -168,7 +163,7 @@ export function Routines() {
     },
     onSuccess: async (_, id) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.routines.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.routines.list }),
         queryClient.invalidateQueries({ queryKey: queryKeys.routines.detail(id) }),
       ]);
     },
@@ -217,9 +212,6 @@ export function Routines() {
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
 
-  if (!selectedCompanyId) {
-    return <EmptyState icon={Repeat} message="Select a company to view routines." />;
-  }
 
   if (isLoading) {
     return <PageSkeleton variant="issues-list" />;

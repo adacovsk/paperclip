@@ -19,9 +19,8 @@ import {
   formatDatabaseBackupResult,
   runDatabaseBackup,
   authUsers,
-  companies,
-  companyMemberships,
   instanceUserRoles,
+  memberships,
 } from "@paperclipai/db";
 import detectPort from "detect-port";
 import { createApp } from "./app.js";
@@ -225,28 +224,15 @@ export async function startServer(): Promise<StartedServer> {
       });
     }
   
-    const companyRows = await db.select({ id: companies.id }).from(companies);
-    for (const company of companyRows) {
-      const membership = await db
-        .select({ id: companyMemberships.id })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, company.id),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, LOCAL_OPERATOR_USER_ID),
-          ),
-        )
-        .then((rows: Array<{ id: string }>) => rows[0] ?? null);
-      if (membership) continue;
-      await db.insert(companyMemberships).values({
-        companyId: company.id,
+    await db
+      .insert(memberships)
+      .values({
         principalType: "user",
         principalId: LOCAL_OPERATOR_USER_ID,
         status: "active",
         membershipRole: "owner",
-      });
-    }
+      })
+      .onConflictDoNothing({ target: [memberships.principalType, memberships.principalId] });
   }
   
   let db;
@@ -524,7 +510,6 @@ export async function startServer(): Promise<StartedServer> {
     allowedHostnames: config.allowedHostnames,
     bindHost: config.host,
     authReady,
-    companyDeletionEnabled: config.companyDeletionEnabled,
     betterAuthHandler,
     resolveSession,
   });

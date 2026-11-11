@@ -52,8 +52,6 @@ describe("codex execute", () => {
       paperclipHome,
       "instances",
       "default",
-      "companies",
-      "company-1",
       "codex-home",
     );
     await fs.mkdir(workspace, { recursive: true });
@@ -79,7 +77,6 @@ describe("codex execute", () => {
         runId: "run-default",
         agent: {
           id: "agent-1",
-          companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
           adapterConfig: {},
@@ -117,7 +114,7 @@ describe("codex execute", () => {
       expect(await fs.realpath(managedAuth)).toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
       expect((await fs.lstat(managedConfig)).isFile()).toBe(true);
       expect(await fs.readFile(managedConfig, "utf8")).toBe('model = "codex-mini-latest"\n');
-      await expect(fs.lstat(path.join(sharedCodexHome, "companies", "company-1"))).rejects.toThrow();
+      await expect(fs.lstat(path.join(sharedCodexHome, "codex-home"))).rejects.toThrow();
       expect(logs).toContainEqual(
         expect.objectContaining({
           stream: "stdout",
@@ -156,7 +153,6 @@ describe("codex execute", () => {
         runId: "run-notes",
         agent: {
           id: "agent-1",
-          companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
           adapterConfig: {},
@@ -206,8 +202,6 @@ describe("codex execute", () => {
       paperclipHome,
       "instances",
       "worktree-1",
-      "companies",
-      "company-1",
       "codex-home",
     );
     const homeSkill = path.join(isolatedCodexHome, "skills", "paperclip");
@@ -234,7 +228,6 @@ describe("codex execute", () => {
         runId: "run-1",
         agent: {
           id: "agent-1",
-          companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
           adapterConfig: {},
@@ -272,7 +265,6 @@ describe("codex execute", () => {
           "PAPERCLIP_AGENT_ID",
           "PAPERCLIP_API_KEY",
           "PAPERCLIP_API_URL",
-          "PAPERCLIP_COMPANY_ID",
           "PAPERCLIP_RUN_ID",
         ]),
       );
@@ -341,7 +333,6 @@ describe("codex execute", () => {
         runId: "run-2",
         agent: {
           id: "agent-1",
-          companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
           adapterConfig: {},

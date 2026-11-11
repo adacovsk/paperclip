@@ -4,7 +4,7 @@ import type { Db } from "@paperclipai/db";
 import { ACTIVITY_LIST_DEFAULT_LIMIT, ACTIVITY_LIST_MAX_LIMIT } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { activityService } from "../services/activity.js";
-import { assertOperator, assertCompanyAccess } from "./authz.js";
+import { assertOperator, assertInstanceAccess } from "./authz.js";
 import { heartbeatService, issueService } from "../services/index.js";
 import { sanitizeRecord } from "../redaction.js";
 
@@ -31,13 +31,11 @@ export function activityRoutes(db: Db) {
     return issueSvc.getById(rawId);
   }
 
-  router.get("/companies/:companyId/activity", async (req, res) => {
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+  router.get("/activity", async (req, res) => {
+    assertInstanceAccess(req);
 
     const limitParam = req.query.limit as string | undefined;
     const filters = {
-      companyId,
       agentId: req.query.agentId as string | undefined,
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
@@ -52,12 +50,10 @@ export function activityRoutes(db: Db) {
     res.json(result);
   });
 
-  router.post("/companies/:companyId/activity", validate(createActivitySchema), async (req, res) => {
+  router.post("/activity", validate(createActivitySchema), async (req, res) => {
     assertOperator(req);
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+    assertInstanceAccess(req);
     const event = await svc.create({
-      companyId,
       ...req.body,
       details: req.body.details ? sanitizeRecord(req.body.details) : null,
     });
@@ -71,7 +67,7 @@ export function activityRoutes(db: Db) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
-    assertCompanyAccess(req, issue.companyId);
+    assertInstanceAccess(req);
     const result = await svc.forIssue(issue.id);
     res.json(result);
   });
@@ -83,8 +79,8 @@ export function activityRoutes(db: Db) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
-    assertCompanyAccess(req, issue.companyId);
-    const result = await svc.runsForIssue(issue.companyId, issue.id);
+    assertInstanceAccess(req);
+    const result = await svc.runsForIssue(issue.id);
     res.json(result);
   });
 
@@ -95,7 +91,7 @@ export function activityRoutes(db: Db) {
       res.json([]);
       return;
     }
-    assertCompanyAccess(req, run.companyId);
+    assertInstanceAccess(req);
     const result = await svc.issuesForRun(runId);
     res.json(result);
   });

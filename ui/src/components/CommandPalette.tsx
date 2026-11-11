@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "@/lib/router";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { issuesApi } from "../api/issues";
@@ -36,7 +35,6 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
-  const { selectedCompanyId } = useCompany();
   const { openNewIssue, openNewAgent } = useDialog();
   const { isMobile, setSidebarOpen } = useSidebar();
   const searchQuery = query.trim();
@@ -58,27 +56,27 @@ export function CommandPalette() {
   }, [open]);
 
   const { data: issues = [] } = useQuery({
-    queryKey: queryKeys.issues.list(selectedCompanyId!),
-    queryFn: () => issuesApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && open,
+    queryKey: queryKeys.issues.list,
+    queryFn: () => issuesApi.list(),
+    enabled: open,
   });
 
   const { data: searchedIssues = [] } = useQuery({
-    queryKey: queryKeys.issues.search(selectedCompanyId!, searchQuery),
-    queryFn: () => issuesApi.list(selectedCompanyId!, { q: searchQuery }),
-    enabled: !!selectedCompanyId && open && searchQuery.length > 0,
+    queryKey: queryKeys.issues.search(searchQuery),
+    queryFn: () => issuesApi.list({ q: searchQuery }),
+    enabled: open && searchQuery.length > 0,
   });
 
   const { data: agents = [] } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && open,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+    enabled: open,
   });
 
   const { data: allProjects = [] } = useQuery({
-    queryKey: queryKeys.projects.list(selectedCompanyId!),
-    queryFn: () => projectsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && open,
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
+    enabled: open,
   });
   const projects = useMemo(
     () => allProjects.filter((p) => !p.archivedAt),

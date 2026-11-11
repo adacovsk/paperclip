@@ -68,7 +68,7 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "local_implicit",
       isInstanceAdmin: false,
     };
@@ -82,7 +82,6 @@ function createApp() {
 function child(status: "todo" | "done") {
   return {
     id: CHILD_ID,
-    companyId: "company-1",
     parentId: PARENT_ID,
     status,
     assigneeAgentId: null,
@@ -95,7 +94,6 @@ function child(status: "todo" | "done") {
 function parent(status: "todo" | "in_review" | "done") {
   return {
     id: PARENT_ID,
-    companyId: "company-1",
     parentId: null,
     status,
     assigneeAgentId: WORKER_ID,

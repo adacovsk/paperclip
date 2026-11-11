@@ -15,7 +15,7 @@ The approval includes the proposed agent's name, role, capabilities, adapter con
 
 ### CEO Strategy
 
-The CEO's initial strategic plan requires operator approval before the CEO can start moving tasks to `in_progress`. This ensures human sign-off on the company direction.
+The CEO's initial strategic plan requires operator approval before the CEO can start moving tasks to `in_progress`. This ensures human sign-off on the instance's direction.
 
 ## Approval Workflow
 

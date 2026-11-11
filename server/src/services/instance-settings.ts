@@ -1,5 +1,5 @@
 import type { Db } from "@paperclipai/db";
-import { companies, instanceSettings } from "@paperclipai/db";
+import { instanceSettings } from "@paperclipai/db";
 import {
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -11,7 +11,7 @@ import {
 } from "@paperclipai/shared";
 import { eq } from "drizzle-orm";
 
-const DEFAULT_SINGLETON_KEY = "default";
+export const DEFAULT_SINGLETON_KEY = "default";
 
 function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   const parsed = instanceGeneralSettingsSchema.safeParse(raw ?? {});
@@ -49,37 +49,42 @@ function toInstanceSettings(row: typeof instanceSettings.$inferSelect): Instance
   };
 }
 
-export function instanceSettingsService(db: Db) {
-  async function getOrCreateRow() {
-    const existing = await db
-      .select()
-      .from(instanceSettings)
-      .where(eq(instanceSettings.singletonKey, DEFAULT_SINGLETON_KEY))
-      .then((rows) => rows[0] ?? null);
-    if (existing) return existing;
+/** Reads the singleton `instance_settings` row, creating it on first access. */
+export async function getOrCreateInstanceSettingsRow(db: Pick<Db, "select" | "insert">) {
+  const existing = await db
+    .select()
+    .from(instanceSettings)
+    .where(eq(instanceSettings.singletonKey, DEFAULT_SINGLETON_KEY))
+    .then((rows) => rows[0] ?? null);
+  if (existing) return existing;
 
-    const now = new Date();
-    const [created] = await db
-      .insert(instanceSettings)
-      .values({
-        singletonKey: DEFAULT_SINGLETON_KEY,
-        general: {},
-        experimental: {},
-        createdAt: now,
+  const now = new Date();
+  const [created] = await db
+    .insert(instanceSettings)
+    .values({
+      singletonKey: DEFAULT_SINGLETON_KEY,
+      general: {},
+      experimental: {},
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [instanceSettings.singletonKey],
+      set: {
         updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [instanceSettings.singletonKey],
-        set: {
-          updatedAt: now,
-        },
-      })
-      .returning();
+      },
+    })
+    .returning();
 
-    return created;
-  }
+  return created;
+}
+
+export function instanceSettingsService(db: Db) {
+  const getOrCreateRow = () => getOrCreateInstanceSettingsRow(db);
 
   return {
+    getRow: getOrCreateRow,
+
     get: async (): Promise<InstanceSettings> => toInstanceSettings(await getOrCreateRow()),
 
     getGeneral: async (): Promise<InstanceGeneralSettings> => {
@@ -127,11 +132,5 @@ export function instanceSettingsService(db: Db) {
         .returning();
       return toInstanceSettings(updated ?? current);
     },
-
-    listCompanyIds: async (): Promise<string[]> =>
-      db
-        .select({ id: companies.id })
-        .from(companies)
-        .then((rows) => rows.map((row) => row.id)),
   };
 }

@@ -4,7 +4,7 @@ import { test, expect } from "@playwright/test";
  * E2E: Onboarding wizard flow (skip_llm mode).
  *
  * Walks through the 4-step OnboardingWizard:
- *   Step 1 — Name your company
+ *   Step 1 — Name your instance (instance name + optional first goal)
  *   Step 2 — Create your first agent (adapter selection + config)
  *   Step 3 — Give it something to do (task creation)
  *   Step 4 — Ready to launch (summary + open issue)
@@ -16,32 +16,28 @@ import { test, expect } from "@playwright/test";
 
 const SKIP_LLM = process.env.PAPERCLIP_E2E_SKIP_LLM !== "false";
 
-const COMPANY_NAME = `E2E-Test-${Date.now()}`;
+const INSTANCE_NAME = `E2E-Test-${Date.now()}`;
+const GOAL_TITLE = `E2E goal ${Date.now()}`;
 const AGENT_NAME = "CEO";
 const TASK_TITLE = "E2E test task";
 
 test.describe("Onboarding wizard", () => {
   test("completes full wizard flow", async ({ page }) => {
-    await page.goto("/");
-
-    const wizardHeading = page.locator("h3", { hasText: "Name your company" });
-    const newCompanyBtn = page.getByRole("button", { name: "New Company" });
+    await page.goto("/onboarding");
 
     await expect(
-      wizardHeading.or(newCompanyBtn)
+      page.locator("h3", { hasText: "Name your instance" })
     ).toBeVisible({ timeout: 15_000 });
 
-    if (await newCompanyBtn.isVisible()) {
-      await newCompanyBtn.click();
-    }
+    const instanceNameInput = page.locator('input[placeholder="My Paperclip"]');
+    await instanceNameInput.fill(INSTANCE_NAME);
 
-    await expect(wizardHeading).toBeVisible({ timeout: 5_000 });
+    const goalInput = page.locator(
+      'textarea[placeholder="What should this instance achieve?"]'
+    );
+    await goalInput.fill(GOAL_TITLE);
 
-    const companyNameInput = page.locator('input[placeholder="Acme Corp"]');
-    await companyNameInput.fill(COMPANY_NAME);
-
-    const nextButton = page.getByRole("button", { name: "Next" });
-    await nextButton.click();
+    await page.getByRole("button", { name: "Next" }).click();
 
     await expect(
       page.locator("h3", { hasText: "Create your first agent" })
@@ -75,7 +71,7 @@ test.describe("Onboarding wizard", () => {
       page.locator("h3", { hasText: "Ready to launch" })
     ).toBeVisible({ timeout: 10_000 });
 
-    await expect(page.locator("text=" + COMPANY_NAME)).toBeVisible();
+    await expect(page.locator("text=" + INSTANCE_NAME)).toBeVisible();
     await expect(page.locator("text=" + AGENT_NAME)).toBeVisible();
     await expect(page.locator("text=" + TASK_TITLE)).toBeVisible();
 
@@ -85,17 +81,21 @@ test.describe("Onboarding wizard", () => {
 
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
 
-    const companiesRes = await page.request.get(`${baseUrl}/api/companies`);
-    expect(companiesRes.ok()).toBe(true);
-    const companies = await companiesRes.json();
-    const company = companies.find(
-      (c: { name: string }) => c.name === COMPANY_NAME
-    );
-    expect(company).toBeTruthy();
+    const profileRes = await page.request.get(`${baseUrl}/api/instance/profile`);
+    expect(profileRes.ok()).toBe(true);
+    const profile = await profileRes.json();
+    expect(profile.name).toBe(INSTANCE_NAME);
 
-    const agentsRes = await page.request.get(
-      `${baseUrl}/api/companies/${company.id}/agents`
+    const goalsRes = await page.request.get(`${baseUrl}/api/goals`);
+    expect(goalsRes.ok()).toBe(true);
+    const goals = await goalsRes.json();
+    const goal = goals.find(
+      (g: { title: string }) => g.title === GOAL_TITLE
     );
+    expect(goal).toBeTruthy();
+    expect(goal.level).toBe("instance");
+
+    const agentsRes = await page.request.get(`${baseUrl}/api/agents`);
     expect(agentsRes.ok()).toBe(true);
     const agents = await agentsRes.json();
     const ceoAgent = agents.find(
@@ -106,7 +106,7 @@ test.describe("Onboarding wizard", () => {
     expect(ceoAgent.adapterType).not.toBe("process");
 
     const instructionsBundleRes = await page.request.get(
-      `${baseUrl}/api/agents/${ceoAgent.id}/instructions-bundle?companyId=${company.id}`
+      `${baseUrl}/api/agents/${ceoAgent.id}/instructions-bundle`
     );
     expect(instructionsBundleRes.ok()).toBe(true);
     const instructionsBundle = await instructionsBundleRes.json();
@@ -114,9 +114,7 @@ test.describe("Onboarding wizard", () => {
       instructionsBundle.files.map((file: { path: string }) => file.path).sort()
     ).toEqual(["AGENTS.md"]);
 
-    const issuesRes = await page.request.get(
-      `${baseUrl}/api/companies/${company.id}/issues`
-    );
+    const issuesRes = await page.request.get(`${baseUrl}/api/issues`);
     expect(issuesRes.ok()).toBe(true);
     const issues = await issuesRes.json();
     const task = issues.find(
@@ -124,6 +122,7 @@ test.describe("Onboarding wizard", () => {
     );
     expect(task).toBeTruthy();
     expect(task.assigneeAgentId).toBe(ceoAgent.id);
+    expect(task.goalId).toBe(goal.id);
 
     // The list projection nulls `description` on purpose (see `issueListColumns`
     // in server/src/services/issues.ts) — a list row's NULL body says nothing
@@ -132,9 +131,8 @@ test.describe("Onboarding wizard", () => {
     expect(taskDetailRes.ok()).toBe(true);
     const taskDetail = await taskDetailRes.json();
     expect(taskDetail.description).toContain(
-      "You are the CEO. You set the direction for the company."
+      "You are the CEO. You set the direction for the instance."
     );
-    expect(taskDetail.description).not.toContain("github.com/paperclipai/companies");
 
     if (!SKIP_LLM) {
       await expect(async () => {

@@ -344,6 +344,13 @@
       "when": 1784296259596,
       "tag": "0048_third_spiral",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794376634877,
+      "tag": "0049_no_company",
+      "breakpoints": true
     }
   ]
 }

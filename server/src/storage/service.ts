@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { StorageService, StorageProvider, PutFileInput, PutFileResult } from "./types.js";
-import { badRequest, forbidden, unprocessable } from "../errors.js";
+import { badRequest, unprocessable } from "../errors.js";
 
 const MAX_SEGMENT_LENGTH = 120;
 
@@ -43,12 +43,8 @@ function splitFilename(filename: string | null): { stem: string; ext: string } {
   };
 }
 
-function ensureCompanyPrefix(companyId: string, objectKey: string): void {
-  const expectedPrefix = `${companyId}/`;
-  if (!objectKey.startsWith(expectedPrefix)) {
-    throw forbidden("Object does not belong to company");
-  }
-  if (objectKey.includes("..")) {
+function assertSafeObjectKey(objectKey: string): void {
+  if (!objectKey || objectKey.startsWith("/") || objectKey.includes("..")) {
     throw badRequest("Invalid object key");
   }
 }
@@ -57,7 +53,7 @@ function hashBuffer(input: Buffer): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-function buildObjectKey(companyId: string, namespace: string, originalFilename: string | null): string {
+function buildObjectKey(namespace: string, originalFilename: string | null): string {
   const ns = normalizeNamespace(namespace);
   const now = new Date();
   const year = String(now.getUTCFullYear());
@@ -66,13 +62,10 @@ function buildObjectKey(companyId: string, namespace: string, originalFilename: 
   const { stem, ext } = splitFilename(originalFilename);
   const suffix = randomUUID();
   const filename = `${suffix}-${stem}${ext}`;
-  return `${companyId}/${ns}/${year}/${month}/${day}/${filename}`;
+  return `${ns}/${year}/${month}/${day}/${filename}`;
 }
 
 function assertPutFileInput(input: PutFileInput): void {
-  if (!input.companyId || input.companyId.trim().length === 0) {
-    throw unprocessable("companyId is required");
-  }
   if (!input.namespace || input.namespace.trim().length === 0) {
     throw unprocessable("namespace is required");
   }
@@ -93,7 +86,7 @@ export function createStorageService(provider: StorageProvider): StorageService 
 
     async putFile(input: PutFileInput): Promise<PutFileResult> {
       assertPutFileInput(input);
-      const objectKey = buildObjectKey(input.companyId, input.namespace, input.originalFilename);
+      const objectKey = buildObjectKey(input.namespace, input.originalFilename);
       const byteSize = input.body.length;
       const contentType = input.contentType.trim().toLowerCase();
       await provider.putObject({
@@ -113,18 +106,18 @@ export function createStorageService(provider: StorageProvider): StorageService 
       };
     },
 
-    async getObject(companyId: string, objectKey: string) {
-      ensureCompanyPrefix(companyId, objectKey);
+    async getObject(objectKey: string) {
+      assertSafeObjectKey(objectKey);
       return provider.getObject({ objectKey });
     },
 
-    async headObject(companyId: string, objectKey: string) {
-      ensureCompanyPrefix(companyId, objectKey);
+    async headObject(objectKey: string) {
+      assertSafeObjectKey(objectKey);
       return provider.headObject({ objectKey });
     },
 
-    async deleteObject(companyId: string, objectKey: string) {
-      ensureCompanyPrefix(companyId, objectKey);
+    async deleteObject(objectKey: string) {
+      assertSafeObjectKey(objectKey);
       await provider.deleteObject({ objectKey });
     },
   };

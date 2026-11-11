@@ -13,12 +13,10 @@ export function healthRoutes(
     deploymentMode: DeploymentMode;
     deploymentExposure: DeploymentExposure;
     authReady: boolean;
-    companyDeletionEnabled: boolean;
   } = {
     deploymentMode: "local_trusted",
     deploymentExposure: "private",
     authReady: true,
-    companyDeletionEnabled: true,
   },
 ) {
   const router = Router();
@@ -82,9 +80,6 @@ export function healthRoutes(
       authReady: opts.authReady,
       bootstrapStatus,
       bootstrapInviteActive,
-      features: {
-        companyDeletionEnabled: opts.companyDeletionEnabled,
-      },
       ...(devServer ? { devServer } : {}),
     });
   });

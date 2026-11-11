@@ -15,18 +15,21 @@ export function assertInstanceAdmin(req: Request) {
   throw forbidden("Instance admin access required");
 }
 
-export function assertCompanyAccess(req: Request, companyId: string) {
+/**
+ * Any authenticated principal may act on the instance, except an operator
+ * session or key without an active membership, unless they are instance admin.
+ */
+export function assertInstanceAccess(req: Request) {
   if (req.actor.type === "none") {
     throw unauthorized();
   }
-  if (req.actor.type === "agent" && req.actor.companyId !== companyId) {
-    throw forbidden("Agent key cannot access another company");
-  }
-  if (req.actor.type === "operator" && req.actor.source !== "local_implicit" && !req.actor.isInstanceAdmin) {
-    const allowedCompanies = req.actor.companyIds ?? [];
-    if (!allowedCompanies.includes(companyId)) {
-      throw forbidden("User does not have access to this company");
-    }
+  if (
+    req.actor.type === "operator"
+    && req.actor.source !== "local_implicit"
+    && !req.actor.isInstanceAdmin
+    && !req.actor.isMember
+  ) {
+    throw forbidden("User does not have access to this instance");
   }
 }
 

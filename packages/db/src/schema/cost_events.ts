@@ -1,5 +1,4 @@
 import { pgTable, uuid, text, timestamp, integer, index } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 import { issues } from "./issues.js";
 import { projects } from "./projects.js";
@@ -10,7 +9,6 @@ export const costEvents = pgTable(
   "cost_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     agentId: uuid("agent_id").notNull().references(() => agents.id),
     issueId: uuid("issue_id").references(() => issues.id),
     projectId: uuid("project_id").references(() => projects.id),
@@ -29,24 +27,20 @@ export const costEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyOccurredIdx: index("cost_events_company_occurred_idx").on(table.companyId, table.occurredAt),
-    companyAgentOccurredIdx: index("cost_events_company_agent_occurred_idx").on(
-      table.companyId,
+    occurredIdx: index("cost_events_occurred_idx").on(table.occurredAt),
+    agentOccurredIdx: index("cost_events_agent_occurred_idx").on(
       table.agentId,
       table.occurredAt,
     ),
-    companyProviderOccurredIdx: index("cost_events_company_provider_occurred_idx").on(
-      table.companyId,
+    providerOccurredIdx: index("cost_events_provider_occurred_idx").on(
       table.provider,
       table.occurredAt,
     ),
-    companyBillerOccurredIdx: index("cost_events_company_biller_occurred_idx").on(
-      table.companyId,
+    billerOccurredIdx: index("cost_events_biller_occurred_idx").on(
       table.biller,
       table.occurredAt,
     ),
-    companyHeartbeatRunIdx: index("cost_events_company_heartbeat_run_idx").on(
-      table.companyId,
+    heartbeatRunIdx: index("cost_events_heartbeat_run_idx").on(
       table.heartbeatRunId,
     ),
   }),

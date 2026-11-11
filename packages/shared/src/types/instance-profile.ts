@@ -1,10 +1,11 @@
-import type { CompanyStatus, PauseReason } from "../constants.js";
+import type { InstanceStatus, PauseReason } from "../constants.js";
 
-export interface Company {
+/** The instance's own record: the singleton `instance_settings` row's profile fields. */
+export interface InstanceProfile {
   id: string;
   name: string;
   description: string | null;
-  status: CompanyStatus;
+  status: InstanceStatus;
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   issuePrefix: string;

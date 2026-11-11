@@ -25,7 +25,7 @@ import { Router } from "express";
 import type { Request } from "express";
 import { and, desc, eq, gte } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, pluginLogs, pluginWebhookDeliveries } from "@paperclipai/db";
+import { pluginLogs, pluginWebhookDeliveries } from "@paperclipai/db";
 import type {
   PluginStatus,
   PaperclipPluginManifestV1,
@@ -39,7 +39,7 @@ import { pluginRegistryService } from "../services/plugin-registry.js";
 import { pluginLifecycleManager } from "../services/plugin-lifecycle.js";
 import { getPluginUiContributionMetadata, pluginLoader } from "../services/plugin-loader.js";
 import { logActivity } from "../services/activity-log.js";
-import { publishGlobalLiveEvent } from "../services/live-events.js";
+import { publishLiveEvent } from "../services/live-events.js";
 import type { PluginJobScheduler } from "../services/plugin-job-scheduler.js";
 import type { PluginJobStore } from "../services/plugin-job-store.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
@@ -47,7 +47,7 @@ import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
 import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
-import { assertOperator, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertInstanceAccess, assertOperator, getActorInfo } from "./authz.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
 
 /** UI slot declaration extracted from plugin manifest */
@@ -314,47 +314,23 @@ export function pluginRoutes(
     workerManager: bridgeDeps?.workerManager ?? webhookDeps?.workerManager,
   });
 
-  async function resolvePluginAuditCompanyIds(req: Request): Promise<string[]> {
-    if (typeof (db as { select?: unknown }).select === "function") {
-      const rows = await db
-        .select({ id: companies.id })
-        .from(companies);
-      return rows.map((row) => row.id);
-    }
-
-    if (req.actor.type === "agent" && req.actor.companyId) {
-      return [req.actor.companyId];
-    }
-
-    if (req.actor.type === "operator") {
-      return req.actor.companyIds ?? [];
-    }
-
-    return [];
-  }
-
   async function logPluginMutationActivity(
     req: Request,
     action: string,
     entityId: string,
     details: Record<string, unknown>,
   ): Promise<void> {
-    const companyIds = await resolvePluginAuditCompanyIds(req);
-    if (companyIds.length === 0) return;
-
     const actor = getActorInfo(req);
-    await Promise.all(companyIds.map((companyId) =>
-      logActivity(db, {
-        companyId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action,
-        entityType: "plugin",
-        entityId,
-        details,
-      })));
+    await logActivity(db, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action,
+      entityType: "plugin",
+      entityId,
+      details,
+    });
   }
 
   /**
@@ -507,7 +483,7 @@ export function pluginRoutes(
    * Request body:
    * - `tool`: Fully namespaced tool name (e.g., "acme.linear:search-issues")
    * - `parameters`: Parameters matching the tool's declared JSON Schema
-   * - `runContext`: Agent run context with agentId, runId, companyId, projectId
+   * - `runContext`: Agent run context with agentId, runId, projectId
    *
    * Response: `ToolExecutionResult`
    * Errors:
@@ -543,14 +519,14 @@ export function pluginRoutes(
       return;
     }
 
-    if (!runContext.agentId || !runContext.runId || !runContext.companyId || !runContext.projectId) {
+    if (!runContext.agentId || !runContext.runId || !runContext.projectId) {
       res.status(400).json({
-        error: '"runContext" must include agentId, runId, companyId, and projectId',
+        error: '"runContext" must include agentId, runId, and projectId',
       });
       return;
     }
 
-    assertCompanyAccess(req, runContext.companyId);
+    assertInstanceAccess(req);
 
     // Verify the tool exists
     const registeredTool = toolDeps.toolDispatcher.getTool(tool);
@@ -657,7 +633,7 @@ export function pluginRoutes(
           version: updated?.version ?? existingPlugin.version,
           source: isLocalPath ? "local_path" : "npm",
         });
-        publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: existingPlugin.id, action: "installed" } });
+        publishLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: existingPlugin.id, action: "installed" } });
         res.json(updated);
       } else {
         // This shouldn't happen since installPlugin already registers in the DB
@@ -677,8 +653,6 @@ export function pluginRoutes(
   interface PluginBridgeDataRequest {
     /** Plugin-defined data key (e.g. `"sync-health"`). */
     key: string;
-    /** Optional company scope for authorizing company-context bridge calls. */
-    companyId?: string;
     /** Optional context and query parameters from the UI. */
     params?: Record<string, unknown>;
     /** Optional host launcher/render metadata for the worker bridge call. */
@@ -689,8 +663,6 @@ export function pluginRoutes(
   interface PluginBridgeActionRequest {
     /** Plugin-defined action key (e.g. `"resync"`). */
     key: string;
-    /** Optional company scope for authorizing company-context bridge calls. */
-    companyId?: string;
     /** Optional parameters from the UI. */
     params?: Record<string, unknown>;
     /** Optional host launcher/render metadata for the worker bridge call. */
@@ -826,9 +798,7 @@ export function pluginRoutes(
       return;
     }
 
-    if (body.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertInstanceAccess(req);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -909,9 +879,7 @@ export function pluginRoutes(
       return;
     }
 
-    if (body.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertInstanceAccess(req);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -987,14 +955,11 @@ export function pluginRoutes(
     }
 
     const body = req.body as {
-      companyId?: string;
       params?: Record<string, unknown>;
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    if (body?.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertInstanceAccess(req);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1066,14 +1031,11 @@ export function pluginRoutes(
     }
 
     const body = req.body as {
-      companyId?: string;
       params?: Record<string, unknown>;
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    if (body?.companyId) {
-      assertCompanyAccess(req, body.companyId);
-    }
+    assertInstanceAccess(req);
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1103,11 +1065,7 @@ export function pluginRoutes(
    *
    * The worker pushes events via `ctx.streams.emit(channel, event)` which arrive
    * as JSON-RPC notifications to the host, get published on the PluginStreamBus,
-   * and are fanned out to all connected SSE clients matching (pluginId, channel,
-   * companyId).
-   *
-   * Query parameters:
-   * - `companyId` (required): Scope events to a specific company
+   * and are fanned out to all connected SSE clients matching (pluginId, channel).
    *
    * SSE event types:
    * - `message`: A data event from the worker (default)
@@ -1115,7 +1073,6 @@ export function pluginRoutes(
    * - `close`: The worker closed the stream channel — client should disconnect
    *
    * Errors:
-   * - 400 if companyId is missing
    * - 404 if plugin not found
    * - 501 if bridge deps or stream bus are not configured
    */
@@ -1128,20 +1085,13 @@ export function pluginRoutes(
     }
 
     const { pluginId, channel } = req.params;
-    const companyId = req.query.companyId as string | undefined;
-
-    if (!companyId) {
-      res.status(400).json({ error: '"companyId" query parameter is required' });
-      return;
-    }
-
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
     }
 
-    assertCompanyAccess(req, companyId);
+    assertInstanceAccess(req);
 
     // Set SSE headers
     res.writeHead(200, {
@@ -1166,7 +1116,6 @@ export function pluginRoutes(
     const unsubscribe = bridgeDeps.streamBus.subscribe(
       plugin.id,
       channel,
-      companyId,
       (event, eventType) => {
         if (unsubscribed || !res.writable) return;
         try {
@@ -1245,7 +1194,7 @@ export function pluginRoutes(
         pluginKey: plugin.pluginKey,
         purge,
       });
-      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "uninstalled" } });
+      publishLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "uninstalled" } });
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1280,7 +1229,7 @@ export function pluginRoutes(
         pluginKey: plugin.pluginKey,
         version: result?.version ?? plugin.version,
       });
-      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "enabled" } });
+      publishLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "enabled" } });
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1320,7 +1269,7 @@ export function pluginRoutes(
         pluginKey: plugin.pluginKey,
         reason: reason ?? null,
       });
-      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "disabled" } });
+      publishLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "disabled" } });
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1486,7 +1435,7 @@ export function pluginRoutes(
         version: result?.version ?? plugin.version,
         targetVersion: version ?? null,
       });
-      publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
+      publishLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "upgraded" } });
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

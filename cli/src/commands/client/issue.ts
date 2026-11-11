@@ -66,22 +66,21 @@ export function registerIssueCommands(program: Command): void {
   addCommonClientOptions(
     issue
       .command("list")
-      .description("List issues for a company")
-      .option("-C, --company-id <id>", "Company ID")
+      .description("List issues")
       .option("--status <csv>", "Comma-separated statuses")
       .option("--assignee-agent-id <id>", "Filter by assignee agent ID")
       .option("--project-id <id>", "Filter by project ID")
       .option("--match <text>", "Local text match on identifier/title/description")
       .action(async (opts: IssueBaseOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const ctx = resolveCommandContext(opts);
           const params = new URLSearchParams();
           if (opts.status) params.set("status", opts.status);
           if (opts.assigneeAgentId) params.set("assigneeAgentId", opts.assigneeAgentId);
           if (opts.projectId) params.set("projectId", opts.projectId);
 
           const query = params.toString();
-          const path = `/api/companies/${ctx.companyId}/issues${query ? `?${query}` : ""}`;
+          const path = `/api/issues${query ? `?${query}` : ""}`;
           const rows = (await ctx.api.get<Issue[]>(path)) ?? [];
 
           const filtered = filterIssueRows(rows, opts.match);
@@ -112,7 +111,6 @@ export function registerIssueCommands(program: Command): void {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 
   addCommonClientOptions(
@@ -135,7 +133,6 @@ export function registerIssueCommands(program: Command): void {
     issue
       .command("create")
       .description("Create an issue")
-      .requiredOption("-C, --company-id <id>", "Company ID")
       .requiredOption("--title <title>", "Issue title")
       .option("--description <text>", "Issue description")
       .option("--status <status>", "Issue status")
@@ -148,7 +145,7 @@ export function registerIssueCommands(program: Command): void {
       .option("--billing-code <code>", "Billing code")
       .action(async (opts: IssueCreateOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const ctx = resolveCommandContext(opts);
           const payload = createIssueSchema.parse({
             title: opts.title,
             description: opts.description,
@@ -162,13 +159,12 @@ export function registerIssueCommands(program: Command): void {
             billingCode: opts.billingCode,
           });
 
-          const created = await ctx.api.post<Issue>(`/api/companies/${ctx.companyId}/issues`, payload);
+          const created = await ctx.api.post<Issue>("/api/issues", payload);
           printOutput(created, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 
   addCommonClientOptions(

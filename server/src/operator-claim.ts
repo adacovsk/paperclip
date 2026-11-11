@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, companyMemberships, instanceUserRoles } from "@paperclipai/db";
+import { instanceUserRoles, memberships } from "@paperclipai/db";
 import type { DeploymentMode } from "@paperclipai/shared";
 
 const LOCAL_OPERATOR_USER_ID = "local-operator";
@@ -106,37 +106,24 @@ export async function claimOperatorOwnership(
       .delete(instanceUserRoles)
       .where(and(eq(instanceUserRoles.userId, LOCAL_OPERATOR_USER_ID), eq(instanceUserRoles.role, "instance_admin")));
 
-    const allCompanies = await tx.select({ id: companies.id }).from(companies);
-    for (const company of allCompanies) {
-      const existing = await tx
-        .select({ id: companyMemberships.id, status: companyMemberships.status })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, company.id),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, opts.userId),
-          ),
-        )
-        .then((rows) => rows[0] ?? null);
+    const existing = await tx
+      .select({ id: memberships.id, status: memberships.status })
+      .from(memberships)
+      .where(and(eq(memberships.principalType, "user"), eq(memberships.principalId, opts.userId)))
+      .then((rows) => rows[0] ?? null);
 
-      if (!existing) {
-        await tx.insert(companyMemberships).values({
-          companyId: company.id,
-          principalType: "user",
-          principalId: opts.userId,
-          status: "active",
-          membershipRole: "owner",
-        });
-        continue;
-      }
-
-      if (existing.status !== "active") {
-        await tx
-          .update(companyMemberships)
-          .set({ status: "active", membershipRole: "owner", updatedAt: new Date() })
-          .where(eq(companyMemberships.id, existing.id));
-      }
+    if (!existing) {
+      await tx.insert(memberships).values({
+        principalType: "user",
+        principalId: opts.userId,
+        status: "active",
+        membershipRole: "owner",
+      });
+    } else if (existing.status !== "active") {
+      await tx
+        .update(memberships)
+        .set({ status: "active", membershipRole: "owner", updatedAt: new Date() })
+        .where(eq(memberships.id, existing.id));
     }
   });
 

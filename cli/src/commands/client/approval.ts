@@ -17,7 +17,6 @@ import {
 } from "./common.js";
 
 interface ApprovalListOptions extends BaseClientOptions {
-  companyId?: string;
   status?: string;
 }
 
@@ -27,7 +26,6 @@ interface ApprovalDecisionOptions extends BaseClientOptions {
 }
 
 interface ApprovalCreateOptions extends BaseClientOptions {
-  companyId?: string;
   type: string;
   requestedByAgentId?: string;
   payload: string;
@@ -48,18 +46,17 @@ export function registerApprovalCommands(program: Command): void {
   addCommonClientOptions(
     approval
       .command("list")
-      .description("List approvals for a company")
-      .requiredOption("-C, --company-id <id>", "Company ID")
+      .description("List approvals")
       .option("--status <status>", "Status filter")
       .action(async (opts: ApprovalListOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const ctx = resolveCommandContext(opts);
           const params = new URLSearchParams();
           if (opts.status) params.set("status", opts.status);
           const query = params.toString();
           const rows =
             (await ctx.api.get<Approval[]>(
-              `/api/companies/${ctx.companyId}/approvals${query ? `?${query}` : ""}`,
+              `/api/approvals${query ? `?${query}` : ""}`,
             )) ?? [];
 
           if (ctx.json) {
@@ -87,7 +84,6 @@ export function registerApprovalCommands(program: Command): void {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 
   addCommonClientOptions(
@@ -110,14 +106,13 @@ export function registerApprovalCommands(program: Command): void {
     approval
       .command("create")
       .description("Create an approval request")
-      .requiredOption("-C, --company-id <id>", "Company ID")
       .requiredOption("--type <type>", "Approval type (hire_agent|approve_ceo_strategy)")
       .requiredOption("--payload <json>", "Approval payload as JSON object")
       .option("--requested-by-agent-id <id>", "Requesting agent ID")
       .option("--issue-ids <csv>", "Comma-separated linked issue IDs")
       .action(async (opts: ApprovalCreateOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const ctx = resolveCommandContext(opts);
           const payloadJson = parseJsonObject(opts.payload, "payload");
           const payload = createApprovalSchema.parse({
             type: opts.type,
@@ -125,13 +120,12 @@ export function registerApprovalCommands(program: Command): void {
             requestedByAgentId: opts.requestedByAgentId,
             issueIds: parseCsv(opts.issueIds),
           });
-          const created = await ctx.api.post<Approval>(`/api/companies/${ctx.companyId}/approvals`, payload);
+          const created = await ctx.api.post<Approval>("/api/approvals", payload);
           printOutput(created, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 
   addCommonClientOptions(

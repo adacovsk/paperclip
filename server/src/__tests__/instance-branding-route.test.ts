@@ -1,45 +1,33 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { companyRoutes } from "../routes/companies.js";
+import { instanceProfileRoutes } from "../routes/instance-profile.js";
 import { errorHandler } from "../middleware/index.js";
 
-const mockCompanyService = vi.hoisted(() => ({
-  list: vi.fn(),
-  stats: vi.fn(),
-  getById: vi.fn(),
-  create: vi.fn(),
+const mockInstanceProfileService = vi.hoisted(() => ({
+  get: vi.fn(),
   update: vi.fn(),
-  archive: vi.fn(),
-  remove: vi.fn(),
+  updateBranding: vi.fn(),
 }));
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
-const mockAccessService = vi.hoisted(() => ({
-  ensureMembership: vi.fn(),
-}));
-
-const mockBudgetService = vi.hoisted(() => ({
-  upsertPolicy: vi.fn(),
-}));
-
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
-  accessService: () => mockAccessService,
   agentService: () => mockAgentService,
-  budgetService: () => mockBudgetService,
-  companyService: () => mockCompanyService,
+  instanceProfileService: () => mockInstanceProfileService,
   logActivity: mockLogActivity,
 }));
 
-function createCompany() {
+function createProfile() {
   const now = new Date("2026-03-19T02:00:00.000Z");
   return {
-    id: "company-1",
+    id: "instance-settings-1",
+    pauseReason: null,
+    pausedAt: null,
     name: "Paperclip",
     description: null,
     status: "active",
@@ -63,14 +51,14 @@ function createApp(actor: Record<string, unknown>) {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api/companies", companyRoutes({} as any));
+  app.use("/api", instanceProfileRoutes({} as any));
   app.use(errorHandler);
   return app;
 }
 
-describe("PATCH /api/companies/:companyId/branding", () => {
+describe("PATCH /api/instance/profile/branding", () => {
   beforeEach(() => {
-    mockCompanyService.update.mockReset();
+    mockInstanceProfileService.updateBranding.mockReset();
     mockAgentService.getById.mockReset();
     mockLogActivity.mockReset();
   });
@@ -78,64 +66,59 @@ describe("PATCH /api/companies/:companyId/branding", () => {
   it("rejects non-CEO agent callers", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       role: "engineer",
     });
     const app = createApp({
       type: "agent",
       agentId: "agent-1",
-      companyId: "company-1",
       source: "agent_key",
       runId: "run-1",
     });
 
     const res = await request(app)
-      .patch("/api/companies/company-1/branding")
+      .patch("/api/instance/profile/branding")
       .send({ logoAssetId: "11111111-1111-4111-8111-111111111111" });
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("Only CEO agents");
-    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(mockInstanceProfileService.updateBranding).not.toHaveBeenCalled();
   });
 
   it("allows CEO agent callers to update branding fields", async () => {
-    const company = createCompany();
+    const profile = createProfile();
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       role: "ceo",
     });
-    mockCompanyService.update.mockResolvedValue(company);
+    mockInstanceProfileService.updateBranding.mockResolvedValue(profile);
     const app = createApp({
       type: "agent",
       agentId: "agent-1",
-      companyId: "company-1",
       source: "agent_key",
       runId: "run-1",
     });
 
     const res = await request(app)
-      .patch("/api/companies/company-1/branding")
+      .patch("/api/instance/profile/branding")
       .send({
         logoAssetId: "11111111-1111-4111-8111-111111111111",
         brandColor: "#123456",
       });
 
     expect(res.status).toBe(200);
-    expect(res.body.logoAssetId).toBe(company.logoAssetId);
-    expect(mockCompanyService.update).toHaveBeenCalledWith("company-1", {
+    expect(res.body.logoAssetId).toBe(profile.logoAssetId);
+    expect(mockInstanceProfileService.updateBranding).toHaveBeenCalledWith({
       logoAssetId: "11111111-1111-4111-8111-111111111111",
       brandColor: "#123456",
     });
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        companyId: "company-1",
-        actorType: "agent",
+          actorType: "agent",
         actorId: "agent-1",
         agentId: "agent-1",
         runId: "run-1",
-        action: "company.branding_updated",
+        action: "instance.branding_updated",
         details: {
           logoAssetId: "11111111-1111-4111-8111-111111111111",
           brandColor: "#123456",
@@ -145,9 +128,9 @@ describe("PATCH /api/companies/:companyId/branding", () => {
   });
 
   it("allows operator callers to update branding fields", async () => {
-    const company = createCompany();
-    mockCompanyService.update.mockResolvedValue({
-      ...company,
+    const profile = createProfile();
+    mockInstanceProfileService.updateBranding.mockResolvedValue({
+      ...profile,
       brandColor: null,
       logoAssetId: null,
       logoUrl: null,
@@ -159,7 +142,7 @@ describe("PATCH /api/companies/:companyId/branding", () => {
     });
 
     const res = await request(app)
-      .patch("/api/companies/company-1/branding")
+      .patch("/api/instance/profile/branding")
       .send({ brandColor: null, logoAssetId: null });
 
     expect(res.status).toBe(200);
@@ -175,7 +158,7 @@ describe("PATCH /api/companies/:companyId/branding", () => {
     });
 
     const res = await request(app)
-      .patch("/api/companies/company-1/branding")
+      .patch("/api/instance/profile/branding")
       .send({
         logoAssetId: "11111111-1111-4111-8111-111111111111",
         status: "archived",
@@ -183,6 +166,40 @@ describe("PATCH /api/companies/:companyId/branding", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation error");
-    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(mockInstanceProfileService.updateBranding).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/instance/profile", () => {
+  beforeEach(() => {
+    mockInstanceProfileService.get.mockReset();
+  });
+
+  it("returns the profile to members", async () => {
+    const profile = createProfile();
+    mockInstanceProfileService.get.mockResolvedValue(profile);
+    const app = createApp({ type: "operator", userId: "user-1", source: "session", isMember: true });
+
+    const res = await request(app).get("/api/instance/profile");
+
+    expect(res.status).toBe(200);
+    expect(res.body.issuePrefix).toBe("PAP");
+  });
+
+  it("rejects operator sessions without a membership", async () => {
+    const app = createApp({ type: "operator", userId: "user-2", source: "session", isMember: false });
+
+    const res = await request(app).get("/api/instance/profile");
+
+    expect(res.status).toBe(403);
+    expect(mockInstanceProfileService.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects unauthenticated callers", async () => {
+    const app = createApp({ type: "none", source: "none" });
+
+    const res = await request(app).get("/api/instance/profile");
+
+    expect(res.status).toBe(401);
   });
 });

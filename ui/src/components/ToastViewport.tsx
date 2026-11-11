@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 import { useToast, type ToastItem, type ToastTone } from "../context/ToastContext";
 import { cn } from "../lib/utils";

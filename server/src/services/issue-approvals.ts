@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { approvals, issueApprovals, issues } from "@paperclipai/db";
-import { notFound, unprocessable } from "../errors.js";
+import { notFound } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
 
 interface LinkActor {
@@ -26,16 +26,12 @@ export function issueApprovalService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
-  async function assertIssueAndApprovalSameCompany(issueId: string, approvalId: string) {
+  async function assertIssueAndApprovalExist(issueId: string, approvalId: string) {
     const issue = await getIssue(issueId);
     if (!issue) throw notFound("Issue not found");
 
     const approval = await getApproval(approvalId);
     if (!approval) throw notFound("Approval not found");
-
-    if (issue.companyId !== approval.companyId) {
-      throw unprocessable("Issue and approval must belong to the same company");
-    }
 
     return { issue, approval };
   }
@@ -48,7 +44,6 @@ export function issueApprovalService(db: Db) {
       const result = await db
         .select({
           id: approvals.id,
-          companyId: approvals.companyId,
           type: approvals.type,
           requestedByAgentId: approvals.requestedByAgentId,
           requestedByUserId: approvals.requestedByUserId,
@@ -77,7 +72,6 @@ export function issueApprovalService(db: Db) {
       return db
         .select({
           id: issues.id,
-          companyId: issues.companyId,
           projectId: issues.projectId,
           goalId: issues.goalId,
           parentId: issues.parentId,
@@ -105,12 +99,11 @@ export function issueApprovalService(db: Db) {
     },
 
     link: async (issueId: string, approvalId: string, actor?: LinkActor) => {
-      const { issue } = await assertIssueAndApprovalSameCompany(issueId, approvalId);
+      const { issue } = await assertIssueAndApprovalExist(issueId, approvalId);
 
       await db
         .insert(issueApprovals)
         .values({
-          companyId: issue.companyId,
           issueId,
           approvalId,
           linkedByAgentId: actor?.agentId ?? null,
@@ -126,7 +119,7 @@ export function issueApprovalService(db: Db) {
     },
 
     unlink: async (issueId: string, approvalId: string) => {
-      await assertIssueAndApprovalSameCompany(issueId, approvalId);
+      await assertIssueAndApprovalExist(issueId, approvalId);
       await db
         .delete(issueApprovals)
         .where(and(eq(issueApprovals.issueId, issueId), eq(issueApprovals.approvalId, approvalId)));
@@ -142,7 +135,6 @@ export function issueApprovalService(db: Db) {
       const rows = await db
         .select({
           id: issues.id,
-          companyId: issues.companyId,
         })
         .from(issues)
         .where(inArray(issues.id, uniqueIssueIds));
@@ -151,17 +143,10 @@ export function issueApprovalService(db: Db) {
         throw notFound("One or more issues not found");
       }
 
-      for (const row of rows) {
-        if (row.companyId !== approval.companyId) {
-          throw unprocessable("Issue and approval must belong to the same company");
-        }
-      }
-
       await db
         .insert(issueApprovals)
         .values(
           uniqueIssueIds.map((issueId) => ({
-            companyId: approval.companyId,
             issueId,
             approvalId,
             linkedByAgentId: actor?.agentId ?? null,

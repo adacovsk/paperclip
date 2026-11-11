@@ -36,9 +36,9 @@ all. A Worker that reaches a defensible conclusion and never calls `/api/` write
 not to a comment — and comment-absence alone bought four full-price identical re-dispatches.
 
 Fetch the run named by `executionRunId`, or the newest
-`GET /api/companies/{companyId}/heartbeat-runs?limit=60` row whose `contextSnapshot.issueId`
+`GET /api/heartbeat-runs?limit=60` row whose `contextSnapshot.issueId`
 matches, then `GET /api/heartbeat-runs/{runId}` and read `resultJson.result`.
-(`/api/agents/:id/runs` 404s — the route is **company-scoped**; that 404 is what previously read as
+(`/api/agents/:id/runs` 404s — run history is listed instance-wide; that 404 is what previously read as
 "no run history exists". `GET /api/heartbeat-runs/{runId}/log` returns the full tool-call
 transcript when the result is ambiguous.)
 

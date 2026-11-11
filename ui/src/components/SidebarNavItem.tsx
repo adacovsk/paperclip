@@ -1,4 +1,4 @@
-import { NavLink } from "@/lib/router";
+import { NavLink } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { useSidebar } from "../context/SidebarContext";
 import type { LucideIcon } from "lucide-react";

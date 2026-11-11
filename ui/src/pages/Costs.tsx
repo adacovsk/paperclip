@@ -24,7 +24,6 @@ import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useCompany } from "../context/CompanyContext";
 import { useDateRange, PRESET_KEYS, PRESET_LABELS } from "../hooks/useDateRange";
 import { queryKeys } from "../lib/queryKeys";
 import { billingTypeDisplayName, cn, formatCents, formatTokens, providerDisplayName } from "../lib/utils";
@@ -32,7 +31,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const NO_COMPANY = "__none__";
 
 function currentWeekRange(): { from: string; to: string } {
   const now = new Date();
@@ -146,7 +144,6 @@ function FinanceSummaryCard({
 }
 
 export function Costs() {
-  const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
 
@@ -188,22 +185,20 @@ export function Costs() {
   }, []);
 
   const weekRange = useMemo(() => currentWeekRange(), [today]);
-  const companyId = selectedCompanyId ?? NO_COMPANY;
 
   const { data: budgetData, isLoading: budgetLoading, error: budgetError } = useQuery({
-    queryKey: queryKeys.budgets.overview(companyId),
-    queryFn: () => budgetsApi.overview(companyId),
-    enabled: !!selectedCompanyId && customReady,
+    queryKey: queryKeys.budgets.overview,
+    queryFn: () => budgetsApi.overview(),
+    enabled: customReady,
     refetchInterval: 30_000,
     staleTime: 5_000,
   });
 
   const invalidateBudgetViews = () => {
-    if (!selectedCompanyId) return;
-    queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(selectedCompanyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview });
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
+    queryClient.invalidateQueries({ queryKey: queryKeys.projects.list });
   };
 
   const policyMutation = useMutation({
@@ -213,7 +208,7 @@ export function Costs() {
       amount: number;
       windowKind: BudgetPolicySummary["windowKind"];
     }) =>
-      budgetsApi.upsertPolicy(companyId, {
+      budgetsApi.upsertPolicy({
         scopeType: input.scopeType,
         scopeId: input.scopeId,
         amount: input.amount,
@@ -224,47 +219,47 @@ export function Costs() {
 
   const incidentMutation = useMutation({
     mutationFn: (input: { incidentId: string; action: "keep_paused" | "raise_budget_and_resume"; amount?: number }) =>
-      budgetsApi.resolveIncident(companyId, input.incidentId, input),
+      budgetsApi.resolveIncident(input.incidentId, input),
     onSuccess: invalidateBudgetViews,
   });
 
   const { data: spendData, isLoading: spendLoading, error: spendError } = useQuery({
-    queryKey: queryKeys.costs(companyId, from || undefined, to || undefined),
+    queryKey: queryKeys.costs(from || undefined, to || undefined),
     queryFn: async () => {
       const [summary, byAgent, byProject, byAgentModel] = await Promise.all([
-        costsApi.summary(companyId, from || undefined, to || undefined),
-        costsApi.byAgent(companyId, from || undefined, to || undefined),
-        costsApi.byProject(companyId, from || undefined, to || undefined),
-        costsApi.byAgentModel(companyId, from || undefined, to || undefined),
+        costsApi.summary(from || undefined, to || undefined),
+        costsApi.byAgent(from || undefined, to || undefined),
+        costsApi.byProject(from || undefined, to || undefined),
+        costsApi.byAgentModel(from || undefined, to || undefined),
       ]);
       return { summary, byAgent, byProject, byAgentModel };
     },
-    enabled: !!selectedCompanyId && customReady,
+    enabled: customReady,
   });
 
   const { data: financeData, isLoading: financeLoading, error: financeError } = useQuery({
     queryKey: [
-      queryKeys.financeSummary(companyId, from || undefined, to || undefined),
-      queryKeys.financeByBiller(companyId, from || undefined, to || undefined),
-      queryKeys.financeByKind(companyId, from || undefined, to || undefined),
-      queryKeys.financeEvents(companyId, from || undefined, to || undefined, 18),
+      queryKeys.financeSummary(from || undefined, to || undefined),
+      queryKeys.financeByBiller(from || undefined, to || undefined),
+      queryKeys.financeByKind(from || undefined, to || undefined),
+      queryKeys.financeEvents(from || undefined, to || undefined, 18),
     ],
     queryFn: async () => {
       const [summary, byBiller, byKind, events] = await Promise.all([
-        costsApi.financeSummary(companyId, from || undefined, to || undefined),
-        costsApi.financeByBiller(companyId, from || undefined, to || undefined),
-        costsApi.financeByKind(companyId, from || undefined, to || undefined),
-        costsApi.financeEvents(companyId, from || undefined, to || undefined, 18),
+        costsApi.financeSummary(from || undefined, to || undefined),
+        costsApi.financeByBiller(from || undefined, to || undefined),
+        costsApi.financeByKind(from || undefined, to || undefined),
+        costsApi.financeEvents(from || undefined, to || undefined, 18),
       ]);
       return { summary, byBiller, byKind, events };
     },
-    enabled: !!selectedCompanyId && customReady,
+    enabled: customReady,
   });
 
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   useEffect(() => {
     setExpandedAgents(new Set());
-  }, [companyId, from, to]);
+  }, [from, to]);
 
   function toggleAgent(agentId: string) {
     setExpandedAgents((prev) => {
@@ -289,41 +284,41 @@ export function Costs() {
   }, [spendData?.byAgentModel]);
 
   const { data: providerData } = useQuery({
-    queryKey: queryKeys.usageByProvider(companyId, from || undefined, to || undefined),
-    queryFn: () => costsApi.byProvider(companyId, from || undefined, to || undefined),
-    enabled: !!selectedCompanyId && customReady && (mainTab === "providers" || mainTab === "billers"),
+    queryKey: queryKeys.usageByProvider(from || undefined, to || undefined),
+    queryFn: () => costsApi.byProvider(from || undefined, to || undefined),
+    enabled: customReady && (mainTab === "providers" || mainTab === "billers"),
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
 
   const { data: billerData } = useQuery({
-    queryKey: queryKeys.usageByBiller(companyId, from || undefined, to || undefined),
-    queryFn: () => costsApi.byBiller(companyId, from || undefined, to || undefined),
-    enabled: !!selectedCompanyId && customReady && mainTab === "billers",
+    queryKey: queryKeys.usageByBiller(from || undefined, to || undefined),
+    queryFn: () => costsApi.byBiller(from || undefined, to || undefined),
+    enabled: customReady && mainTab === "billers",
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
 
   const { data: weekData } = useQuery({
-    queryKey: queryKeys.usageByProvider(companyId, weekRange.from, weekRange.to),
-    queryFn: () => costsApi.byProvider(companyId, weekRange.from, weekRange.to),
-    enabled: !!selectedCompanyId && (mainTab === "providers" || mainTab === "billers"),
+    queryKey: queryKeys.usageByProvider(weekRange.from, weekRange.to),
+    queryFn: () => costsApi.byProvider(weekRange.from, weekRange.to),
+    enabled: (mainTab === "providers" || mainTab === "billers"),
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
 
   const { data: weekBillerData } = useQuery({
-    queryKey: queryKeys.usageByBiller(companyId, weekRange.from, weekRange.to),
-    queryFn: () => costsApi.byBiller(companyId, weekRange.from, weekRange.to),
-    enabled: !!selectedCompanyId && mainTab === "billers",
+    queryKey: queryKeys.usageByBiller(weekRange.from, weekRange.to),
+    queryFn: () => costsApi.byBiller(weekRange.from, weekRange.to),
+    enabled: mainTab === "billers",
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
 
   const { data: windowData } = useQuery({
-    queryKey: queryKeys.usageWindowSpend(companyId),
-    queryFn: () => costsApi.windowSpend(companyId),
-    enabled: !!selectedCompanyId && mainTab === "providers",
+    queryKey: queryKeys.usageWindowSpend,
+    queryFn: () => costsApi.windowSpend(),
+    enabled: mainTab === "providers",
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
@@ -486,14 +481,10 @@ export function Costs() {
   const budgetPolicies = budgetData?.policies ?? [];
   const activeBudgetIncidents = budgetData?.activeIncidents ?? [];
   const budgetPoliciesByScope = useMemo(() => ({
-    company: budgetPolicies.filter((policy) => policy.scopeType === "company"),
+    instance: budgetPolicies.filter((policy) => policy.scopeType === "instance"),
     agent: budgetPolicies.filter((policy) => policy.scopeType === "agent"),
     project: budgetPolicies.filter((policy) => policy.scopeType === "project"),
   }), [budgetPolicies]);
-
-  if (!selectedCompanyId) {
-    return <EmptyState icon={DollarSign} message="Select a company to view costs." />;
-  }
 
   const showCustomPrompt = preset === "custom" && !customReady;
   const showOverviewLoading = (spendLoading || financeLoading) && customReady;
@@ -864,7 +855,7 @@ export function Costs() {
               ) : null}
 
               <div className="space-y-5">
-                {(["company", "agent", "project"] as const).map((scopeType) => {
+                {(["instance", "agent", "project"] as const).map((scopeType) => {
                   const rows = budgetPoliciesByScope[scopeType];
                   if (rows.length === 0) return null;
                   return (
@@ -872,8 +863,8 @@ export function Costs() {
                       <div>
                         <h2 className="text-lg font-semibold capitalize">{scopeType} budgets</h2>
                         <p className="text-sm text-muted-foreground">
-                          {scopeType === "company"
-                            ? "Company-wide monthly policy."
+                          {scopeType === "instance"
+                            ? "Instance-wide monthly policy."
                             : scopeType === "agent"
                               ? "Recurring monthly spend policies for individual agents."
                               : "Lifetime spend policies for execution-bound projects."}
@@ -902,7 +893,7 @@ export function Costs() {
                 {budgetPolicies.length === 0 ? (
                   <Card>
                     <CardContent className="px-5 py-8 text-sm text-muted-foreground">
-                      No budget policies yet. Set agent and project budgets from their detail pages, or use the existing company monthly budget control.
+                      No budget policies yet. Set agent and project budgets from their detail pages, or set the instance monthly budget in instance settings.
                     </CardContent>
                   </Card>
                 ) : null}
@@ -930,7 +921,7 @@ export function Costs() {
                           provider={provider}
                           rows={byProvider.get(provider) ?? []}
                           budgetMonthlyCents={spendData?.summary.budgetCents ?? 0}
-                          totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
+                          totalInstanceSpendCents={spendData?.summary.spendCents ?? 0}
                           weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                           windowRows={windowSpendByProvider.get(provider) ?? []}
                           showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
@@ -946,7 +937,7 @@ export function Costs() {
                       provider={provider}
                       rows={byProvider.get(provider) ?? []}
                       budgetMonthlyCents={spendData?.summary.budgetCents ?? 0}
-                      totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
+                      totalInstanceSpendCents={spendData?.summary.spendCents ?? 0}
                       weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                       windowRows={windowSpendByProvider.get(provider) ?? []}
                       showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
@@ -981,7 +972,7 @@ export function Costs() {
                             row={row}
                             weekSpendCents={weekSpendByBiller.get(biller) ?? 0}
                             budgetMonthlyCents={spendData?.summary.budgetCents ?? 0}
-                            totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
+                            totalInstanceSpendCents={spendData?.summary.spendCents ?? 0}
                             providerRows={providerRows}
                           />
                         );
@@ -1000,7 +991,7 @@ export function Costs() {
                         row={row}
                         weekSpendCents={weekSpendByBiller.get(biller) ?? 0}
                         budgetMonthlyCents={spendData?.summary.budgetCents ?? 0}
-                        totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
+                        totalInstanceSpendCents={spendData?.summary.spendCents ?? 0}
                         providerRows={providerRows}
                       />
                     </TabsContent>

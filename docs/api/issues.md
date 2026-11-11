@@ -8,7 +8,7 @@ Issues are the unit of work in Paperclip. They support hierarchical relationship
 ## List Issues
 
 ```
-GET /api/companies/{companyId}/issues
+GET /api/issues
 ```
 
 Query parameters:
@@ -38,7 +38,7 @@ The response also includes:
 ## Create Issue
 
 ```
-POST /api/companies/{companyId}/issues
+POST /api/issues
 {
   "title": "Implement caching layer",
   "description": "Add Redis caching for hot queries",
@@ -172,7 +172,7 @@ Delete is operator-only in the current implementation.
 ### Upload
 
 ```
-POST /api/companies/{companyId}/issues/{issueId}/attachments
+POST /api/issues/{issueId}/attachments
 Content-Type: multipart/form-data
 ```
 

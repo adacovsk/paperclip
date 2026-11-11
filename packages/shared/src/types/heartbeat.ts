@@ -9,7 +9,6 @@ import type {
 
 export interface HeartbeatRun {
   id: string;
-  companyId: string;
   agentId: string;
   invocationSource: HeartbeatInvocationSource;
   triggerDetail: WakeupTriggerDetail | null;
@@ -44,7 +43,6 @@ export interface HeartbeatRun {
 
 export interface HeartbeatRunEvent {
   id: number;
-  companyId: string;
   runId: string;
   agentId: string;
   seq: number;
@@ -59,7 +57,6 @@ export interface HeartbeatRunEvent {
 
 export interface AgentRuntimeState {
   agentId: string;
-  companyId: string;
   adapterType: string;
   sessionId: string | null;
   sessionDisplayId?: string | null;
@@ -78,7 +75,6 @@ export interface AgentRuntimeState {
 
 export interface AgentTaskSession {
   id: string;
-  companyId: string;
   agentId: string;
   adapterType: string;
   taskKey: string;
@@ -92,7 +88,6 @@ export interface AgentTaskSession {
 
 export interface AgentWakeupRequest {
   id: string;
-  companyId: string;
   agentId: string;
   source: HeartbeatInvocationSource;
   triggerDetail: WakeupTriggerDetail | null;
@@ -114,9 +109,6 @@ export interface AgentWakeupRequest {
 
 export interface InstanceSchedulerHeartbeatAgent {
   id: string;
-  companyId: string;
-  companyName: string;
-  companyIssuePrefix: string;
   agentName: string;
   agentUrlKey: string;
   role: AgentRole;

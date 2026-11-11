@@ -28,7 +28,6 @@ export function extractLegacyPlanBody(description: string | null | undefined) {
 function mapIssueDocumentRow(
   row: {
     id: string;
-    companyId: string;
     issueId: string;
     key: string;
     title: string | null;
@@ -47,7 +46,6 @@ function mapIssueDocumentRow(
 ) {
   return {
     id: row.id,
-    companyId: row.companyId,
     issueId: row.issueId,
     key: row.key,
     title: row.title,
@@ -71,7 +69,6 @@ export function documentService(db: Db) {
         db
           .select({
             id: documents.id,
-            companyId: documents.companyId,
             issueId: issueDocuments.issueId,
             key: issueDocuments.key,
             title: documents.title,
@@ -93,7 +90,6 @@ export function documentService(db: Db) {
         db
           .select({
             id: documents.id,
-            companyId: documents.companyId,
             issueId: issueDocuments.issueId,
             key: issueDocuments.key,
             title: documents.title,
@@ -133,7 +129,6 @@ export function documentService(db: Db) {
       const rows = await db
         .select({
           id: documents.id,
-          companyId: documents.companyId,
           issueId: issueDocuments.issueId,
           key: issueDocuments.key,
           title: documents.title,
@@ -160,7 +155,6 @@ export function documentService(db: Db) {
       const row = await db
         .select({
           id: documents.id,
-          companyId: documents.companyId,
           issueId: issueDocuments.issueId,
           key: issueDocuments.key,
           title: documents.title,
@@ -187,7 +181,6 @@ export function documentService(db: Db) {
       return db
         .select({
           id: documentRevisions.id,
-          companyId: documentRevisions.companyId,
           documentId: documentRevisions.documentId,
           issueId: issueDocuments.issueId,
           key: issueDocuments.key,
@@ -218,7 +211,7 @@ export function documentService(db: Db) {
     }) => {
       const key = normalizeDocumentKey(input.key);
       const issue = await db
-        .select({ id: issues.id, companyId: issues.companyId })
+        .select({ id: issues.id })
         .from(issues)
         .where(eq(issues.id, input.issueId))
         .then((rows) => rows[0] ?? null);
@@ -230,7 +223,6 @@ export function documentService(db: Db) {
           const existing = await tx
             .select({
               id: documents.id,
-              companyId: documents.companyId,
               issueId: issueDocuments.issueId,
               key: issueDocuments.key,
               title: documents.title,
@@ -266,7 +258,6 @@ export function documentService(db: Db) {
             const [revision] = await tx
               .insert(documentRevisions)
               .values({
-                companyId: issue.companyId,
                 documentId: existing.id,
                 revisionNumber: nextRevisionNumber,
                 body: input.body,
@@ -319,7 +310,6 @@ export function documentService(db: Db) {
           const [document] = await tx
             .insert(documents)
             .values({
-              companyId: issue.companyId,
               title: input.title ?? null,
               format: input.format,
               latestBody: input.body,
@@ -337,7 +327,6 @@ export function documentService(db: Db) {
           const [revision] = await tx
             .insert(documentRevisions)
             .values({
-              companyId: issue.companyId,
               documentId: document.id,
               revisionNumber: 1,
               body: input.body,
@@ -354,7 +343,6 @@ export function documentService(db: Db) {
             .where(eq(documents.id, document.id));
 
           await tx.insert(issueDocuments).values({
-            companyId: issue.companyId,
             issueId: issue.id,
             documentId: document.id,
             key,
@@ -366,7 +354,6 @@ export function documentService(db: Db) {
             created: true as const,
             document: {
               id: document.id,
-              companyId: issue.companyId,
               issueId: issue.id,
               key,
               title: document.title,
@@ -397,7 +384,6 @@ export function documentService(db: Db) {
         const existing = await tx
           .select({
             id: documents.id,
-            companyId: documents.companyId,
             issueId: issueDocuments.issueId,
             key: issueDocuments.key,
             title: documents.title,

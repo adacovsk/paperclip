@@ -43,8 +43,7 @@ import { logger } from "../middleware/logger.js";
  */
 const OPERATION_CAPABILITIES: Record<string, readonly PluginCapability[]> = {
   // Data read operations
-  "companies.list": ["companies.read"],
-  "companies.get": ["companies.read"],
+  "instance.get": ["instance.read"],
   "projects.list": ["projects.read"],
   "projects.get": ["projects.read"],
   "project.workspaces.list": ["project.workspaces.read"],

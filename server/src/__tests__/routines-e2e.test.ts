@@ -7,13 +7,12 @@ import {
   activityLog,
   agentWakeupRequests,
   agents,
-  companies,
-  companyMemberships,
   createDb,
   heartbeatRunEvents,
   heartbeatRuns,
   instanceSettings,
   issues,
+  memberships,
   principalPermissionGrants,
   projects,
   routineRuns,
@@ -49,16 +48,15 @@ vi.mock("../services/index.js", async () => {
             if (!issueId) return null;
 
             const issue = await db
-              .select({ companyId: issues.companyId })
+              .select({ id: issues.id })
               .from(issues)
               .where(eq(issues.id, issueId))
-              .then((rows: Array<{ companyId: string }>) => rows[0] ?? null);
+              .then((rows: Array<{ id: string }>) => rows[0] ?? null);
             if (!issue) return null;
 
             const queuedRunId = randomUUID();
             await db.insert(heartbeatRuns).values({
               id: queuedRunId,
-              companyId: issue.companyId,
               agentId,
               invocationSource: wakeupOpts?.source ?? "assignment",
               triggerDetail: wakeupOpts?.triggerDetail ?? null,
@@ -106,11 +104,10 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await db.delete(agentWakeupRequests);
     await db.delete(issues);
     await db.delete(principalPermissionGrants);
-    await db.delete(companyMemberships);
+    await db.delete(memberships);
     await db.delete(routines);
     await db.delete(projects);
     await db.delete(agents);
-    await db.delete(companies);
     await db.delete(instanceSettings);
   });
 
@@ -131,22 +128,26 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   }
 
   async function seedFixture() {
-    const companyId = randomUUID();
     const agentId = randomUUID();
     const projectId = randomUUID();
     const userId = randomUUID();
-    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix,
-      requireOperatorApprovalForNewAgents: false,
-    });
+    // The singleton row outlives per-test cleanup, so seed it idempotently.
+    await db
+      .insert(instanceSettings)
+      .values({
+        singletonKey: "default",
+        name: "Paperclip",
+        issuePrefix: "TST",
+        requireOperatorApprovalForNewAgents: false,
+      })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: { name: "Paperclip", issuePrefix: "TST", requireOperatorApprovalForNewAgents: false },
+      });
 
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "CodexCoder",
       role: "engineer",
       status: "active",
@@ -158,35 +159,33 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
 
     await db.insert(projects).values({
       id: projectId,
-      companyId,
       name: "Routine Project",
       status: "in_progress",
     });
 
     const access = accessService(db);
-    const membership = await access.ensureMembership(companyId, "user", userId, "owner", "active");
+    const membership = await access.ensureMembership("user", userId, "owner", "active");
     await access.setMemberPermissions(
-      companyId,
       membership.id,
       [{ permissionKey: "tasks:assign" }],
       userId,
     );
 
-    return { companyId, agentId, projectId, userId };
+    return { agentId, projectId, userId };
   }
 
   it("supports creating, scheduling, and manually running a routine through the API", async () => {
-    const { companyId, agentId, projectId, userId } = await seedFixture();
+    const { agentId, projectId, userId } = await seedFixture();
     const app = await createApp({
       type: "operator",
       userId,
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const createRes = await request(app)
-      .post(`/api/companies/${companyId}/routines`)
+      .post("/api/routines")
       .send({
         projectId,
         title: "Daily standup prep",
@@ -263,8 +262,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       .select({
         action: activityLog.action,
       })
-      .from(activityLog)
-      .where(eq(activityLog.companyId, companyId));
+      .from(activityLog);
 
     expect(actions.map((entry) => entry.action)).toEqual(
       expect.arrayContaining([

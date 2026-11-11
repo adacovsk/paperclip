@@ -47,7 +47,7 @@ export const WEBHOOK_KEYS = {
 
 export const TOOL_NAMES = {
   echo: "echo",
-  companySummary: "company-summary",
+  instanceSummary: "instance-summary",
   createIssue: "create-issue",
 } as const;
 

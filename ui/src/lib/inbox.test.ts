@@ -35,7 +35,6 @@ Object.defineProperty(globalThis, "localStorage", {
 function makeApproval(status: Approval["status"]): Approval {
   return {
     id: `approval-${status}`,
-    companyId: "company-1",
     type: "hire_agent",
     requestedByAgentId: null,
     requestedByUserId: null,
@@ -66,7 +65,6 @@ function makeJoinRequest(id: string): JoinRequest {
   return {
     id,
     inviteId: "invite-1",
-    companyId: "company-1",
     requestType: "human",
     status: "pending_approval",
     requestEmailSnapshot: null,
@@ -91,7 +89,6 @@ function makeJoinRequest(id: string): JoinRequest {
 function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, agentId = "agent-1"): HeartbeatRun {
   return {
     id,
-    companyId: "company-1",
     agentId,
     invocationSource: "assignment",
     triggerDetail: null,
@@ -128,7 +125,6 @@ function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, 
 function makeIssue(id: string, isUnreadForMe: boolean): Issue {
   return {
     id,
-    companyId: "company-1",
     projectId: null,
     projectWorkspaceId: null,
     goalId: null,
@@ -168,7 +164,6 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
 }
 
 const dashboard: DashboardSummary = {
-  companyId: "company-1",
   agents: {
     active: 1,
     running: 0,

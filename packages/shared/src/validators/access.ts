@@ -7,13 +7,13 @@ import {
   PERMISSION_KEYS,
 } from "../constants.js";
 
-export const createCompanyInviteSchema = z.object({
+export const createInviteSchema = z.object({
   allowedJoinTypes: z.enum(INVITE_JOIN_TYPES).default("both"),
   defaultsPayload: z.record(z.string(), z.unknown()).optional().nullable(),
   agentMessage: z.string().max(4000).optional().nullable(),
 });
 
-export type CreateCompanyInvite = z.infer<typeof createCompanyInviteSchema>;
+export type CreateInvite = z.infer<typeof createInviteSchema>;
 
 export const createOpenClawInvitePromptSchema = z.object({
   agentMessage: z.string().max(4000).optional().nullable(),
@@ -63,7 +63,6 @@ export const createCliAuthChallengeSchema = z.object({
   command: z.string().min(1).max(240),
   clientName: z.string().max(120).optional().nullable(),
   requestedAccess: operatorCliAuthAccessLevelSchema.default("operator"),
-  requestedCompanyId: z.string().uuid().optional().nullable(),
 });
 
 export type CreateCliAuthChallenge = z.infer<typeof createCliAuthChallengeSchema>;
@@ -85,8 +84,8 @@ export const updateMemberPermissionsSchema = z.object({
 
 export type UpdateMemberPermissions = z.infer<typeof updateMemberPermissionsSchema>;
 
-export const updateUserCompanyAccessSchema = z.object({
-  companyIds: z.array(z.string().uuid()).default([]),
+export const updateUserAccessSchema = z.object({
+  hasAccess: z.boolean(),
 });
 
-export type UpdateUserCompanyAccess = z.infer<typeof updateUserCompanyAccessSchema>;
+export type UpdateUserAccess = z.infer<typeof updateUserAccessSchema>;
