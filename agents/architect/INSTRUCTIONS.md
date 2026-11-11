@@ -66,7 +66,7 @@ on: a blocked task drops out of the pipeline until someone unblocks it.
 A `Verify: origin/main at <sha>` task with no parent and no `task/AA-*` branch (operator-filed) has no Landing and no Coordinator to close it. The Dispatcher's missed-wake sweep reads an assigned stage with no live run as a missed wake and re-toggles it, so a result left on an open task re-fires an Architect run every couple of hours. After posting `pipeline/verify` and the result comment, in a separate call:
 
 - **Green** → PATCH the task `done`.
-- **Red** → PATCH `done` once the `op/main-fix-<sha>` PR is open and named in the comment; otherwise PATCH `blocked` unassigned with a first comment line `Held: operator — <the ruling or fix needed>`.
+- **Red** → PATCH `done` once the `op/main-fix-<sha>` PR is open and named in the comment; otherwise PATCH `{"hold": {"kind": "operator", "note": "<the ruling or fix needed>"}}`, which parks it `blocked` and unassigned.
 
 Re-GET and confirm the status before exiting. This path skips Step 0 (there is no worktree or task branch to check).
 

@@ -337,72 +337,6 @@ class RebaseDispatch(unittest.TestCase):
 
 
 class Holds(unittest.TestCase):
-    def test_a_legacy_hold_releases_only_once_its_blocker_closed(self):
-        self.assertEqual(dispatch.held_closed("Held: waiting on AA-12 — files"), (("AA-12",), "closed"))
-        self.assertIsNone(dispatch.held_closed("Held: waiting on contended edit surface — x"))
-        in_review = {"identifier": "AA-12", "status": "in_review"}
-        self.assertIsNone(dispatch.hold_resolved(in_review, "closed", True))
-        self.assertIn("cancelled", dispatch.hold_resolved({"identifier": "AA-12", "status": "cancelled"}, "closed", False))
-
-    def test_parses_only_the_release_condition_forms(self):
-        self.assertEqual(dispatch.held_until("Held: until AA-12 merges — builds on its seam"), (("AA-12",), "merge"))
-        self.assertEqual(dispatch.held_until("Held: until AA-12 opens its PR — files"), (("AA-12",), "pr"))
-        self.assertIsNone(dispatch.held_until("Held: waiting on AA-12 — files"))
-        self.assertIsNone(dispatch.held_until("Held: operator — design call"))
-
-    def test_parses_a_hold_on_several_blockers(self):
-        self.assertEqual(
-            dispatch.held_until("Held: until AA-12 and AA-13 merge — one slice at a time"),
-            (("AA-12", "AA-13"), "merge"),
-        )
-        self.assertEqual(
-            dispatch.held_until("Held: until AA-1, AA-2, and AA-3 open their PRs — files"),
-            (("AA-1", "AA-2", "AA-3"), "pr"),
-        )
-
-    def test_a_re_hold_after_our_release_is_final(self):
-        comments = [
-            {"createdAt": "1", "body": "Held: until AA-9 opens its PR — files"},
-            {"createdAt": "2", "body": "Released: AA-9 has an open PR.\n\n> Held: until AA-9 opens its PR"},
-            {"createdAt": "3", "body": "Held: until AA-9 opens its PR — still contended"},
-        ]
-        self.assertTrue(dispatch.overruled(comments, (("AA-9",), "pr")))
-
-    def test_a_release_on_another_blocker_does_not_count(self):
-        comments = [
-            {"createdAt": "1", "body": "Released: AA-8 is done.\n\n> Held: until AA-8 merges"},
-            {"createdAt": "2", "body": "Held: until AA-9 opens its PR — files"},
-        ]
-        self.assertFalse(dispatch.overruled(comments, (("AA-9",), "pr")))
-
-    def test_a_blocker_only_mentioned_in_the_quoted_hold_does_not_count(self):
-        comments = [
-            {"createdAt": "1", "body": "Released: AA-8 is done.\n\n> Held: until AA-8 merges — AA-9 also edits it"},
-            {"createdAt": "2", "body": "Held: until AA-9 merges — builds on its seam"},
-        ]
-        self.assertFalse(dispatch.overruled(comments, (("AA-9",), "merge")))
-
-    def test_a_re_hold_on_a_stricter_condition_stays_releasable(self):
-        comments = [
-            {"createdAt": "1", "body": "Released: AA-9 has opened its PR.\n\n> Held: until AA-9 opens its PR — files"},
-            {"createdAt": "2", "body": "Held: until AA-9 merges — builds on its seam"},
-        ]
-        self.assertFalse(dispatch.overruled(comments, (("AA-9",), "merge")))
-
-    def test_a_release_quoting_no_parseable_hold_does_not_count(self):
-        comments = [
-            {"createdAt": "1", "body": "Released: AA-9 is done.\n\n> Held: operator — design call"},
-            {"createdAt": "2", "body": "Held: until AA-9 merges"},
-        ]
-        self.assertFalse(dispatch.overruled(comments, (("AA-9",), "merge")))
-
-    def test_a_legacy_hold_re_held_after_release_is_final(self):
-        comments = [
-            {"createdAt": "1", "body": "Released: AA-9 is done.\n\n> Held: waiting on AA-9 — files"},
-            {"createdAt": "2", "body": "Held: waiting on AA-9 — still contended"},
-        ]
-        self.assertTrue(dispatch.overruled(comments, (("AA-9",), "closed")))
-
     def test_a_re_hold_waits_out_an_open_pr_but_not_a_closed_blocker(self):
         open_pr = {"AA-9": {"identifier": "AA-9", "status": "in_review"}}
         self.assertIn("PR", dispatch.hold_release(("AA-9",), "pr", open_pr, {"AA-9"}, re_held=False))
@@ -419,9 +353,6 @@ class Holds(unittest.TestCase):
             dispatch.hold_release(("AA-1", "AA-2"), "merge", blockers, set(), re_held=False),
             "AA-1 is done; AA-2 is cancelled",
         )
-
-    def test_a_first_hold_is_not_overruled(self):
-        self.assertFalse(dispatch.overruled([{"createdAt": "1", "body": "Held: until AA-9 merges"}], (("AA-9",), "merge")))
 
     def test_merge_hold_waits_for_the_merge(self):
         in_review = {"identifier": "A-1", "status": "in_review"}
@@ -462,7 +393,7 @@ class UnheldEscalations(unittest.TestCase):
         comments = [self.comment("1", "Red twice.\n\nPAPERCLIP-ESCALATE: pick a scope", None)]
         self.assertEqual(
             dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "Held: planner — AA-20 escalated: pick a scope",
+            "AA-20 escalated: pick a scope",
         )
 
     def test_a_stage_re_dispatched_since_it_was_read_is_not_routed(self):
@@ -482,19 +413,20 @@ class UnheldEscalations(unittest.TestCase):
         comments = [self.comment("2", "Two worn-item tests fail.\n\nPAPERCLIP-ESCALATE: pick a scope for the Epaulet slot")]
         self.assertEqual(
             dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "Held: planner — AA-20 escalated: pick a scope for the Epaulet slot",
+            "AA-20 escalated: pick a scope for the Epaulet slot",
         )
 
     def test_routes_a_prose_escalation_by_its_first_line(self):
         comments = [self.comment("2", "What it needs: an operator to land it.\nDetail follows.")]
         self.assertEqual(
             dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "Held: planner — AA-20 escalated: What it needs: an operator to land it.",
+            "AA-20 escalated: What it needs: an operator to land it.",
         )
 
     def test_a_held_stage_is_owned(self):
-        comments = [self.comment("1", "PAPERCLIP-ESCALATE: x"), self.comment("2", "Held: operator — needs a ruling")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+        comments = [self.comment("1", "PAPERCLIP-ESCALATE: x")]
+        held = {**self.VERIFY, "hold": {"kind": "operator", "blockers": [], "note": "needs a ruling"}}
+        self.assertIsNone(dispatch.unheld_escalation(held, "AA-2", comments, True, set(), self.STAGE_AGENTS))
 
     def test_a_conflict_is_the_rebase_lanes(self):
         comments = [self.comment("1", "PAPERCLIP-ESCALATE: conflict with main")]
@@ -556,28 +488,35 @@ class OrphanStages(unittest.TestCase):
         self.assertEqual(api.reads, ["merged"])
 
 
-class PlannerHolds(unittest.TestCase):
-    """A `Held: planner` hold reaches the Planner as an assignment, never as a blocked row."""
+def hold(kind, *blockers, note=None, reheld=False):
+    return {"kind": kind, "blockers": [{"id": b, "identifier": b} for b in blockers], "note": note, "reheld": reheld}
+
+
+class ReleaseHolds(unittest.TestCase):
+    """The release sweep reads each parked task's `hold`, and nothing from its comments."""
 
     class Api:
         dry_run = False
 
-        def __init__(self, comments, statuses=None):
-            self.comments = comments
+        def __init__(self, holds, statuses=None):
+            self.holds = holds
             self.statuses = statuses or {}
             self.writes = []
+            self.reads = []
 
         def issues(self, **query):
-            return [{"id": i, "identifier": f"AA-{i}", "status": "blocked"} for i in self.comments]
+            return [{"id": i, "identifier": f"AA-{i}", "status": "blocked", "hold": h} for i, h in self.holds.items()]
 
         def get(self, path):
-            _, _, ident, *rest = path.split("/")
-            if rest:
-                return self.comments[ident]
+            self.reads.append(path)
+            ident = path.split("/")[2]
             return {"identifier": ident, "status": self.statuses.get(ident, "in_review")}
 
         def set_status(self, issue, body, comment, what):
             self.writes.append((issue["identifier"], body, comment))
+
+        def hold(self, issue, kind, what, blockers=(), note=None, **fields):
+            self.writes.append((issue["identifier"], {**fields, "hold": {"kind": kind, "note": note}}, None))
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -588,65 +527,61 @@ class PlannerHolds(unittest.TestCase):
         dispatch.STATE_DIR = self.saved
         self.tmp.cleanup()
 
-    def test_parses_only_the_planner_form(self):
-        self.assertTrue(dispatch.held_planner("Held: planner — no panache state on main"))
-        self.assertFalse(dispatch.held_planner("Held: operator — paperclip source fix"))
-        self.assertFalse(dispatch.held_planner("Released: x.\n\n> Held: planner — y"))
-
-    def test_a_planner_hold_is_assigned_to_the_planner_as_todo(self):
+    def test_a_planner_hold_is_assigned_to_the_planner_as_todo_with_the_hold_standing(self):
         api = self.Api({
-            "1": [{"createdAt": "1", "body": "Held: planner — no attacker-side seam\n\ndetail"}],
-            "2": [{"createdAt": "1", "body": "Held: operator — paperclip source fix"}],
+            "1": hold("planner", note="no attacker-side seam"),
+            "2": hold("operator", note="paperclip source fix"),
         })
         self.assertEqual(dispatch.release_holds(api, {}, "planner-id"), 0)
         self.assertEqual(len(api.writes), 1)
-        ident, body, comment = api.writes[0]
+        ident, body, _ = api.writes[0]
         self.assertEqual(ident, "AA-1")
-        self.assertEqual(body, {"status": "todo", "assigneeAgentId": "planner-id"})
-        self.assertTrue(comment.startswith("Held: planner — no attacker-side seam\n"))
+        self.assertEqual(body["status"], "todo")
+        self.assertEqual(body["assigneeAgentId"], "planner-id")
+        self.assertEqual(body["hold"], {"kind": "planner", "note": "no attacker-side seam"})
+        self.assertTrue(body["comment"].startswith("Held: planner — no attacker-side seam\n"))
 
-    def test_a_planner_re_hold_in_an_until_form_is_not_routed_back(self):
-        api = self.Api({"1": [
-            {"createdAt": "1", "body": "Held: planner — no seam"},
-            {"createdAt": "2", "body": "Held: until AA-7 merges — files the seam"},
-        ]})
+    def test_a_planner_re_hold_on_a_release_condition_is_not_routed_back(self):
+        api = self.Api({"1": hold("until_merge", "AA-7", note="files the seam")})
         dispatch.release_holds(api, {}, "planner-id")
-        self.assertFalse(any(b.get("assigneeAgentId") for _, b, _ in api.writes))
+        self.assertEqual(api.writes, [])
 
-    def test_a_hold_followed_by_another_comment_is_still_released(self):
-        api = self.Api({"1": [
-            {"createdAt": "1", "body": "Held: until AA-7 merges — builds on its seam"},
-            {"createdAt": "2", "body": "Planner fire summary: nothing to file"},
-        ]}, {"AA-7": "done"})
+    def test_a_met_hold_goes_back_to_backlog_and_no_comment_is_read(self):
+        api = self.Api({"1": hold("until_merge", "AA-7", note="builds on its seam")}, {"AA-7": "done"})
         self.assertEqual(dispatch.release_holds(api, {}), 1)
         ident, body, comment = api.writes[0]
         self.assertEqual((ident, body), ("AA-1", {"status": "backlog"}))
-        self.assertIn("> Held: until AA-7 merges", comment)
+        self.assertTrue(comment.startswith("Released: AA-7 is done."))
+        self.assertIn("> Held until AA-7 merged — builds on its seam", comment)
+        self.assertEqual(api.reads, ["/issues/AA-7"])
 
-    def test_the_newest_hold_is_the_one_in_force(self):
-        api = self.Api({"1": [
-            {"createdAt": "2", "body": "Held: until AA-8 merges — re-held"},
-            {"createdAt": "1", "body": "Held: until AA-7 merges — first hold"},
-        ]}, {"AA-7": "done"})
+    def test_a_parked_task_with_no_hold_is_left(self):
+        api = self.Api({"1": None})
         self.assertEqual(dispatch.release_holds(api, {}), 0)
+        self.assertEqual(api.writes, [])
+
+    def test_a_hold_naming_no_release_condition_is_reported(self):
+        api = self.Api({"1": hold("other", note="until the nightly is green")})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(dispatch.release_holds(api, {}), 0)
+        self.assertEqual(api.writes, [])
+        self.assertIn("name no release condition; left to the Coordinator: AA-1", out.getvalue())
+
+    def test_a_pr_hold_releases_on_the_open_pr(self):
+        api = self.Api({"1": hold("until_pr", "AA-7")})
+        self.assertEqual(dispatch.release_holds(api, {"task/AA-7": "a" * 40}), 1)
+        self.assertIn("AA-7 has opened its PR", api.writes[0][2])
 
     def test_a_re_hold_on_a_closed_blocker_is_released_whoever_wrote_it(self):
-        api = self.Api({"1": [
-            {"createdAt": "1", "body": "Held: until AA-7 opens its PR — files"},
-            {"createdAt": "2", "body": "Released: AA-7 has opened its PR.\n\n> Held: until AA-7 opens its PR — files"},
-            {"createdAt": "3", "body": "Held: until AA-7 opens its PR — 3 live writers"},
-        ]}, {"AA-7": "done"})
+        api = self.Api({"1": hold("until_pr", "AA-7", note="3 live writers", reheld=True)}, {"AA-7": "done"})
         self.assertEqual(dispatch.release_holds(api, {}), 1)
         ident, body, comment = api.writes[0]
         self.assertEqual((ident, body), ("AA-1", {"status": "backlog"}))
         self.assertTrue(comment.startswith("Released: AA-7 is done."))
 
     def test_a_re_hold_on_a_blocker_with_its_pr_open_is_named_not_released(self):
-        api = self.Api({"1": [
-            {"createdAt": "1", "body": "Held: until AA-7 opens its PR — files"},
-            {"createdAt": "2", "body": "Released: AA-7 has opened its PR.\n\n> Held: until AA-7 opens its PR — files"},
-            {"createdAt": "3", "body": "Held: until AA-7 opens its PR — still contended"},
-        ]})
+        api = self.Api({"1": hold("until_pr", "AA-7", note="still contended", reheld=True)})
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(dispatch.release_holds(api, {"task/AA-7": "a" * 40}), 0)
@@ -654,10 +589,10 @@ class PlannerHolds(unittest.TestCase):
         self.assertIn("with the PR open, so held until the merge: AA-1", out.getvalue())
 
     def test_a_hold_on_several_blockers_waits_for_all_of_them(self):
-        comments = {"1": [{"createdAt": "1", "body": "Held: until AA-7 and AA-8 merge — one slice at a time"}]}
-        self.assertEqual(dispatch.release_holds(self.Api(comments, {"AA-7": "done"}), {}), 0)
+        holds = {"1": hold("until_merge", "AA-7", "AA-8", note="one slice at a time")}
+        self.assertEqual(dispatch.release_holds(self.Api(holds, {"AA-7": "done"}), {}), 0)
         dispatch.STATE_DIR.joinpath("holds.json").unlink(missing_ok=True)
-        api = self.Api(comments, {"AA-7": "done", "AA-8": "cancelled"})
+        api = self.Api(holds, {"AA-7": "done", "AA-8": "cancelled"})
         self.assertEqual(dispatch.release_holds(api, {}), 1)
         self.assertIn("AA-7 is done; AA-8 is cancelled", api.writes[0][2])
 

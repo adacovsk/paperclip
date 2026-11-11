@@ -11,7 +11,7 @@ task's files. The ci-fix then lands and the tasks are re-dispatched. The Archite
 machine reads **present, `1`** as a finished verdict and never reaches **absent + no build**,
 which is the only branch that launches a build. So a re-dispatch after the fix builds nothing,
 reads the same red, and counts toward the cap. Two re-dispatches later the task sits in
-`Held: operator` with its branch unlanded. Nothing is wrong with the branch, and the failure it
+an `operator` hold with its branch unlanded. Nothing is wrong with the branch, and the failure it
 is held for is already gone from `main`.
 
 This hit 24 verifies in one day, across two red-main episodes (the lib ratchets, then the

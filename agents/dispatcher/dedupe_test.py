@@ -103,17 +103,26 @@ class Plan(unittest.TestCase):
         self.assertEqual([[i["identifier"] for i in x] for x in g], [["AA-1", "AA-2", "AA-4"]])
 
 
+def held_on(*blockers):
+    return {"kind": "until_pr", "blockers": [{"id": b, "identifier": b} for b in blockers], "note": "one at a time"}
+
+
 class Repoint(unittest.TestCase):
     def test_a_hold_on_a_cancelled_copy_moves_to_the_survivor(self):
-        out = dedupe.repoint("Held: until AA-10 opens its PR — one at a time\n\ndetail", {"AA-10": "AA-20"})
-        self.assertTrue(out.startswith("Held: until AA-20 opens its PR — one at a time\n"))
-        self.assertIn("AA-10 cancelled", out)
+        self.assertEqual(
+            dedupe.repoint(held_on("AA-10", "AA-11"), {"AA-10": "AA-20"}),
+            (["AA-20", "AA-11"], ["AA-10"]),
+        )
 
-    def test_ids_are_matched_whole(self):
-        self.assertIsNone(dedupe.repoint("Held: until AA-100 merges", {"AA-10": "AA-1"}))
+    def test_two_copies_moved_onto_one_survivor_are_named_once(self):
+        blockers, hits = dedupe.repoint(held_on("AA-10", "AA-11"), {"AA-10": "AA-20", "AA-11": "AA-20"})
+        self.assertEqual((blockers, hits), (["AA-20"], ["AA-10", "AA-11"]))
 
-    def test_a_non_hold_comment_is_left(self):
-        self.assertIsNone(dedupe.repoint("Released: AA-10 is done.", {"AA-10": "AA-1"}))
+    def test_a_hold_on_other_tasks_is_left(self):
+        self.assertIsNone(dedupe.repoint(held_on("AA-100"), {"AA-10": "AA-1"}))
+
+    def test_a_task_with_no_hold_is_left(self):
+        self.assertIsNone(dedupe.repoint(None, {"AA-10": "AA-1"}))
 
 
 if __name__ == "__main__":

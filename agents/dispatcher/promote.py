@@ -303,8 +303,8 @@ def task_status(api, ident: str, cache: dict[str, str | None]) -> str | None:
     return cache[ident]
 
 
-def hold_line(v: Verdict) -> str:
-    return f"Held: until {v.blocker} {v.hold_kind} — {v.reason}"
+#: A verdict's release condition as the kind of hold that carries it.
+HOLD_KINDS = {"merges": "until_merge", "opens its PR": "until_pr"}
 
 
 def promote(api, agents: dict, project: Path, pr_heads: dict[str, str]) -> tuple[int, int]:
@@ -353,8 +353,8 @@ def promote(api, agents: dict, project: Path, pr_heads: dict[str, str]) -> tuple
                 api.set_status(issue, {"status": "cancelled"}, f"Cancelled at promotion: {v.reason}.",
                                f"promote {ident}: cancel ({v.reason[:80]})")
             elif v.action == "hold":
-                api.set_status(issue, {"status": "blocked", "assigneeAgentId": None}, hold_line(v),
-                               f"promote {ident}: hold ({v.reason[:80]})")
+                api.hold(issue, HOLD_KINDS[v.hold_kind], f"promote {ident}: hold ({v.reason[:80]})",
+                         blockers=(v.blocker,), note=v.reason)
             elif allocate_and_assign(api, agents, project, issue, body):
                 promoted += 1
                 for token in candidate_paths(body):
@@ -377,9 +377,7 @@ def allocate_and_assign(api, agents: dict, project: Path, issue: dict, body: str
     else:
         reason = "worktree is on the wrong branch"
     if not ok:
-        api.set_status(issue, {"status": "blocked", "assigneeAgentId": None},
-                       f"Held: worktree allocation failed — {reason}",
-                       f"promote {ident}: worktree allocation failed")
+        api.hold(issue, "worktree", f"promote {ident}: worktree allocation failed", note=reason)
         return False
     if not re.search(r"(?m)^worktree:", body):
         body = f"worktree: {wt}\nbranch:   {branch}\n\n{body}"

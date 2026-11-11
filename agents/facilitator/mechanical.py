@@ -422,8 +422,9 @@ def wedged(live_runs: list[dict], now: float) -> list[dict]:
 def file_wedges(api, found: list[dict], filed_before: list[dict]) -> list[str]:
     """One class-keyed operator filing per agent (INSTRUCTIONS §Filing): an open one is
     left alone, a closed one is reopened as a recurrence, otherwise a new one is filed."""
-    held = ("Held: operator — a server restart clears the wedged queue; a recurrence means "
-            "the guard bounding it regressed.")
+    note = "a server restart clears the wedged queue; a recurrence means the guard bounding it regressed."
+    hold = {"kind": "operator", "note": note}
+    held = f"Held: operator — {note}"
     filed = []
     for a in found:
         prefix = f"{WEDGE_TITLE}{a['agentName']} "
@@ -432,7 +433,7 @@ def file_wedges(api, found: list[dict], filed_before: list[dict]) -> list[str]:
             continue
         occurrence = f"Oldest queued run created {a['oldest']}; {a['queued']} queued, none running."
         if mine:
-            api.set_status(mine[-1], {"status": "blocked"},
+            api.set_status(mine[-1], {"hold": hold},
                            f"{held}\n\nRecurrence: {occurrence} The closure before this one cleared the "
                            "queue, not the mechanism.",
                            f"wedge   {a['agentName']}: reopen {mine[-1]['identifier']} as a recurrence")
@@ -445,7 +446,8 @@ def file_wedges(api, found: list[dict], filed_before: list[dict]) -> list[str]:
                                 "`PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS`."},
                 f"wedge   {a['agentName']}: file for the operator")
             if created:
-                api.write("POST", f"/issues/{created['id']}/comments", {"body": f"{held}\n\n{occurrence}"},
+                api.write("PATCH", f"/issues/{created['id']}",
+                          {"hold": hold, "comment": f"{held}\n\n{occurrence}"},
                           f"wedge   {a['agentName']}: hold")
         filed.append(a["agentName"])
     return filed

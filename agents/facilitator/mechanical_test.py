@@ -208,7 +208,8 @@ class FileWedges(unittest.TestCase):
         m.file_wedges(api, [self.W], [])
         self.assertTrue(api.calls[0][2]["title"].startswith("[class:wedged-dispatcher] Worker "))
         self.assertEqual(api.calls[0][2]["status"], "blocked")
-        self.assertTrue(api.calls[1][2]["body"].startswith("Held: operator"))
+        self.assertEqual(api.calls[1][2]["hold"]["kind"], "operator")
+        self.assertTrue(api.calls[1][2]["comment"].startswith("Held: operator"))
 
     def test_an_open_filing_is_not_filed_again(self):
         api = FakeApi()
@@ -219,7 +220,7 @@ class FileWedges(unittest.TestCase):
         api = FakeApi()
         m.file_wedges(api, [self.W], [self.filing("done")])
         kind, ident, body, comment = api.calls[0]
-        self.assertEqual((kind, ident, body["status"]), ("STATUS", "X-1", "blocked"))
+        self.assertEqual((kind, ident, body["hold"]["kind"]), ("STATUS", "X-1", "operator"))
         self.assertTrue(comment.startswith("Held: operator") and "Recurrence:" in comment)
 
 
