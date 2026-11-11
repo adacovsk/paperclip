@@ -223,8 +223,7 @@ a change to how the pipeline runs, not a correction to this table.
   list that *defines* a procedure keeps its numbers. The exceptions are the stable
   `Step 0` precondition-gate convention, and references into versioned external
   specs.
-- **No private references.** This directory is public and ships in the npm
-  package. Don't write tracker ids, PR or issue numbers from the target project,
+- **No private references.** This directory is public. Don't write tracker ids, PR or issue numbers from the target project,
   its repository name, or its module filenames. Keep the lesson and drop the
   identifier. `pnpm check:agent-privacy` enforces this by shape. A line that is
   genuinely generic opts out with `<!-- privacy-ok: why -->`.

@@ -128,7 +128,7 @@ Each of these is a failure the pipeline hit and this fork then closed:
 - Bearer tokens are redacted from logs.
 - The hardcoded JWT secret fallback is removed.
 - `agents:read_config` adds a read-only view of agent configuration.
-- `pnpm check:agent-privacy` keeps private references out of `agents/**`, which is public and ships in the npm package.
+- `pnpm check:agent-privacy` keeps private references out of `agents/**`, which is public.
 
 ### Removed
 
@@ -138,8 +138,8 @@ Each of these is a failure the pipeline hit and this fork then closed:
 
 ## Quickstart
 
-Run it from source. `npx paperclipai` installs **upstream's** published package, not
-this fork.
+Run it from source. This build is not published to npm: `npx paperclipai` installs
+**upstream's** package, not this one.
 
 ```bash
 git clone https://github.com/adacovsk/paperclip.git
@@ -187,8 +187,8 @@ That is also what `pr.yml` runs on every PR to `master`, after a policy job that
 rejects lockfile-only edits. [`CLAUDE.md`](CLAUDE.md) has the repo's rules, and
 [`doc/DEVELOPING.md`](doc/DEVELOPING.md) the full development guide.
 
-When using `gh` from this checkout, always pass `--repo adacovsk/paperclip`. A bare
-`gh` resolves to upstream and will open your PR there.
+If your clone has a remote pointing at upstream, pass `--repo adacovsk/paperclip` to
+every `gh` command. `gh` prefers a remote named `upstream` and will open your PR there.
 
 ## License
 
