@@ -10,6 +10,7 @@ import tempfile
 import time
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location("dispatch", Path(__file__).with_name("dispatch.py"))
@@ -101,6 +102,41 @@ class ReviewerStage(unittest.TestCase):
     def test_open_pr_wins_over_a_re_review(self):
         stages = [child("Verify: T-1", "done", "1", "verify"), child("Review: T-1", "done", "2", "review")]
         self.assertEqual(decide(parent(), stages, CLEAN, pr_head="b" * 40).kind, "skip")
+
+    def test_an_open_pr_that_conflicts_with_main_is_owed_a_fresh_verify(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        conflicted = GitState(exists=True, ahead=2, head="a" * 40, changed=("src/x.rs",), conflicts=("src/x.rs",))
+        decision = decide(parent(), stages, conflicted, pr_head="a" * 40)
+        self.assertEqual((decision.kind, decision.reason), ("verify", dispatch.PR_CONFLICT))
+
+    def test_a_schema_only_conflict_on_an_open_pr_is_reverified_too(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        schemas = GitState(exists=True, ahead=2, changed=("src/x.rs",), conflicts=("assets/schemas/a.schema.json",))
+        self.assertEqual(decide(parent(), stages, schemas, pr_head="a" * 40).reason, dispatch.PR_CONFLICT)
+
+    def test_a_conflicting_open_pr_is_left_alone_when_it_cannot_be_resolved_here(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        base = dict(exists=True, ahead=2, changed=("src/x.rs",), conflicts=("src/x.rs",))
+        for git, who in (
+            (GitState(**base, dirty=True), "a dirty tree is someone's unfinished edit"),
+            (GitState(**base, deleted_on_main=True), "modify/delete is re-filed"),
+        ):
+            self.assertEqual(decide(parent(), stages, git, pr_head="a" * 40).reason, "PR open", who)
+        held = decide(parent(status="blocked"), stages, GitState(**base), pr_head="a" * 40)
+        self.assertEqual(held.reason, "PR open", "a blocked parent carries someone's hold")
+
+    def test_a_conflicting_open_pr_goes_to_the_coordinator_past_the_cap(self):
+        verifies = [child(f"Verify: T-1 #{n}", "done", str(n + 2), "verify") for n in range(dispatch.MAX_REBASES + 1)]
+        conflicted = GitState(exists=True, ahead=2, changed=("src/x.rs",), conflicts=("src/x.rs",))
+        self.assertEqual(decide(parent(), [self.review, *verifies], conflicted, pr_head="a" * 40).kind, "handoff")
+
+    def test_clearing_the_landed_result_leaves_the_landed_marker(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(dispatch, "VERIFY_DIR", Path(tmp)):
+            for ext in ("exit", "cloud.resolve", "landed"):
+                (Path(tmp) / f"T-1.{ext}").write_text("0")
+            dispatch.clear_landed_result("T-1")
+            dispatch.clear_landed_result("T-1")
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["T-1.landed"])
 
     def test_a_verify_whose_pr_merged_is_left_to_the_merge_sweep(self):
         stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
