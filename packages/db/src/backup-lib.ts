@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { open, readFile } from "node:fs/promises";
+import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
 
@@ -86,7 +86,7 @@ type TableDefinition = {
 const DRIZZLE_SCHEMA = "drizzle";
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 
-const STATEMENT_BREAKPOINT = "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900";
+export const STATEMENT_BREAKPOINT = "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900";
 
 function sanitizeRestoreErrorMessage(error: unknown): string {
   if (error && typeof error === "object") {
@@ -559,19 +559,46 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   }
 }
 
+/**
+ * The statements of a backup file, split on the statement breakpoint as the
+ * file streams in.
+ *
+ * A backup of a live instance passes V8's ~512 MB string limit, so reading the
+ * whole file into one string — and splitting that — fails outright on exactly
+ * the backups worth restoring. Splitting on the breakpoint substring (not on
+ * lines) keeps the result identical to `contents.split(STATEMENT_BREAKPOINT)`:
+ * a line splitter would also break on, and strip, the `\r` of any `\r\n` in
+ * dumped data.
+ */
+export async function* readBackupStatements(
+  file: string,
+  chunkBytes: number = 1 << 20,
+): AsyncGenerator<string> {
+  let buffer = "";
+  let searchFrom = 0;
+  for await (const chunk of createReadStream(file, { encoding: "utf8", highWaterMark: chunkBytes })) {
+    buffer += chunk as string;
+    let at = buffer.indexOf(STATEMENT_BREAKPOINT, searchFrom);
+    while (at !== -1) {
+      yield buffer.slice(0, at);
+      buffer = buffer.slice(at + STATEMENT_BREAKPOINT.length);
+      at = buffer.indexOf(STATEMENT_BREAKPOINT);
+    }
+    // A breakpoint may straddle this chunk and the next; rescan only that tail.
+    searchFrom = Math.max(0, buffer.length - STATEMENT_BREAKPOINT.length + 1);
+  }
+  yield buffer;
+}
+
 export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promise<void> {
   const connectTimeout = Math.max(1, Math.trunc(opts.connectTimeoutSeconds ?? 5));
   const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
 
   try {
     await sql`SELECT 1`;
-    const contents = await readFile(opts.backupFile, "utf8");
-    const statements = contents
-      .split(STATEMENT_BREAKPOINT)
-      .map((statement) => statement.trim())
-      .filter((statement) => statement.length > 0);
-
-    for (const statement of statements) {
+    for await (const raw of readBackupStatements(opts.backupFile)) {
+      const statement = raw.trim();
+      if (statement.length === 0) continue;
       await sql.unsafe(statement).execute();
     }
   } catch (error) {
