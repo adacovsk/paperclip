@@ -155,12 +155,10 @@ export async function createApp(
       path.resolve(__dirname, "../ui-dist"),
       path.resolve(__dirname, "../../ui/dist"),
     ];
-    const uiDist = candidates.find((p) => fs.existsSync(path.join(p, "index.html")));
-    if (uiDist) {
-      app.use(staticUiRouter(uiDist));
-    } else {
-      console.warn("[paperclip] UI dist not found; running in API-only mode");
+    if (!candidates.some((p) => fs.existsSync(path.join(p, "index.html")))) {
+      console.warn("[paperclip] UI build not found yet; serving 503 for UI paths until one appears");
     }
+    app.use(staticUiRouter(candidates));
   }
 
   if (opts.uiMode === "vite-dev") {

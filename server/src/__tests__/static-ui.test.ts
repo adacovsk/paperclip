@@ -19,7 +19,7 @@ describe("staticUiRouter", () => {
     );
   };
 
-  const app = () => express().use(staticUiRouter(dist));
+  const app = () => express().use(staticUiRouter([dist]));
 
   beforeEach(() => {
     dist = fs.mkdtempSync(path.join(os.tmpdir(), "static-ui-"));
@@ -63,5 +63,29 @@ describe("staticUiRouter", () => {
     const miss = await request(server).get("/assets/index-gone0000.js");
     expect(miss.status).toBe(404);
     expect(miss.headers["content-type"] ?? "").not.toContain("text/html");
+  });
+
+  it("serves a build that appears after the server started without one", async () => {
+    fs.rmSync(dist, { recursive: true, force: true });
+    fs.mkdirSync(dist);
+    const server = app();
+
+    const before = await request(server).get("/issues");
+    expect(before.status).toBe(503);
+
+    writeBuild("cccc3333");
+    const after = await request(server).get("/issues");
+    expect(after.status).toBe(200);
+    expect(after.text).toContain("/assets/index-cccc3333.js");
+  });
+
+  it("prefers the first candidate that holds a build", async () => {
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "static-ui-empty-"));
+    try {
+      const res = await request(express().use(staticUiRouter([empty, dist]))).get("/assets/index-aaaa1111.js");
+      expect(res.status).toBe(200);
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
   });
 });
