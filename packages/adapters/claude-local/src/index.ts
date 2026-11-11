@@ -1,13 +1,15 @@
 export const type = "claude_local";
 export const label = "Claude Code (local)";
 
+// Aliases, not versioned ids. The Claude CLI resolves each alias to the newest
+// model in that family, so this list does not go stale when a model ships. A
+// versioned list did: it topped out two generations behind the models agents
+// were already running. To pin a version, type the full id into the picker.
 export const models = [
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-6", label: "Claude Haiku 4.6" },
-  { id: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5" },
-  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { id: "fable", label: "Fable (latest)" },
+  { id: "opus", label: "Opus (latest)" },
+  { id: "sonnet", label: "Sonnet (latest)" },
+  { id: "haiku", label: "Haiku (latest)" },
 ];
 
 export const agentConfigurationDoc = `# claude_local agent configuration
@@ -17,7 +19,7 @@ Adapter: claude_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
-- model (string, optional): Claude model id
+- model (string, optional): passed to the CLI as --model. Either an alias for the newest model in a family (fable, opus, sonnet, haiku) or a full model id to pin a version
 - effort (string, optional): reasoning effort passed via --effort (low|medium|high)
 - chrome (boolean, optional): pass --chrome when running Claude
 - promptTemplate (string, optional): run prompt template
