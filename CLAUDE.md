@@ -13,7 +13,7 @@ Paperclip = open-source control plane for autonomous AI agents. Node.js server +
 | `packages/shared/` | Shared TS types, constants, validators |
 | `packages/adapters/` | Agent adapters: claude-local, codex-local, cursor-local, pi-local, gemini-local, opencode-local, openclaw-gateway |
 | `packages/adapter-utils/` | Shared adapter utilities |
-| `skills/` | Runtime-injected agent skills (paperclip, create-agent, para-memory) |
+| `skills/` | Runtime-injected agent skills (paperclip, paperclip-create-agent, para-memory-files) |
 | `cli/` | `paperclipai` CLI |
 | `doc/` | Product/ops docs |
 
