@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { patchSchema } from "./patch.js";
 import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
+import { ISSUE_HOLD_BLOCKER_KINDS, ISSUE_HOLD_KINDS } from "../issue-hold.js";
 
 const executionWorkspaceStrategySchema = z
   .object({
@@ -77,8 +78,34 @@ export const createIssueLabelSchema = z.object({
 
 export type CreateIssueLabel = z.infer<typeof createIssueLabelSchema>;
 
+/**
+ * A hold as a caller writes it. Blockers are named by issue id or identifier
+ * (`AA-123`); the server resolves them and rejects one that does not exist.
+ */
+export const issueHoldInputSchema = z
+  .object({
+    kind: z.enum(ISSUE_HOLD_KINDS),
+    blockers: z.array(z.string().trim().min(1)).max(20).optional().default([]),
+    note: z.string().trim().max(500).optional().nullable(),
+  })
+  .superRefine((hold, ctx) => {
+    const needsBlockers = ISSUE_HOLD_BLOCKER_KINDS.includes(hold.kind);
+    if (needsBlockers && hold.blockers.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["blockers"], message: `A ${hold.kind} hold names the tasks it waits on` });
+    }
+    if (!needsBlockers && hold.blockers.length > 0) {
+      ctx.addIssue({ code: "custom", path: ["blockers"], message: `A ${hold.kind} hold waits on no task` });
+    }
+    if (hold.kind === "other" && !hold.note) {
+      ctx.addIssue({ code: "custom", path: ["note"], message: "A hold of kind other says why in its note" });
+    }
+  });
+
+export type IssueHoldInput = z.infer<typeof issueHoldInputSchema>;
+
 export const updateIssueSchema = patchSchema(createIssueSchema).extend({
   comment: z.string().min(1).optional(),
+  hold: issueHoldInputSchema.nullable().optional(),
   reopen: z.boolean().optional(),
   hiddenAt: z.string().datetime().nullable().optional(),
 });

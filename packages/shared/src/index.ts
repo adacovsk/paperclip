@@ -290,6 +290,7 @@ export {
   createIssueSchema,
   createIssueLabelSchema,
   updateIssueSchema,
+  issueHoldInputSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
   addIssueCommentSchema,
@@ -308,6 +309,7 @@ export {
   type CreateIssue,
   type CreateIssueLabel,
   type UpdateIssue,
+  type IssueHoldInput,
   type CheckoutIssue,
   type AddIssueComment,
   type LinkIssueApproval,
@@ -420,6 +422,20 @@ export {
   type ParsedAgentMention,
   type ParsedProjectMention,
 } from "./project-mentions.js";
+
+export {
+  ISSUE_HOLD_KINDS,
+  ISSUE_HOLD_BLOCKER_KINDS,
+  isHoldLine,
+  parseHoldLine,
+  formatHoldLine,
+  sameHoldCondition,
+  holdSurvivesStatus,
+  type IssueHold,
+  type IssueHoldBlocker,
+  type IssueHoldKind,
+  type ParsedHoldLine,
+} from "./issue-hold.js";
 
 export {
   paperclipConfigSchema,

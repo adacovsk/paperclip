@@ -1,3 +1,4 @@
+import type { IssueHold } from "../issue-hold.js";
 import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
@@ -125,6 +126,10 @@ export interface Issue {
   completedAt: Date | null;
   cancelledAt: Date | null;
   hiddenAt: Date | null;
+  /** Why the task is parked and what releases it; null when it is not held. */
+  hold: IssueHold | null;
+  /** The hold most recently cleared, which is what marks a later one `reheld`. */
+  releasedHold: IssueHold | null;
   labelIds?: string[];
   labels?: IssueLabel[];
   planDocument?: IssueDocument | null;

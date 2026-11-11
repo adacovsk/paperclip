@@ -21,7 +21,13 @@ import {
   projectWorkspaces,
   projects,
 } from "@paperclipai/db";
-import { extractAgentMentionIds, extractProjectMentionIds } from "@paperclipai/shared";
+import {
+  extractAgentMentionIds,
+  extractProjectMentionIds,
+  holdSurvivesStatus,
+  sameHoldCondition,
+  type IssueHold,
+} from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -83,6 +89,18 @@ function assertTransition(from: string, to: string) {
   if (!ALL_ISSUE_STATUSES.includes(to)) {
     throw conflict(`Unknown issue status: ${to}`);
   }
+}
+
+/**
+ * Column writes that clear a hold, for the status changes made outside `update`.
+ * A hold left on a task that has been checked out or released would outlive the
+ * state it describes.
+ */
+function clearedHold() {
+  return {
+    releasedHold: sql<IssueHold | null>`coalesce(${issues.hold}, ${issues.releasedHold})`,
+    hold: null,
+  };
 }
 
 function applyStatusSideEffects(
@@ -1106,6 +1124,44 @@ export function issueService(db: Db) {
         delete issueData.executionWorkspaceSettings;
       }
 
+      // A hold and the status it lives under are written together. Setting one
+      // parks the task (`blocked`, nobody assigned) unless the caller placed it
+      // somewhere the hold also stands; moving the task anywhere the hold does
+      // not stand clears it. Neither half can then be written without the other,
+      // which is what a `Held:` comment beside a separate status write allowed.
+      delete issueData.releasedHold;
+      if (issueData.hold) {
+        const hold = issueData.hold;
+        if (issueData.status === undefined && !holdSurvivesStatus(hold.kind, existing.status)) {
+          issueData.status = "blocked";
+        }
+        const heldStatus = issueData.status ?? existing.status;
+        if (!holdSurvivesStatus(hold.kind, heldStatus)) {
+          throw unprocessable(`A ${hold.kind} hold cannot stand on a ${heldStatus} task`);
+        }
+        if (heldStatus === "blocked") {
+          if (issueData.assigneeAgentId || issueData.assigneeUserId) {
+            throw unprocessable("A held, blocked task has no assignee: a comment on it would wake them");
+          }
+          issueData.assigneeAgentId = null;
+          issueData.assigneeUserId = null;
+        }
+        issueData.hold = {
+          ...hold,
+          reheld: sameHoldCondition(existing.hold, hold)
+            ? existing.hold!.reheld
+            : sameHoldCondition(existing.releasedHold, hold),
+        };
+      } else if (
+        existing.hold &&
+        (issueData.hold === null || !holdSurvivesStatus(existing.hold.kind, issueData.status ?? existing.status))
+      ) {
+        issueData.hold = null;
+        issueData.releasedHold = existing.hold;
+      } else {
+        delete issueData.hold;
+      }
+
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);
       }
@@ -1255,6 +1311,7 @@ export function issueService(db: Db) {
           checkoutRunId,
           executionRunId: checkoutRunId,
           status: "in_progress",
+          ...clearedHold(),
           startedAt: now,
           updatedAt: now,
         })
@@ -1442,6 +1499,7 @@ export function issueService(db: Db) {
           status: "todo",
           assigneeAgentId: null,
           checkoutRunId: null,
+          ...clearedHold(),
           updatedAt: new Date(),
         })
         .where(eq(issues.id, id))

@@ -33,6 +33,7 @@ import {
 } from "./services/run-history-retention.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
+import { issueHoldService } from "./services/issue-holds.js";
 import { killAllRunningProcesses, sweepOrphanedClaudeProcesses } from "./adapters/utils.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
@@ -499,6 +500,10 @@ export async function startServer(): Promise<StartedServer> {
     serverPort: listenPort,
     databasePort: resolvedEmbeddedPostgresPort,
   });
+  const backfilledHolds = await issueHoldService(db as any).backfillHolds();
+  if (backfilledHolds > 0) {
+    logger.info({ count: backfilledHolds }, "read holds from Held: comments into the hold field");
+  }
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   const app = await createApp(db as any, {
