@@ -59,7 +59,7 @@ updates:
     schedule:
       interval: "weekly"
 
-  # Base images for Dockerfile and Dockerfile.onboard-smoke.
+  # Base image for the Dockerfile.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
