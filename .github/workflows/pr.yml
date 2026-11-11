@@ -18,6 +18,13 @@ jobs:
     # steps below ask the same question, and a second copy would drift.
     env:
       MANIFEST_PATTERN: '(^|/)package\.json$|^pnpm-workspace\.yaml$|^\.npmrc$|^pnpmfile\.(cjs|js|mjs)$'
+      # Paths that cannot change what the browser tests exercise. A PR touching
+      # only these skips `e2e`, the most expensive job here, and nothing else:
+      # `verify` still runs, because the agent-doc guards read Markdown.
+      DOCS_ONLY_PATTERN: '\.mdx?$|^docs?/|^LICENSE$'
+
+    outputs:
+      code_changed: ${{ steps.scope.outputs.code_changed }}
 
     steps:
       - name: Checkout repository
@@ -63,6 +70,20 @@ jobs:
           echo "Do not hand-edit the lockfile. CI owns lockfile-only updates:"
           echo "  gh workflow run refresh-lockfile.yml --repo adacovsk/paperclip"
           exit 1
+
+      # Defaults to "code changed": an empty or unreadable diff must run the
+      # browser tests, never skip them.
+      - name: Classify the change
+        id: scope
+        run: |
+          changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" || true)"
+          non_docs="$(printf '%s\n' "$changed" | grep -Ev "$DOCS_ONLY_PATTERN" || true)"
+          if [ -n "$changed" ] && [ -z "$non_docs" ]; then
+            echo "Docs-only change; e2e will be skipped."
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -175,6 +196,7 @@ jobs:
 
   e2e:
     needs: [policy]
+    if: needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
