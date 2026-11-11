@@ -186,6 +186,16 @@ for scenario in scripts/smoke/*.smoke; do
 done
 STAGES=("${STAGES[@]:0:2}" "game-build||cargo build --bin $GAME_BIN" "${STAGES[@]:2}")
 
+# Drop the previous night's build of the project crate before building this one.
+# Each night checks a different `main`, so cargo writes the crate's artifacts
+# under fresh hashes and never reuses or removes the old ones: left alone,
+# `target/` grows by a full crate build per night until the disk fills. Nothing
+# is lost — the stages run with CARGO_INCREMENTAL=0 and would recompile the crate
+# regardless — and the dependency artifacts, which are reused, stay. Not a
+# compile, so it takes no cargo slot. A failed clean costs disk, not the verdict.
+cargo clean -p "$GAME_BIN" >> "$STATE/log" 2>&1 \
+  || echo "CLEAN: could not drop the previous build; continuing" >> "$STATE/log"
+
 # Every headless run, HEADLESS_JOBS at a time. Run without cargo, so the binary
 # needs what `cargo run` would have supplied: the toolchain's and the build's
 # shared libraries (the dev profile links Bevy dynamically), and an asset root —
