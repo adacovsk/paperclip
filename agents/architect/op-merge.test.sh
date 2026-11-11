@@ -87,6 +87,12 @@ run CENSUS_RC=0; check "exit" "$RC" 3
 check "nothing called" "$(wc -l < "$CALLS")" 0
 has "says so" "a verify of T-1 is out"
 
+echo "a pid file left by a finished watcher is not a build, and says nothing"
+reset; echo 999999999 > "$S/T-1.pid"
+run; check "exit" "$RC" 3
+check "launched" "$(cut -d' ' -f1 "$CALLS")" "relaunch"
+check "no stray error" "$(grep -c 'No such file' <<< "$OUT")" 0
+
 echo "a green sentinel is landed, then merged once the status is posted"
 reset; echo 0 > "$S/T-1.exit"
 run LAND_GREENS=1; check "exit" "$RC" 0

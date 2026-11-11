@@ -67,7 +67,8 @@ verify_state() {
 build_out() {
   local pid
   pid="$(cat "$S/$1.pid" 2>/dev/null)"
-  if [ -n "$pid" ] && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q cloud-verify; then return 0; fi
+  # The pid file outlives its watcher; a missing /proc entry is the ordinary case.
+  if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q cloud-verify; then return 0; fi
   "$CENSUS" "$1" >/dev/null 2>&1
 }
 
