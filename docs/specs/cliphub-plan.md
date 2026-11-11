@@ -1,6 +1,6 @@
 # ClipHub: Marketplace for Paperclip Team Configurations
 
-> Supersession note: this marketplace plan predates the markdown-first company package direction. For the current package-format and import/export rollout plan, see `docs/companies/companies-spec.md`.
+> Supersession note: company import/export and its package format have been removed from Paperclip.
 
 > The "app store" for whole-company AI teams — pre-built Paperclip configurations, agent blueprints, skills, and governance templates that ship real work from day one.
 

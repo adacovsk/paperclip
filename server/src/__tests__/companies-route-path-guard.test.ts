@@ -13,12 +13,6 @@ vi.mock("../services/index.js", () => ({
     archive: vi.fn(),
     remove: vi.fn(),
   }),
-  companyPortabilityService: () => ({
-    exportBundle: vi.fn(),
-    previewExport: vi.fn(),
-    previewImport: vi.fn(),
-    importBundle: vi.fn(),
-  }),
   accessService: () => ({
     canUser: vi.fn(),
     ensureMembership: vi.fn(),
