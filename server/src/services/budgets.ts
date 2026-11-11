@@ -820,8 +820,9 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
 
       // A provider usage limit blocks here rather than at each scheduler, so the
       // timer path, the routine path and the claim of an already-queued run all
-      // see it without a new call site. It lifts on its own when the stored reset
-      // instant passes — nothing has to unset it.
+      // see it without a new call site. It lifts when the stored reset instant
+      // passes, or earlier when a run succeeds or an operator wakes the agent
+      // (see `usage-limit.ts`).
       //
       // An agent opts out with `runtimeConfig.heartbeat.suppressWakesOnUsageLimit:
       // false`. The Architect does: it is the only stage that lands verified work,

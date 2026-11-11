@@ -13,6 +13,11 @@
  * The reset instant is parsed by the adapter that owns the message format and
  * carried here in `errorMeta`. This module owns only what the server does with
  * it: where it is stored, and when it has passed.
+ *
+ * The stored window also ends early, because the announced reset is not the only
+ * way a limit lifts — the account holder can reset or raise it. A succeeded run
+ * clears it on every agent sharing the adapter, and an operator-requested wake
+ * clears it on that agent (both in `heartbeat.ts`).
  */
 
 export const USAGE_LIMIT_ERROR_CODE = "claude_usage_limit";
