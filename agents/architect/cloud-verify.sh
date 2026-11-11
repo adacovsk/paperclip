@@ -691,7 +691,9 @@ accept_cloud_work() {
   fi
   if [ "$work" != "$lease" ]; then
     export PATH="${CLOUD_VERIFY_PIXI_BIN:-$HOME/.pixi/bin}:$PATH"
-    if ! command -v pixi >/dev/null || ! pixi run -e dev verify; then
+    # Through verify-sem.sh: a task worktree runs its own copy of the gate, and
+    # one forked before the gate bounded itself would run beside every other.
+    if ! command -v pixi >/dev/null || ! "$(dirname "$0")/verify-sem.sh" pixi run -e dev verify; then
       git reset -q --keep "$lease"
       reject "guard suite failed (or pixi unavailable) on the cloud commits"
     fi

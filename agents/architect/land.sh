@@ -44,7 +44,7 @@ model() { say "$*"; exit 1; }
 
 gate() {
   if [ -n "${LAND_GATE:-}" ]; then "$LAND_GATE" "$1"; return; fi
-  ( cd "$PROJECT" && pixi run -e dev verify --head "$1" )
+  ( cd "$PROJECT" && "$HERE/verify-sem.sh" pixi run -e dev verify --head "$1" )
 }
 body() {
   if [ -n "${LAND_BODY:-}" ]; then "$LAND_BODY" "$task"; return; fi
