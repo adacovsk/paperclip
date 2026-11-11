@@ -275,9 +275,10 @@ export function IssueDetail() {
     return (linkedRuns ?? []).filter((r) => !liveIds.has(r.runId));
   }, [linkedRuns, liveRuns, activeRun]);
 
-  const { data: allIssues } = useQuery({
-    queryKey: queryKeys.issues.list,
-    queryFn: () => issuesApi.list(),
+  const { data: childIssueRows } = useQuery({
+    queryKey: queryKeys.issues.children(issue?.id ?? ""),
+    queryFn: () => issuesApi.list({ parentId: issue!.id }),
+    enabled: Boolean(issue?.id),
   });
 
   const { data: agents } = useQuery({
@@ -332,11 +333,10 @@ export function IssueDetail() {
   }, [agents, orderedProjects]);
 
   const childIssues = useMemo(() => {
-    if (!allIssues || !issue) return [];
-    return allIssues
-      .filter((i) => i.parentId === issue.id)
+    if (!childIssueRows || !issue) return [];
+    return [...childIssueRows]
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [allIssues, issue]);
+  }, [childIssueRows, issue]);
 
   const commentReassignOptions = useMemo(() => {
     const options: Array<{ id: string; label: string; searchText?: string }> = [];

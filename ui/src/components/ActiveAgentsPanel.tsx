@@ -26,8 +26,8 @@ export function ActiveAgentsPanel() {
 
   const runs = liveRuns ?? [];
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.list,
-    queryFn: () => issuesApi.list(),
+    queryKey: queryKeys.issues.listOpen,
+    queryFn: () => issuesApi.listOpen(),
     enabled: runs.length > 0,
   });
 

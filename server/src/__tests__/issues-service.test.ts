@@ -278,6 +278,26 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   // NULL is indistinguishable from a genuinely empty body, so list rows must also
   // say that the column was withheld and how long the real one is — otherwise
   // "description is null" gets read as "this ticket has no body".
+  it("bounds the list by limit, most recently updated first, and by updatedSince", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const oldId = randomUUID();
+    const midId = randomUUID();
+    const newId = randomUUID();
+    await db.insert(issues).values([
+      { id: oldId, title: "Old", status: "done", priority: "critical", updatedAt: new Date(now - 30 * day) },
+      { id: midId, title: "Mid", status: "done", priority: "low", updatedAt: new Date(now - 5 * day) },
+      { id: newId, title: "New", status: "done", priority: "low", updatedAt: new Date(now - day) },
+    ]);
+
+    // A limit ranks by recency, not priority: the critical issue is the oldest.
+    const latestTwo = await svc.list({ status: "done", limit: 2 });
+    expect(latestTwo.map((issue) => issue.id)).toEqual([newId, midId]);
+
+    const sinceTwoWeeks = await svc.list({ status: "done", updatedSince: new Date(now - 14 * day) });
+    expect(sinceTwoWeeks.map((issue) => issue.id).sort()).toEqual([midId, newId].sort());
+  });
+
   it("numbers issues from the instance issue prefix and counter", async () => {
     const first = await svc.create({ title: "First" } as any);
     const second = await svc.create({ title: "Second" } as any);

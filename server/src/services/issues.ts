@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gte, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -118,6 +118,14 @@ export interface IssueFilters {
   originId?: string;
   includeRoutineExecutions?: boolean;
   q?: string;
+  /** Only issues updated at or after this instant. */
+  updatedSince?: Date;
+  /**
+   * At most this many issues, most recently updated first. Without it the list is
+   * the whole matching set in priority order — 20k+ closed issues on a long-lived
+   * instance — so callers that only need recent rows must bound it.
+   */
+  limit?: number;
 }
 
 type IssueRow = typeof issues.$inferSelect;
@@ -698,6 +706,7 @@ export function issueService(db: Db) {
       if (filters?.parentId) conditions.push(eq(issues.parentId, filters.parentId));
       if (filters?.originKind) conditions.push(eq(issues.originKind, filters.originKind));
       if (filters?.originId) conditions.push(eq(issues.originId, filters.originId));
+      if (filters?.updatedSince) conditions.push(gte(issues.updatedAt, filters.updatedSince));
       if (filters?.labelId) {
         const labeledIssueIds = await db
           .select({ issueId: issueLabels.issueId })
@@ -733,11 +742,13 @@ export function issueService(db: Db) {
           ELSE 6
         END
       `;
-      const rows = await db
+      const query = db
         .select(issueListColumns)
         .from(issues)
-        .where(and(...conditions))
-        .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt));
+        .where(and(...conditions));
+      const rows = filters?.limit
+        ? await query.orderBy(desc(issues.updatedAt), desc(issues.id)).limit(filters.limit)
+        : await query.orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt));
       const withLabels = await withIssueLabels(db, rows);
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
