@@ -294,7 +294,7 @@ def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str],
 
 
 def routine_last_fired(routines: list[dict]) -> dict[str, dict]:
-    """`last_fired` for missed_routines, from the company's routine list."""
+    """`last_fired` for missed_routines, from the routine list."""
     out = {}
     for routine in routines:
         run = routine.get("lastRun") or {}
@@ -619,7 +619,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
                            closed_parent_check(api, open_issues), parent_owed)
     routine_firings = api.issues(status=",".join(UNRUN_STATUSES + PARKED_STATUSES), includeRoutineExecutions="true")
-    last_fired = routine_last_fired(api.get(f"/companies/{api.company}/routines") or [])
+    last_fired = routine_last_fired(api.get("/routines") or [])
     refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now, last_fired)
     for old, by in superseded:
         supersede(api, old, by)
