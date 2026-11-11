@@ -157,6 +157,46 @@ class FakeApi:
         self.calls.append(("STATUS", issue["identifier"], body, comment))
 
 
+class ReadApi(FakeApi):
+    def __init__(self, issues):
+        super().__init__()
+        self.issues_by_id = issues
+
+    def get(self, path):
+        return self.issues_by_id.get(path.rsplit("/", 1)[-1])
+
+
+class FinishToggles(unittest.TestCase):
+    ENTRY = {"agent": "architect", "identifier": "X-1"}
+
+    def finish(self, issue):
+        api, pending = ReadApi({"i1": issue}), {"i1": dict(self.ENTRY)}
+        return m.finish_toggles(api, pending), api.calls, pending
+
+    def test_a_task_left_unassigned_is_given_back_to_its_agent(self):
+        finished, calls, pending = self.finish({"status": "in_review", "assigneeAgentId": None})
+        self.assertEqual((finished, pending), (["X-1"], {}))
+        self.assertEqual(calls[0][:2], ("PATCH", "/issues/i1"))
+        self.assertEqual(calls[0][2]["assigneeAgentId"], "architect")
+
+    def test_a_task_someone_already_reassigned_is_left_as_it_is(self):
+        self.assertEqual(self.finish({"status": "in_review", "assigneeAgentId": "worker"}), ([], [], {}))
+        self.assertEqual(self.finish({"status": "todo", "assigneeAgentId": None, "assigneeUserId": "u"}), ([], [], {}))
+
+    def test_a_closed_or_missing_task_is_dropped_from_the_journal(self):
+        self.assertEqual(self.finish({"status": "cancelled", "assigneeAgentId": None}), ([], [], {}))
+        self.assertEqual(self.finish(None), ([], [], {}))
+
+    def test_a_failed_read_keeps_the_entry_for_the_next_sweep(self):
+        class Down(FakeApi):
+            def get(self, path):
+                raise OSError("unreachable")
+        pending = {"i1": dict(self.ENTRY)}
+        with self.assertRaises(OSError):
+            m.finish_toggles(Down(), pending)
+        self.assertEqual(pending, {"i1": self.ENTRY})
+
+
 class FileWedges(unittest.TestCase):
     W = {"agentName": "Worker", "queued": 3, "oldest": "2026-10-18T11:00:00Z"}
 

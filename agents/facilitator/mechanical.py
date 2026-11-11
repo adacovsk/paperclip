@@ -35,6 +35,7 @@ from pathlib import Path
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 REPORT_FILE = STATE_DIR / "facilitator.json"
 TOGGLES_FILE = STATE_DIR / "facilitator-toggles.json"
+PENDING_FILE = STATE_DIR / "facilitator-pending-toggles.json"
 
 #: An assigned task this long without a run has missed its wake.
 STALL_SECONDS = float(os.environ.get("FACILITATOR_STALL_SECONDS", 2 * 3600))
@@ -183,6 +184,34 @@ def toggle(api, issue: dict) -> None:
                "comment": "Re-fired a missed wake: assigned with no run, so the assignee was toggled "
                           "through null and back (a same-value write or a comment fires nothing)."},
               f"wake    {issue['identifier']}: reassign")
+
+
+def finish_toggles(api, pending: dict) -> list[str]:
+    """Reassign every task a toggle unassigned and never gave back.
+
+    A toggle is two writes, and the sweep can die between them: it runs under a time
+    budget on a box that is sometimes saturated, and a write that times out is never
+    retried. The task is then open with no assignee, which no scan here or anywhere
+    else reads as owed anything. Two were left that way in one evening, a Verify and a
+    routine's own firing. So the agent is journalled before the unassign, and whatever
+    the journal still holds at the next sweep is given back first.
+
+    An entry is dropped once the task has an assignee again, or is closed, whoever did
+    that. A read or write that fails leaves the journal alone for the next sweep.
+    """
+    finished = []
+    for issue_id, entry in list(pending.items()):
+        issue = api.get(f"/issues/{issue_id}") or {}
+        open_ = issue.get("status") not in (None, "done", "cancelled")
+        if open_ and not issue.get("assigneeAgentId") and not issue.get("assigneeUserId"):
+            api.write("PATCH", f"/issues/{issue_id}",
+                      {"assigneeAgentId": entry["agent"],
+                       "comment": "Reassigned: a missed-wake toggle unassigned this task and the sweep ended "
+                                  "before giving it back."},
+                      f"wake    {entry['identifier']}: finish an interrupted toggle")
+            finished.append(entry["identifier"])
+        del pending[issue_id]
+    return finished
 
 
 def stall_hours(issue: dict) -> float:
@@ -580,6 +609,10 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
     live_runs = api.get(f"/companies/{api.company}/live-runs") or []
 
+    pending = load(PENDING_FILE)
+    finished = finish_toggles(api, pending)
+    save(PENDING_FILE, pending, api.dry_run)
+
     open_issues = api.issues(status="in_review,in_progress")
     # By name: the roster is the only place the Architect's id lives.
     parent_owed = frozenset(a["id"] for a in roster if a.get("name") == "Architect")
@@ -595,7 +628,11 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     stalled = refire + stalled
     due, failing, history = plan_toggles(stalled, load(TOGGLES_FILE), now)
     for issue in due:
+        pending[issue["id"]] = {"agent": issue["assigneeAgentId"], "identifier": issue["identifier"]}
+        save(PENDING_FILE, pending, api.dry_run)
         toggle(api, issue)
+        del pending[issue["id"]]
+    save(PENDING_FILE, pending, api.dry_run)
     save(TOGGLES_FILE, history, api.dry_run)
 
     found = wedged(live_runs, now)
@@ -627,6 +664,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     report = {
         "at": now,
         "toggled": [i["identifier"] for i in due],
+        "togglesFinished": finished,
         "stalledWaiting": [i["identifier"] for i in stalled if i not in due],
         "toggleNotTaking": [{"identifier": i["identifier"], "toggles": history[i["id"]]["count"],
                              "assigneeAgentId": i["assigneeAgentId"]} for i in failing],

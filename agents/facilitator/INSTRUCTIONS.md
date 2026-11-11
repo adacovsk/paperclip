@@ -55,6 +55,7 @@ Your part is reading its report: `~/.cache/paperclip-dispatcher/facilitator.json
 - **`at` older than ~2h** means the Dispatcher is not sweeping. That is the finding: report it. Then do this step by hand, toggling `assigneeAgentId` null → agent and leaving `status` alone. Confirm a fresh `executionRunId` appears within ~30s.
 - **`toggleNotTaking`** lists tasks toggled 3+ times without moving. That is a rotation/config bug, not a missed wake: diagnose it from the run history (§3) and file it.
 - **`toggled`** goes in your report as-is.
+- **`togglesFinished`** lists tasks a toggle had unassigned and an earlier sweep never gave back, reassigned now. A toggle is two writes and the sweep can die between them, which leaves a task open with no assignee, in nobody's queue. More than one or two here means sweeps are dying mid-run: report it with the count, and check the Dispatcher's own failed and timed-out runs in `runDigest`.
 
 ### 2b. Wedged dispatcher (the inverse of §2a, and invisible to every other step)
 
