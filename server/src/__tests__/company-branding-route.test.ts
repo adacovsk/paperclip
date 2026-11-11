@@ -26,20 +26,12 @@ const mockBudgetService = vi.hoisted(() => ({
   upsertPolicy: vi.fn(),
 }));
 
-const mockCompanyPortabilityService = vi.hoisted(() => ({
-  exportBundle: vi.fn(),
-  previewExport: vi.fn(),
-  previewImport: vi.fn(),
-  importBundle: vi.fn(),
-}));
-
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   budgetService: () => mockBudgetService,
-  companyPortabilityService: () => mockCompanyPortabilityService,
   companyService: () => mockCompanyService,
   logActivity: mockLogActivity,
 }));

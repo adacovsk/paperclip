@@ -21,7 +21,6 @@ export { sidebarBadgeService } from "./sidebar-badges.js";
 export { accessService } from "./access.js";
 export { operatorAuthService } from "./operator-auth.js";
 export { instanceSettingsService } from "./instance-settings.js";
-export { companyPortabilityService } from "./company-portability.js";
 export { executionWorkspaceService } from "./execution-workspaces.js";
 export { workspaceOperationService } from "./workspace-operations.js";
 export { workProductService } from "./work-products.js";

@@ -56,25 +56,6 @@ export {
   agentSkillSyncSchema,
   type AgentSkillSync,
 } from "./adapter-skills.js";
-export {
-  portabilityIncludeSchema,
-  portabilityEnvInputSchema,
-  portabilityCompanyManifestEntrySchema,
-  portabilitySidebarOrderSchema,
-  portabilityAgentManifestEntrySchema,
-  portabilitySkillManifestEntrySchema,
-  portabilityManifestSchema,
-  portabilitySourceSchema,
-  portabilityTargetSchema,
-  portabilityAgentSelectionSchema,
-  portabilityCollisionStrategySchema,
-  companyPortabilityExportSchema,
-  companyPortabilityPreviewSchema,
-  companyPortabilityImportSchema,
-  type CompanyPortabilityExport,
-  type CompanyPortabilityPreview,
-  type CompanyPortabilityImport,
-} from "./company-portability.js";
 
 export {
   createAgentSchema,
