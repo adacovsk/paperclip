@@ -64,6 +64,11 @@ REAP_PID = STATE_DIR / "reap.pid"
 #: The issue list leaves these out unless asked, so every scan built on it is blind to
 #: a routine's own task.
 ROUTINE_ORIGIN = "routine_execution"
+UNRUN_STATUSES = ("todo", "in_progress")
+PARKED_STATUSES = ("in_review", "blocked")
+#: A parked firing with no run for this long is replaced by a later firing. Two days,
+#: so a daily routine's held firing outlives the next one and is still there to answer.
+PARKED_SECONDS = float(os.environ.get("FACILITATOR_PARKED_SECONDS", 48 * 3600))
 #: How far back `run_digest` counts, and the most rows it reads to get there.
 DIGEST_SECONDS = float(os.environ.get("FACILITATOR_DIGEST_SECONDS", 24 * 3600))
 DIGEST_ROWS = int(os.environ.get("FACILITATOR_DIGEST_ROWS", 1000))
@@ -188,8 +193,8 @@ def stall_hours(issue: dict) -> float:
 
 
 def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str], skip_agent: str | None,
-                    now: float) -> tuple[list[dict], list[tuple[dict, dict]]]:
-    """(firings owed a wake, [(firing that never ran, the later firing replacing it)]).
+                    now: float, last_fired: dict[str, dict] | None = None) -> tuple[list[dict], list[tuple[dict, str]]]:
+    """(firings owed a wake, [(firing a later one replaces, what replaces it)]).
 
     `issues` are a company's open routine firings. A routine files one task per firing
     and wakes its agent once; when that wake dies (the usage limit was out), the task
@@ -200,43 +205,80 @@ def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str],
     Only a routine's newest firing is worth a run: an older one asks for the same sweep
     over a staler tree. So the newest is re-fired if it has stalled, and every stalled
     firing behind it is superseded, whether or not the newest is itself running.
+
+    "Behind it" is read two ways, because a later firing that finished is no longer in
+    `issues`. A newer open firing of the same routine is one. The other is
+    `last_fired[routine]`, the routine's last run as `{"at", "issueId"}`: a run that
+    filed a different task after this one was created. A run with no task of its own
+    (skipped, or coalesced into this firing) replaces nothing, so the firing it left
+    alone is still the newest and is still re-fired.
+
+    A firing parked `in_review` or `blocked` is never re-fired, since someone put it
+    there, and it gets PARKED_SECONDS rather than STALL_SECONDS before a later firing
+    replaces it. One sat `in_review` for a month and another `blocked` for three weeks,
+    each with twenty later firings of its routine completed after it.
+
+    `skip_agent` is the agent running this sweep. Its own firings are never re-fired
+    (this run is the newest one), but the ones a killed or timed-out sweep left
+    behind are superseded like anyone's.
     """
     live_ids = {r["id"] for r in live_runs}
     live_issues = {r.get("issueId") for r in live_runs if r.get("issueId")}
 
-    def stalled(issue: dict) -> bool:
+    def idle(issue: dict) -> float | None:
+        """Seconds since the firing last moved, or None while a run is on it."""
         if issue.get("activeRun") or issue["id"] in live_issues:
-            return False
+            return None
         if issue.get("executionRunId") and issue["executionRunId"] in live_ids:
-            return False
-        return now - ts(issue["updatedAt"]) >= STALL_SECONDS
+            return None
+        return now - ts(issue["updatedAt"])
 
     by_routine: dict[str, list[dict]] = {}
     for issue in issues:
         agent = issue.get("assigneeAgentId")
         if issue.get("originKind") != ROUTINE_ORIGIN or not issue.get("originId"):
             continue
-        if not agent or agent == skip_agent or agent in paused:
+        if not agent or agent in paused:
             continue
-        if issue["status"] not in ("todo", "in_progress"):
+        if issue["status"] not in UNRUN_STATUSES + PARKED_STATUSES:
             continue
         by_routine.setdefault(issue["originId"], []).append(issue)
 
     refire, superseded = [], []
-    for firings in by_routine.values():
+    for routine, firings in by_routine.items():
         firings.sort(key=lambda i: i["createdAt"])
         newest = firings[-1]
-        if stalled(newest):
-            refire.append(newest)
-        superseded += [(old, newest) for old in firings[:-1] if stalled(old)]
+        fired = (last_fired or {}).get(routine) or {}
+        for issue in firings:
+            parked = issue["status"] in PARKED_STATUSES
+            quiet = idle(issue)
+            if quiet is None or quiet < (PARKED_SECONDS if parked else STALL_SECONDS):
+                continue
+            if issue is not newest:
+                superseded.append((issue, newest["identifier"]))
+            elif (fired.get("issueId") and fired["issueId"] != issue["id"]
+                  and fired.get("at", 0) > ts(issue["createdAt"])):
+                superseded.append((issue, "a later firing that has since closed"))
+            elif not parked and issue["assigneeAgentId"] != skip_agent:
+                refire.append(issue)
     return sorted(refire, key=lambda i: i["updatedAt"]), superseded
 
 
-def supersede(api, old: dict, newest: dict) -> None:
+def routine_last_fired(routines: list[dict]) -> dict[str, dict]:
+    """`last_fired` for missed_routines, from the company's routine list."""
+    out = {}
+    for routine in routines:
+        run = routine.get("lastRun") or {}
+        if run.get("triggeredAt"):
+            out[routine["id"]] = {"at": ts(run["triggeredAt"]), "issueId": run.get("linkedIssueId")}
+    return out
+
+
+def supersede(api, old: dict, by: str) -> None:
     api.set_status(old, {"status": "cancelled"},
-                   f"Superseded by {newest['identifier']}: this firing never got a run, and the routine has "
-                   "fired again since. Only the newest firing is re-fired.",
-                   f"routine {old['identifier']}: superseded by {newest['identifier']}")
+                   f"Superseded by {by}: this firing has had no run for {stall_hours(old):.0f}h and the routine "
+                   "has fired again since. Only a routine's newest firing is worth a run.",
+                   f"routine {old['identifier']}: superseded by {by}")
 
 
 # --------------------------------------------------------------------------- §3 run digest
@@ -543,10 +585,11 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     parent_owed = frozenset(a["id"] for a in roster if a.get("name") == "Architect")
     stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
                            closed_parent_check(api, open_issues), parent_owed)
-    routine_firings = api.issues(status="todo,in_progress", includeRoutineExecutions="true")
-    refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now)
-    for old, newest in superseded:
-        supersede(api, old, newest)
+    routine_firings = api.issues(status=",".join(UNRUN_STATUSES + PARKED_STATUSES), includeRoutineExecutions="true")
+    last_fired = routine_last_fired(api.get(f"/companies/{api.company}/routines") or [])
+    refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now, last_fired)
+    for old, by in superseded:
+        supersede(api, old, by)
     # Routine firings go first: there are a handful at most, and TOGGLE_CAP would
     # otherwise leave a day-old health sweep behind twenty older stages.
     stalled = refire + stalled
@@ -588,8 +631,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         "toggleNotTaking": [{"identifier": i["identifier"], "toggles": history[i["id"]]["count"],
                              "assigneeAgentId": i["assigneeAgentId"]} for i in failing],
         "routinesRefired": [i["identifier"] for i in due if i in refire],
-        "routinesSuperseded": [{"identifier": old["identifier"], "by": newest["identifier"]}
-                               for old, newest in superseded],
+        "routinesSuperseded": [{"identifier": old["identifier"], "by": by} for old, by in superseded],
         "runDigest": digest,
         "nightly": main_nightly,
         "wedged": found,
