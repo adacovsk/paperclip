@@ -1,15 +1,14 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
-import { companiesApi } from "../api/companies";
+import { instanceProfileApi } from "../api/instanceProfile";
 import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Settings, Check } from "lucide-react";
-import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
+import { useInstanceProfile } from "../hooks/useInstanceProfile";
 import {
   Field,
   ToggleField,
@@ -22,31 +21,59 @@ type AgentSnippetInput = {
   testResolutionUrl?: string | null;
 };
 
-export function CompanySettings() {
-  const {
-    companies,
-    selectedCompany,
-    selectedCompanyId,
-    setSelectedCompanyId
-  } = useCompany();
+function centsToDollarsInput(cents: number): string {
+  return cents > 0 ? (cents / 100).toFixed(2) : "";
+}
+
+function InstanceLogoPreview({
+  name,
+  logoUrl,
+  brandColor,
+}: {
+  name: string;
+  logoUrl: string | null;
+  brandColor: string | null;
+}) {
+  if (logoUrl) {
+    return (
+      <img
+        src={logoUrl}
+        alt={`${name} logo`}
+        className="h-16 w-16 rounded-[14px] border border-border object-cover"
+      />
+    );
+  }
+  return (
+    <div
+      className="flex h-16 w-16 items-center justify-center rounded-[14px] border border-border text-2xl font-semibold text-white"
+      style={{ backgroundColor: brandColor ?? "#6366f1" }}
+    >
+      {name.trim().charAt(0).toUpperCase() || "?"}
+    </div>
+  );
+}
+
+export function InstanceProfileSettings() {
+  const { profile } = useInstanceProfile();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   // General settings local state
-  const [companyName, setCompanyName] = useState("");
+  const [instanceName, setInstanceName] = useState("");
   const [description, setDescription] = useState("");
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
+  const [budgetDollars, setBudgetDollars] = useState("");
 
-  // Sync local state from selected company
   useEffect(() => {
-    if (!selectedCompany) return;
-    setCompanyName(selectedCompany.name);
-    setDescription(selectedCompany.description ?? "");
-    setBrandColor(selectedCompany.brandColor ?? "");
-    setLogoUrl(selectedCompany.logoUrl ?? "");
-  }, [selectedCompany]);
+    if (!profile) return;
+    setInstanceName(profile.name);
+    setDescription(profile.description ?? "");
+    setBrandColor(profile.brandColor ?? "");
+    setLogoUrl(profile.logoUrl ?? "");
+    setBudgetDollars(centsToDollarsInput(profile.budgetMonthlyCents));
+  }, [profile]);
 
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSnippet, setInviteSnippet] = useState<string | null>(null);
@@ -54,35 +81,51 @@ export function CompanySettings() {
   const [snippetCopyDelightId, setSnippetCopyDelightId] = useState(0);
 
   const generalDirty =
-    !!selectedCompany &&
-    (companyName !== selectedCompany.name ||
-      description !== (selectedCompany.description ?? "") ||
-      brandColor !== (selectedCompany.brandColor ?? ""));
+    !!profile &&
+    (instanceName !== profile.name ||
+      description !== (profile.description ?? "") ||
+      brandColor !== (profile.brandColor ?? ""));
+
+  const parsedBudgetCents = budgetDollars.trim() === ""
+    ? 0
+    : Math.round(Number(budgetDollars) * 100);
+  const budgetValid = Number.isFinite(parsedBudgetCents) && parsedBudgetCents >= 0;
+  const budgetDirty = !!profile && budgetValid && parsedBudgetCents !== profile.budgetMonthlyCents;
 
   const generalMutation = useMutation({
     mutationFn: (data: {
       name: string;
       description: string | null;
       brandColor: string | null;
-    }) => companiesApi.update(selectedCompanyId!, data),
+    }) => instanceProfileApi.updateBranding(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.instance.profile });
     }
   });
 
   const settingsMutation = useMutation({
     mutationFn: (requireApproval: boolean) =>
-      companiesApi.update(selectedCompanyId!, {
+      instanceProfileApi.update({
         requireOperatorApprovalForNewAgents: requireApproval
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.instance.profile });
+    }
+  });
+
+  const budgetMutation = useMutation({
+    mutationFn: (budgetMonthlyCents: number) =>
+      instanceProfileApi.update({ budgetMonthlyCents }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.instance.profile });
+      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview });
+      pushToast({ title: "Monthly budget saved", tone: "success" });
     }
   });
 
   const inviteMutation = useMutation({
     mutationFn: () =>
-      accessApi.createOpenClawInvitePrompt(selectedCompanyId!),
+      accessApi.createOpenClawInvitePrompt(),
     onSuccess: async (invite) => {
       setInviteError(null);
       const base = window.location.origin.replace(/\/+$/, "");
@@ -123,7 +166,7 @@ export function CompanySettings() {
         /* clipboard may not be available */
       }
       queryClient.invalidateQueries({
-        queryKey: queryKeys.sidebarBadges(selectedCompanyId!)
+        queryKey: queryKeys.sidebarBadges
       });
     },
     onError: (err) => {
@@ -135,25 +178,25 @@ export function CompanySettings() {
 
   const syncLogoState = (nextLogoUrl: string | null) => {
     setLogoUrl(nextLogoUrl ?? "");
-    void queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.instance.profile });
   };
 
   const logoUploadMutation = useMutation({
     mutationFn: (file: File) =>
       assetsApi
-        .uploadCompanyLogo(selectedCompanyId!, file)
-        .then((asset) => companiesApi.update(selectedCompanyId!, { logoAssetId: asset.assetId })),
-    onSuccess: (company) => {
-      syncLogoState(company.logoUrl);
+        .uploadInstanceLogo(file)
+        .then((asset) => instanceProfileApi.updateBranding({ logoAssetId: asset.assetId })),
+    onSuccess: (updated) => {
+      syncLogoState(updated.logoUrl);
       setLogoUploadError(null);
     }
   });
 
   const clearLogoMutation = useMutation({
-    mutationFn: () => companiesApi.update(selectedCompanyId!, { logoAssetId: null }),
-    onSuccess: (company) => {
+    mutationFn: () => instanceProfileApi.updateBranding({ logoAssetId: null }),
+    onSuccess: (updated) => {
       setLogoUploadError(null);
-      syncLogoState(company.logoUrl);
+      syncLogoState(updated.logoUrl);
     }
   });
 
@@ -170,51 +213,19 @@ export function CompanySettings() {
   }
 
   useEffect(() => {
-    setInviteError(null);
-    setInviteSnippet(null);
-    setSnippetCopied(false);
-    setSnippetCopyDelightId(0);
-  }, [selectedCompanyId]);
-
-  const archiveMutation = useMutation({
-    mutationFn: ({
-      companyId,
-      nextCompanyId
-    }: {
-      companyId: string;
-      nextCompanyId: string | null;
-    }) => companiesApi.archive(companyId).then(() => ({ nextCompanyId })),
-    onSuccess: async ({ nextCompanyId }) => {
-      if (nextCompanyId) {
-        setSelectedCompanyId(nextCompanyId);
-      }
-      await queryClient.invalidateQueries({
-        queryKey: queryKeys.companies.all
-      });
-      await queryClient.invalidateQueries({
-        queryKey: queryKeys.companies.stats
-      });
-    }
-  });
-
-  useEffect(() => {
     setBreadcrumbs([
-      { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
-      { label: "Settings" }
+      { label: "Instance Settings" },
+      { label: "Profile" }
     ]);
-  }, [setBreadcrumbs, selectedCompany?.name]);
+  }, [setBreadcrumbs]);
 
-  if (!selectedCompany) {
-    return (
-      <div className="text-sm text-muted-foreground">
-        No company selected. Select a company from the switcher above.
-      </div>
-    );
+  if (!profile) {
+    return <div className="text-sm text-muted-foreground">Loading instance profile...</div>;
   }
 
   function handleSaveGeneral() {
     generalMutation.mutate({
-      name: companyName.trim(),
+      name: instanceName.trim(),
       description: description.trim() || null,
       brandColor: brandColor || null
     });
@@ -224,7 +235,7 @@ export function CompanySettings() {
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center gap-2">
         <Settings className="h-5 w-5 text-muted-foreground" />
-        <h1 className="text-lg font-semibold">Company Settings</h1>
+        <h1 className="text-lg font-semibold">Instance Profile</h1>
       </div>
 
       {/* General */}
@@ -233,23 +244,23 @@ export function CompanySettings() {
           General
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <Field label="Company name" hint="The display name for your company.">
+          <Field label="Instance name" hint="The display name for this instance.">
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
+              value={instanceName}
+              onChange={(e) => setInstanceName(e.target.value)}
             />
           </Field>
           <Field
             label="Description"
-            hint="Optional description shown in the company profile."
+            hint="Optional description shown in the instance profile."
           >
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
               value={description}
-              placeholder="Optional company description"
+              placeholder="Optional instance description"
               onChange={(e) => setDescription(e.target.value)}
             />
           </Field>
@@ -264,11 +275,10 @@ export function CompanySettings() {
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
           <div className="flex items-start gap-4">
             <div className="shrink-0">
-              <CompanyPatternIcon
-                companyName={companyName || selectedCompany.name}
+              <InstanceLogoPreview
+                name={instanceName || profile.name}
                 logoUrl={logoUrl || null}
                 brandColor={brandColor || null}
-                className="rounded-[14px]"
               />
             </div>
             <div className="flex-1 space-y-3">
@@ -315,7 +325,7 @@ export function CompanySettings() {
               </Field>
               <Field
                 label="Brand color"
-                hint="Sets the hue for the company icon. Leave empty for auto-generated color."
+                hint="Sets the hue for the instance icon. Leave empty for the default color."
               >
                 <div className="flex items-center gap-2">
                   <input
@@ -359,7 +369,7 @@ export function CompanySettings() {
           <Button
             size="sm"
             onClick={handleSaveGeneral}
-            disabled={generalMutation.isPending || !companyName.trim()}
+            disabled={generalMutation.isPending || !instanceName.trim()}
           >
             {generalMutation.isPending ? "Saving..." : "Save changes"}
           </Button>
@@ -376,6 +386,50 @@ export function CompanySettings() {
         </div>
       )}
 
+      {/* Budget */}
+      <div className="space-y-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Budget
+        </div>
+        <div className="space-y-3 rounded-md border border-border px-4 py-4">
+          <Field
+            label="Monthly budget (USD)"
+            hint="Spend ceiling across every agent for the calendar month. Leave empty for no limit."
+          >
+            <input
+              className="w-40 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              type="number"
+              min={0}
+              step="0.01"
+              value={budgetDollars}
+              placeholder="No limit"
+              onChange={(e) => setBudgetDollars(e.target.value)}
+            />
+          </Field>
+          <div className="text-xs text-muted-foreground">
+            Spent this month: ${(profile.spentMonthlyCents / 100).toFixed(2)}
+          </div>
+          {budgetDirty && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => budgetMutation.mutate(parsedBudgetCents)}
+                disabled={budgetMutation.isPending}
+              >
+                {budgetMutation.isPending ? "Saving..." : "Save budget"}
+              </Button>
+              {budgetMutation.isError && (
+                <span className="text-xs text-destructive">
+                  {budgetMutation.error instanceof Error
+                    ? budgetMutation.error.message
+                    : "Failed to save budget"}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Hiring */}
       <div className="space-y-4">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -385,7 +439,7 @@ export function CompanySettings() {
           <ToggleField
             label="Require operator approval for new hires"
             hint="New agent hires stay pending until approved by operator."
-            checked={!!selectedCompany.requireOperatorApprovalForNewAgents}
+            checked={!!profile.requireOperatorApprovalForNewAgents}
             onChange={(v) => settingsMutation.mutate(v)}
           />
         </div>
@@ -463,58 +517,6 @@ export function CompanySettings() {
         </div>
       </div>
 
-      {/* Danger Zone */}
-      <div className="space-y-4">
-        <div className="text-xs font-medium text-destructive uppercase tracking-wide">
-          Danger Zone
-        </div>
-        <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-4">
-          <p className="text-sm text-muted-foreground">
-            Archive this company to hide it from the sidebar. This persists in
-            the database.
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="destructive"
-              disabled={
-                archiveMutation.isPending ||
-                selectedCompany.status === "archived"
-              }
-              onClick={() => {
-                if (!selectedCompanyId) return;
-                const confirmed = window.confirm(
-                  `Archive company "${selectedCompany.name}"? It will be hidden from the sidebar.`
-                );
-                if (!confirmed) return;
-                const nextCompanyId =
-                  companies.find(
-                    (company) =>
-                      company.id !== selectedCompanyId &&
-                      company.status !== "archived"
-                  )?.id ?? null;
-                archiveMutation.mutate({
-                  companyId: selectedCompanyId,
-                  nextCompanyId
-                });
-              }}
-            >
-              {archiveMutation.isPending
-                ? "Archiving..."
-                : selectedCompany.status === "archived"
-                ? "Already archived"
-                : "Archive company"}
-            </Button>
-            {archiveMutation.isError && (
-              <span className="text-xs text-destructive">
-                {archiveMutation.error instanceof Error
-                  ? archiveMutation.error.message
-                  : "Failed to archive company"}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -546,7 +548,7 @@ Then verify with: curl -fsS <base-url>/api/health`;
     ? `\nYou MUST test Paperclip-to-gateway reachability, call: ${resolutionTestUrl}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Paperclip. Test it. `
     : "";
 
-  return `You're invited to join a Paperclip organization.
+  return `You're invited to join a Paperclip instance.
 
 The URLs you should try are:
 ${candidateList}

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "@/lib/router";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
@@ -140,12 +140,6 @@ export function CliAuthPage() {
               {challenge.requestedAccess === "instance_admin_required" ? "Instance admin" : "Operator"}
             </div>
           </div>
-          {challenge.requestedCompanyName && (
-            <div>
-              <div className="text-muted-foreground">Requested company</div>
-              <div className="text-foreground">{challenge.requestedCompanyName}</div>
-            </div>
-          )}
         </div>
 
         {(approveMutation.error || cancelMutation.error) && (

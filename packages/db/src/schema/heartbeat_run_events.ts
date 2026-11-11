@@ -1,5 +1,4 @@
 import { pgTable, uuid, text, timestamp, integer, jsonb, index, bigserial } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 
@@ -7,7 +6,6 @@ export const heartbeatRunEvents = pgTable(
   "heartbeat_run_events",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     runId: uuid("run_id").notNull().references(() => heartbeatRuns.id),
     agentId: uuid("agent_id").notNull().references(() => agents.id),
     seq: integer("seq").notNull(),
@@ -21,8 +19,8 @@ export const heartbeatRunEvents = pgTable(
   },
   (table) => ({
     runSeqIdx: index("heartbeat_run_events_run_seq_idx").on(table.runId, table.seq),
-    companyRunIdx: index("heartbeat_run_events_company_run_idx").on(table.companyId, table.runId),
-    companyCreatedIdx: index("heartbeat_run_events_company_created_idx").on(table.companyId, table.createdAt),
+    runIdx: index("heartbeat_run_events_run_idx").on(table.runId),
+    createdIdx: index("heartbeat_run_events_created_idx").on(table.createdAt),
   }),
 );
 

@@ -3,8 +3,7 @@ import { api } from "./client";
 
 type InviteSummary = {
   id: string;
-  companyId: string | null;
-  inviteType: "company_join" | "bootstrap_ceo";
+  inviteType: "join" | "bootstrap_ceo";
   allowedJoinTypes: "human" | "agent" | "both";
   expiresAt: string;
   onboardingPath?: string;
@@ -70,8 +69,6 @@ type CliAuthChallengeStatus = {
   command: string;
   clientName: string | null;
   requestedAccess: "operator" | "instance_admin_required";
-  requestedCompanyId: string | null;
-  requestedCompanyName: string | null;
   approvedAt: string | null;
   cancelledAt: string | null;
   expiresAt: string;
@@ -81,7 +78,7 @@ type CliAuthChallengeStatus = {
   currentUserId: string | null;
 };
 
-type CompanyInviteCreated = {
+type InviteCreated = {
   id: string;
   token: string;
   inviteUrl: string;
@@ -93,24 +90,22 @@ type CompanyInviteCreated = {
 };
 
 export const accessApi = {
-  createCompanyInvite: (
-    companyId: string,
+  createInvite: (
     input: {
       allowedJoinTypes?: "human" | "agent" | "both";
       defaultsPayload?: Record<string, unknown> | null;
       agentMessage?: string | null;
     } = {},
   ) =>
-    api.post<CompanyInviteCreated>(`/companies/${companyId}/invites`, input),
+    api.post<InviteCreated>(`/invites`, input),
 
   createOpenClawInvitePrompt: (
-    companyId: string,
     input: {
       agentMessage?: string | null;
     } = {},
   ) =>
-    api.post<CompanyInviteCreated>(
-      `/companies/${companyId}/openclaw/invite-prompt`,
+    api.post<InviteCreated>(
+      `/openclaw/invite-prompt`,
       input,
     ),
 
@@ -124,14 +119,14 @@ export const accessApi = {
       input,
     ),
 
-  listJoinRequests: (companyId: string, status: "pending_approval" | "approved" | "rejected" = "pending_approval") =>
-    api.get<JoinRequest[]>(`/companies/${companyId}/join-requests?status=${status}`),
+  listJoinRequests: (status: "pending_approval" | "approved" | "rejected" = "pending_approval") =>
+    api.get<JoinRequest[]>(`/join-requests?status=${status}`),
 
-  approveJoinRequest: (companyId: string, requestId: string) =>
-    api.post<JoinRequest>(`/companies/${companyId}/join-requests/${requestId}/approve`, {}),
+  approveJoinRequest: (requestId: string) =>
+    api.post<JoinRequest>(`/join-requests/${requestId}/approve`, {}),
 
-  rejectJoinRequest: (companyId: string, requestId: string) =>
-    api.post<JoinRequest>(`/companies/${companyId}/join-requests/${requestId}/reject`, {}),
+  rejectJoinRequest: (requestId: string) =>
+    api.post<JoinRequest>(`/join-requests/${requestId}/reject`, {}),
 
   claimJoinRequestApiKey: (requestId: string, claimSecret: string) =>
     api.post<{ keyId: string; token: string; agentId: string; createdAt: string }>(

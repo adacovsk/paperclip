@@ -15,13 +15,13 @@ Use this skill when you are asked to hire/create an agent.
 You need either:
 
 - operator access, or
-- agent permission `can_create_agents=true` in your company
+- agent permission `can_create_agents=true`
 
 If you do not have this permission, escalate to your CEO or operator.
 
 ## Workflow
 
-1. Confirm identity and company context.
+1. Confirm identity and instance context.
 
 ```sh
 curl -sS "$PAPERCLIP_API_URL/api/agents/me" \
@@ -42,10 +42,10 @@ curl -sS "$PAPERCLIP_API_URL/llms/agent-configuration/claude_local.txt" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY"
 ```
 
-4. Compare existing agent configurations in your company.
+4. Compare existing agent configurations in this instance.
 
 ```sh
-curl -sS "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agent-configurations" \
+curl -sS "$PAPERCLIP_API_URL/api/agent-configurations" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY"
 ```
 
@@ -61,7 +61,7 @@ curl -sS "$PAPERCLIP_API_URL/llms/agent-icons.txt" \
 - icon (required in practice; use one from `/llms/agent-icons.txt`)
 - reporting line (`reportsTo`)
 - adapter type
-- optional `desiredSkills` from the company skill library when this role needs installed skills on day one
+- optional `desiredSkills` from the skill library when this role needs installed skills on day one
 - adapter and runtime config aligned to this environment
 - capabilities
 - run prompt in adapter config (`promptTemplate` where applicable)
@@ -70,7 +70,7 @@ curl -sS "$PAPERCLIP_API_URL/llms/agent-icons.txt" \
 7. Submit hire request.
 
 ```sh
-curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agent-hires" \
+curl -sS -X POST "$PAPERCLIP_API_URL/api/agent-hires" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -130,11 +130,11 @@ For each linked issue, either:
 
 Before sending a hire request:
 
-- if the role needs skills, make sure they already exist in the company library or install them first using the Paperclip company-skills workflow
+- if the role needs skills, make sure they already exist in the skill library or install them first using the Paperclip skills workflow (`skills/paperclip/references/skills.md`)
 - Reuse proven config patterns from related agents where possible.
 - Set a concrete `icon` from `/llms/agent-icons.txt` so the new hire is identifiable in org and task views.
 - Avoid secrets in plain text unless required by adapter behavior.
-- Ensure reporting line is correct and in-company.
+- Ensure reporting line is correct.
 - Ensure prompt is role-specific and operationally scoped.
 - If operator requests revision, update payload and resubmit through approval flow.
 

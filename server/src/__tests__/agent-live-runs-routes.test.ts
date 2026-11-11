@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
 
-const companyId = "22222222-2222-4222-8222-222222222222";
 const agentRunning = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const agentErroredFresh = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const agentErroredStale = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -20,7 +19,7 @@ const mockIssueApprovalService = vi.hoisted(() => ({}));
 const mockIssueService = vi.hoisted(() => ({}));
 const mockSecretService = vi.hoisted(() => ({}));
 const mockAgentInstructionsService = vi.hoisted(() => ({}));
-const mockCompanySkillService = vi.hoisted(() => ({}));
+const mockSkillService = vi.hoisted(() => ({}));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
@@ -29,7 +28,7 @@ vi.mock("../services/index.js", () => ({
   agentInstructionsService: () => mockAgentInstructionsService,
   accessService: () => mockAccessService,
   approvalService: () => mockApprovalService,
-  companySkillService: () => mockCompanySkillService,
+  skillService: () => mockSkillService,
   budgetService: () => mockBudgetService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
@@ -87,7 +86,7 @@ function createApp(db: unknown) {
   return app;
 }
 
-describe("GET /companies/:companyId/live-runs", () => {
+describe("GET /live-runs", () => {
   const liveRuns = [
     runRow({ agentId: agentRunning, status: "running" }),
     runRow({ agentId: agentRunning, status: "queued" }),
@@ -113,7 +112,7 @@ describe("GET /companies/:companyId/live-runs", () => {
 
   it("returns only queued/running runs by default (no recent errors)", async () => {
     const db = createDbStub({ liveRuns, latestPerAgent });
-    const res = await request(createApp(db)).get(`/api/companies/${companyId}/live-runs`);
+    const res = await request(createApp(db)).get(`/api/live-runs`);
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(3);
@@ -124,7 +123,7 @@ describe("GET /companies/:companyId/live-runs", () => {
   it("appends only fresh failed latest-runs when includeRecentErrors=1", async () => {
     const db = createDbStub({ liveRuns, latestPerAgent });
     const res = await request(createApp(db)).get(
-      `/api/companies/${companyId}/live-runs?includeRecentErrors=1`,
+      `/api/live-runs?includeRecentErrors=1`,
     );
 
     expect(res.status).toBe(200);

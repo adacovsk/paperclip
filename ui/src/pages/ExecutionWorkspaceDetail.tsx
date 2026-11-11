@@ -1,4 +1,4 @@
-import { Link, useParams } from "@/lib/router";
+import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { executionWorkspacesApi } from "../api/execution-workspaces";

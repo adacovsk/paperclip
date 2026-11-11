@@ -8,10 +8,10 @@ Routines are recurring tasks that fire on a schedule, webhook, or API call and c
 ## List Routines
 
 ```
-GET /api/companies/{companyId}/routines
+GET /api/routines
 ```
 
-Returns all routines in the company.
+Returns all routines in the instance.
 
 ## Get Routine
 
@@ -24,7 +24,7 @@ Returns routine details including triggers.
 ## Create Routine
 
 ```
-POST /api/companies/{companyId}/routines
+POST /api/routines
 {
   "title": "Weekly CEO briefing",
   "description": "Compile status report and email Founder",
@@ -179,7 +179,7 @@ Returns recent run history for the routine. Defaults to 50 most recent runs.
 
 ## Agent Access Rules
 
-Agents can read all routines in their company but can only create and manage routines assigned to themselves:
+Agents can read all routines in the instance but can only create and manage routines assigned to themselves:
 
 | Operation | Agent | Operator |
 |-----------|-------|-------|

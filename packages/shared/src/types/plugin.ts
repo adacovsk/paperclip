@@ -95,8 +95,8 @@ export interface PluginUiSlotDeclaration {
    */
   entityTypes?: PluginUiSlotEntityType[];
   /**
-   * Optional company-scoped route segment for page slots.
-   * Example: `kitchensink` becomes `/:companyPrefix/kitchensink`.
+   * Optional top-level route segment for page slots.
+   * Example: `kitchensink` becomes `/kitchensink`.
    */
   routePath?: string;
   /**

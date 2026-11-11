@@ -39,7 +39,7 @@ and the remote `task/<id>` branch.
 A closed-unmerged PR is not handled here; it is a decision for the Coordinator.
 
 Usage: merge-sweep.py [--dry-run]
-Env:   PAPERCLIP_PROJECT (required), PAPERCLIP_COMPANY_ID (required),
+Env:   PAPERCLIP_PROJECT (required),
        PAPERCLIP_API_URL (default http://127.0.0.1:3100), PAPERCLIP_API_KEY.
 Exit:  0 swept (including nothing to do), 2 origin/main or the PR list unreadable.
 """
@@ -150,7 +150,6 @@ def unlanded(project: Path, ref: str, pr: Pr) -> list[str]:
 class Api:
     def __init__(self) -> None:
         self.base = os.environ.get("PAPERCLIP_API_URL", "http://127.0.0.1:3100").rstrip("/") + "/api"
-        self.company = os.environ["PAPERCLIP_COMPANY_ID"]
         self.headers = {"Content-Type": "application/json"}
         # No X-Paperclip-Run-Id: it binds to a run UUID, and a bad one half-applies a write.
         if os.environ.get("PAPERCLIP_API_KEY"):
@@ -168,7 +167,7 @@ class Api:
         # own `task/<id>` branch and PR, and filtering on parentId left those in_review
         # forever after merging. Stage children (Verify, Review, Rebase) have no PR
         # headed by their own identifier, so `find_pr` skips them.
-        d = self.call("GET", f"/companies/{self.company}/issues?status=in_review")
+        d = self.call("GET", "/issues?status=in_review")
         return d if isinstance(d, list) else d.get("issues", [])
 
     def close(self, issue: dict, comment: str, status: str = "done") -> None:
@@ -177,7 +176,7 @@ class Api:
         self.call("PATCH", f"/issues/{issue['id']}", {"status": status})
 
     def children(self, issue: dict) -> list[dict]:
-        d = self.call("GET", f"/companies/{self.company}/issues?parentId={issue['id']}")
+        d = self.call("GET", f"/issues?parentId={issue['id']}")
         return d if isinstance(d, list) else d.get("issues", [])
 
 

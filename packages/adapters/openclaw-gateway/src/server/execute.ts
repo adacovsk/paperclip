@@ -12,7 +12,6 @@ type SessionKeyStrategy = "fixed" | "issue" | "run";
 type WakePayload = {
   runId: string;
   agentId: string;
-  companyId: string;
   taskId: string | null;
   issueId: string | null;
   wakeReason: string | null;
@@ -286,7 +285,6 @@ function buildWakePayload(ctx: AdapterExecutionContext): WakePayload {
   return {
     runId,
     agentId: agent.id,
-    companyId: agent.companyId,
     taskId: nonEmpty(context.taskId) ?? nonEmpty(context.issueId),
     issueId: nonEmpty(context.issueId),
     wakeReason: nonEmpty(context.wakeReason),
@@ -340,7 +338,6 @@ function buildWakeText(payload: WakePayload, paperclipEnv: Record<string, string
   const orderedKeys = [
     "PAPERCLIP_RUN_ID",
     "PAPERCLIP_AGENT_ID",
-    "PAPERCLIP_COMPANY_ID",
     "PAPERCLIP_API_URL",
     "PAPERCLIP_TASK_ID",
     "PAPERCLIP_WAKE_REASON",
@@ -397,13 +394,13 @@ function buildWakeText(payload: WakePayload, paperclipEnv: Record<string, string
     "   - If instructions require a comment, POST /api/issues/{issueId}/comments with {\"body\":\"...\"}.",
     "   - PATCH /api/issues/{issueId} with {\"status\":\"done\",\"comment\":\"what changed and why\"}.",
     "4) If issueId does not exist:",
-    "   - GET /api/companies/$PAPERCLIP_COMPANY_ID/issues?assigneeAgentId=$PAPERCLIP_AGENT_ID&status=todo,in_progress,blocked",
+    "   - GET /api/issues?assigneeAgentId=$PAPERCLIP_AGENT_ID&status=todo,in_progress,blocked",
     "   - Pick in_progress first, then todo, then blocked, then execute step 3.",
     "",
     "Useful endpoints for issue work:",
     "- POST /api/issues/{issueId}/comments",
     "- PATCH /api/issues/{issueId}",
-    "- POST /api/companies/{companyId}/issues (when asked to create a new issue)",
+    "- POST /api/issues (when asked to create a new issue)",
     "",
     "Complete the workflow in this run.",
   ];
@@ -435,7 +432,6 @@ function buildStandardPaperclipPayload(
 
   const standardPaperclip: Record<string, unknown> = {
     runId: ctx.runId,
-    companyId: ctx.agent.companyId,
     agentId: ctx.agent.id,
     agentName: ctx.agent.name,
     taskId: wakePayload.taskId,

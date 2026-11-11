@@ -4,7 +4,7 @@ Status: design report, not a V1 commitment
 
 Paperclip V1 explicitly excludes a plugin framework in [doc/SPEC-implementation.md](../SPEC-implementation.md), but the long-horizon spec says the architecture should leave room for extensions. This report studies the `opencode` plugin system and translates the useful patterns into a Paperclip-shaped design.
 
-Assumption for this document: Paperclip is a single-tenant operator-controlled instance. Plugin installation should therefore be global across the instance. "Companies" are still first-class Paperclip objects, but they are organizational records, not tenant-isolation boundaries for plugin trust or installation.
+Assumption for this document: Paperclip is a single-tenant operator-controlled instance. Plugin installation should therefore be global across the instance.
 
 ## Executive Summary
 
@@ -290,7 +290,7 @@ That is the correct mindset for Paperclip too.
 
 `opencode` is basically a local agent runtime, so unsandboxed plugin execution is acceptable for its audience.
 
-Paperclip is a control plane for an operator-managed instance with company objects.
+Paperclip is a control plane for an operator-managed instance.
 The risk profile is different:
 
 - secrets matter
@@ -367,9 +367,9 @@ The products are solving different problems.
 
 | Topic | OpenCode | Paperclip |
 |---|---|---|
-| Primary unit | local project/worktree | single-tenant operator instance with company objects |
+| Primary unit | local project/worktree | single-tenant operator instance |
 | Trust assumption | local power user on own machine | operator managing one trusted Paperclip instance |
-| Failure blast radius | local session/runtime | entire company control plane |
+| Failure blast radius | local session/runtime | entire instance control plane |
 | Extension style | mutate runtime behavior freely | preserve governance and auditability |
 | UI model | local app can load local behavior | operator UI must stay coherent and safe |
 | Security model | host-trusted local plugins | needs capability boundaries and auditability |
@@ -404,7 +404,7 @@ Use distinct plugin classes with different trust models.
 | Platform module | agent adapters, storage providers, secret providers, run-log backends | in-process | highly trusted | tight integration, performance, low-level APIs |
 | Connector plugin | Linear, GitHub Issues, Grafana, Stripe | out-of-process worker or sidecar | medium | external sync, safer isolation, clearer failure boundary |
 | Workspace plugin | file browser, terminal, git workflow, child process/server tracking | out-of-process, direct OS access | medium | resolves workspace paths from host, owns filesystem/git/PTY/process logic directly |
-| UI contribution | dashboard widgets, settings forms, company panels | plugin-shipped React bundles in host extension slots via bridge | medium | plugins own their rendering; host controls slot placement and bridge access |
+| UI contribution | dashboard widgets, settings forms, dashboard panels | plugin-shipped React bundles in host extension slots via bridge | medium | plugins own their rendering; host controls slot placement and bridge access |
 | Automation plugin | alerts, schedulers, sync jobs, webhook processors | out-of-process | medium | event-driven automation is a natural plugin fit |
 
 This split is the most important design recommendation in this report.
@@ -432,7 +432,7 @@ For third-party plugins, the primary API should be:
 
 - subscribe to typed domain events (with optional server-side filtering)
 - emit plugin-namespaced events for cross-plugin communication
-- read instance state, including company-bound business records when relevant
+- read instance state, including business records when relevant
 - register webhooks
 - run scheduled jobs
 - contribute tools that agents can use during runs
@@ -470,7 +470,7 @@ First version extension slots:
 - settings pages
 - detail-page tabs (project, issue, agent, goal, run)
 - sidebar entries
-- company-context plugin pages
+- plugin main pages
 
 The host SDK ships shared components (MetricCard, DataTable, StatusBadge, LogView, etc.) for visual consistency, but these are optional.
 
@@ -485,7 +485,7 @@ Examples:
 
 - install `@paperclip/plugin-linear` once
 - make it available everywhere immediately
-- optionally store mappings over Paperclip objects if one company maps to a different Linear team than another
+- optionally store mappings over Paperclip objects if one project maps to a different Linear team than another
 
 ## 6. Use project workspaces as the primary anchor for local tooling
 
@@ -629,9 +629,9 @@ export default definePlugin({
   ],
   instanceConfigSchema: z.object({
     linearBaseUrl: z.string().url().optional(),
-    companyMappings: z.array(
+    projectMappings: z.array(
       z.object({
-        companyId: z.string(),
+        projectId: z.string(),
         teamId: z.string(),
         apiTokenSecretRef: z.string(),
       }),
@@ -663,12 +663,12 @@ export default definePlugin({
     });
 
     // getData is called by the plugin's own UI components via the host bridge
-    ctx.data.register("sync-health", async ({ companyId }) => {
+    ctx.data.register("sync-health", async ({ projectId }) => {
       // return typed JSON that the plugin's DashboardWidget component renders
       return { syncedCount: 142, trend: "+12 today", mappings: [...] };
     });
 
-    ctx.actions.register("resync", async ({ companyId }) => {
+    ctx.actions.register("resync", async ({ projectId }) => {
       // run sync logic
     });
   },
@@ -682,7 +682,7 @@ The plugin's UI bundle (separate from the worker) might look like:
 import { usePluginData, usePluginAction, MetricCard, ErrorBoundary } from "@paperclipai/plugin-sdk/ui";
 
 export function DashboardWidget({ context }: PluginWidgetProps) {
-  const { data, loading, error } = usePluginData("sync-health", { companyId: context.companyId });
+  const { data, loading, error } = usePluginData("sync-health", { projectId: context.projectId });
   const resync = usePluginAction("resync");
 
   if (loading) return <Spinner />;
@@ -691,7 +691,7 @@ export function DashboardWidget({ context }: PluginWidgetProps) {
   return (
     <ErrorBoundary fallback={<div>Widget failed to render</div>}>
       <MetricCard label="Synced Issues" value={data.syncedCount} trend={data.trend} />
-      <button onClick={() => resync({ companyId: context.companyId })}>Resync Now</button>
+      <button onClick={() => resync({ projectId: context.projectId })}>Resync Now</button>
     </ErrorBoundary>
   );
 }
@@ -702,7 +702,7 @@ The important point is the contract shape:
 
 - typed manifest
 - explicit capabilities
-- explicit global config with optional company mappings
+- explicit global config with optional project mappings
 - event subscriptions with optional server-side filtering
 - plugin-to-plugin events via namespaced event types
 - agent tool contributions
@@ -734,7 +734,7 @@ Capabilities:
 - subscribe to domain events
 - define scheduled sync jobs
 - expose plugin-specific API routes under `/api/plugins/:pluginId/...`
-- use company secret refs
+- use instance secret refs
 - write plugin state
 - publish dashboard data
 - log activity through core APIs
@@ -767,7 +767,6 @@ Any Paperclip plugin system has to preserve core control-plane invariants from t
 That means:
 
 - plugin install is global to the instance
-- "companies" remain business objects in the API and data model, not tenant boundaries
 - approval gates remain core-owned
 - budget hard-stops remain core-owned
 - mutating actions are activity-logged
@@ -779,7 +778,7 @@ I would require the following for every plugin:
 
 Every plugin declares a static capability set such as:
 
-- `companies.read`
+- `instance.read`
 - `issues.read`
 - `issues.write`
 - `events.subscribe`
@@ -817,7 +816,7 @@ Each plugin should expose:
 - last error
 - recent webhook/job history
 
-One broken plugin must not break the rest of the company.
+One broken plugin must not break the rest of the instance.
 
 ## 5. Secret handling
 
@@ -875,7 +874,7 @@ A lot of plugin data naturally hangs off existing Paperclip objects:
 
 - project workspace plugin state should often scope to `project` or `project_workspace`
 - issue sync state should scope to `issue`
-- metrics widgets may scope to `company`, `project`, or `goal`
+- metrics widgets may scope to `instance`, `project`, or `goal`
 - process tracking may scope to `project_workspace`, `agent`, or `run`
 
 That gives a good default keying model before introducing custom tables.
@@ -929,7 +928,7 @@ Suggested fields:
 
 - `id`
 - `plugin_id`
-- `scope_kind` (`instance | company | project | project_workspace | agent | issue | goal | run`)
+- `scope_kind` (`instance | project | project_workspace | agent | issue | goal | run`)
 - `scope_id` nullable
 - `namespace`
 - `state_key`
@@ -1011,7 +1010,7 @@ This is a useful middle ground:
 | GitHub issue tracking | connector plugin | jobs, webhooks, secret refs | very strong plugin candidate |
 | Grafana metrics | connector plugin + dashboard widget | outbound HTTP | probably read-only first |
 | Child process/server tracking | workspace plugin | project workspace metadata | plugin manages processes directly |
-| Stripe revenue tracking | connector plugin | secret refs, scheduled sync, company metrics API | strong plugin candidate |
+| Stripe revenue tracking | connector plugin | secret refs, scheduled sync, instance metrics API | strong plugin candidate |
 
 # Plugin Examples
 
@@ -1025,16 +1024,16 @@ This plugin lets the operator inspect project workspaces, agent workspaces, gene
 - debugging what an agent changed
 - reviewing generated outputs before approval
 - attaching files from a workspace to issues
-- understanding repo layout for a company
+- understanding repo layout for an instance
 - inspecting agent home workspaces in local-trusted mode
 
 ### UX
 
 - Settings page: `/settings/plugins/workspace-files`
-- Main page: `/:companyPrefix/plugins/workspace-files`
-- Project tab: `/:companyPrefix/projects/:projectId?tab=files`
-- Optional issue tab: `/:companyPrefix/issues/:issueId?tab=files`
-- Optional agent tab: `/:companyPrefix/agents/:agentId?tab=workspace`
+- Main page: `/plugins/workspace-files`
+- Project tab: `/projects/:projectId?tab=files`
+- Optional issue tab: `/issues/:issueId?tab=files`
+- Optional agent tab: `/agents/:agentId?tab=workspace`
 
 Main screens and interactions:
 
@@ -1107,10 +1106,10 @@ This plugin gives the operator a controlled terminal UI for project workspaces a
 ### UX
 
 - Settings page: `/settings/plugins/terminal`
-- Main page: `/:companyPrefix/plugins/terminal`
-- Project tab: `/:companyPrefix/projects/:projectId?tab=terminal`
-- Optional agent tab: `/:companyPrefix/agents/:agentId?tab=terminal`
-- Optional run tab: `/:companyPrefix/agents/:agentId/runs/:runId?tab=terminal`
+- Main page: `/plugins/terminal`
+- Project tab: `/projects/:projectId?tab=terminal`
+- Optional agent tab: `/agents/:agentId?tab=terminal`
+- Optional run tab: `/agents/:agentId/runs/:runId?tab=terminal`
 
 Main screens and interactions:
 
@@ -1179,10 +1178,10 @@ This plugin adds repo-aware workflow tooling around issues and workspaces. It is
 ### UX
 
 - Settings page: `/settings/plugins/git`
-- Main page: `/:companyPrefix/plugins/git`
-- Project tab: `/:companyPrefix/projects/:projectId?tab=git`
-- Optional issue tab: `/:companyPrefix/issues/:issueId?tab=git`
-- Optional agent tab: `/:companyPrefix/agents/:agentId?tab=git`
+- Main page: `/plugins/git`
+- Project tab: `/projects/:projectId?tab=git`
+- Optional issue tab: `/issues/:issueId?tab=git`
+- Optional agent tab: `/agents/:agentId?tab=git`
 
 Main screens and interactions:
 
@@ -1256,16 +1255,16 @@ This plugin syncs Paperclip work with Linear. It is useful for:
 - importing backlog from Linear
 - linking Paperclip issues to Linear issues
 - syncing status, comments, and assignees
-- mapping company goals/projects to external product planning
+- mapping instance goals/projects to external product planning
 - giving operator operators a single place to see sync health
 
 ### UX
 
 - Settings page: `/settings/plugins/linear`
-- Main page: `/:companyPrefix/plugins/linear`
-- Dashboard widget: `/:companyPrefix/dashboard`
-- Optional issue tab: `/:companyPrefix/issues/:issueId?tab=linear`
-- Optional project tab: `/:companyPrefix/projects/:projectId?tab=linear`
+- Main page: `/plugins/linear`
+- Dashboard widget: `/dashboard`
+- Optional issue tab: `/issues/:issueId?tab=linear`
+- Optional project tab: `/projects/:projectId?tab=linear`
 
 Main screens and interactions:
 
@@ -1336,16 +1335,16 @@ This plugin syncs Paperclip issues with GitHub Issues and optionally links PRs. 
 - importing repo backlogs
 - mirroring issue status and comments
 - linking PRs to Paperclip issues
-- tracking cross-repo work from inside one company view
+- tracking cross-repo work from inside one instance view
 - bridging engineering workflow with Paperclip task governance
 
 ### UX
 
 - Settings page: `/settings/plugins/github-issues`
-- Main page: `/:companyPrefix/plugins/github-issues`
-- Dashboard widget: `/:companyPrefix/dashboard`
-- Optional issue tab: `/:companyPrefix/issues/:issueId?tab=github`
-- Optional project tab: `/:companyPrefix/projects/:projectId?tab=github`
+- Main page: `/plugins/github-issues`
+- Dashboard widget: `/dashboard`
+- Optional issue tab: `/issues/:issueId?tab=github`
+- Optional project tab: `/projects/:projectId?tab=github`
 
 Main screens and interactions:
 
@@ -1409,7 +1408,7 @@ Package idea: `@paperclip/plugin-grafana`
 
 This plugin surfaces external metrics and dashboards inside Paperclip. It is useful for:
 
-- company KPI visibility
+- instance KPI visibility
 - infrastructure/incident monitoring
 - showing deploy, traffic, latency, or revenue charts next to work
 - creating Paperclip issues from anomalous metrics
@@ -1417,9 +1416,9 @@ This plugin surfaces external metrics and dashboards inside Paperclip. It is use
 ### UX
 
 - Settings page: `/settings/plugins/grafana`
-- Main page: `/:companyPrefix/plugins/grafana`
-- Dashboard widgets: `/:companyPrefix/dashboard`
-- Optional goal tab: `/:companyPrefix/goals/:goalId?tab=metrics`
+- Main page: `/plugins/grafana`
+- Dashboard widgets: `/dashboard`
+- Optional goal tab: `/goals/:goalId?tab=metrics`
 
 Main screens and interactions:
 
@@ -1489,11 +1488,11 @@ This plugin tracks long-lived local processes and dev servers started in project
 ### UX
 
 - Settings page: `/settings/plugins/runtime-processes`
-- Main page: `/:companyPrefix/plugins/runtime-processes`
-- Dashboard widget: `/:companyPrefix/dashboard`
-- Process detail page: `/:companyPrefix/plugins/runtime-processes/:processId`
-- Project tab: `/:companyPrefix/projects/:projectId?tab=processes`
-- Optional agent tab: `/:companyPrefix/agents/:agentId?tab=processes`
+- Main page: `/plugins/runtime-processes`
+- Dashboard widget: `/dashboard`
+- Process detail page: `/plugins/runtime-processes/:processId`
+- Project tab: `/projects/:projectId?tab=processes`
+- Optional agent tab: `/agents/:agentId?tab=processes`
 
 Main screens and interactions:
 
@@ -1553,7 +1552,7 @@ Package idea: `@paperclip/plugin-stripe`
 
 This plugin pulls Stripe revenue and subscription data into Paperclip. It is useful for:
 
-- showing MRR and churn next to company goals
+- showing MRR and churn next to instance goals
 - tracking trials, conversions, and failed payments
 - letting the operator connect revenue movement to ongoing work
 - enabling future financial dashboards beyond token costs
@@ -1561,9 +1560,9 @@ This plugin pulls Stripe revenue and subscription data into Paperclip. It is use
 ### UX
 
 - Settings page: `/settings/plugins/stripe`
-- Main page: `/:companyPrefix/plugins/stripe`
-- Dashboard widgets: `/:companyPrefix/dashboard`
-- Optional company/goal metric tabs if those surfaces exist later
+- Main page: `/plugins/stripe`
+- Dashboard widgets: `/dashboard`
+- Optional instance/goal metric tabs if those surfaces exist later
 
 Main screens and interactions:
 
@@ -1589,7 +1588,7 @@ Core workflows:
 
 - Operator enables the plugin and connects a Stripe account.
 - Webhooks and scheduled reconciliation keep plugin state current.
-- Revenue widgets appear on the main dashboard and can be linked to company goals.
+- Revenue widgets appear on the main dashboard and can be linked to instance goals.
 - Failed payment spikes or churn events can generate Paperclip issues for follow-up.
 
 ### Hooks needed
@@ -1661,7 +1660,7 @@ Build:
 
 - plugin manifest
 - global install/update lifecycle
-- global plugin config and optional company-mapping storage
+- global plugin config and optional project-mapping storage
 - secret ref access
 - typed domain event subscription
 - scheduled jobs

@@ -68,7 +68,7 @@ A signed-in user visits this URL to claim operator ownership. This:
 
 - Promotes the current user to instance admin
 - Demotes the auto-created local operator admin
-- Ensures active company membership for the claiming user
+- Ensures an active instance membership for the claiming user
 
 ## Changing Modes
 

@@ -3,14 +3,14 @@ title: How Delegation Works
 summary: How the CEO breaks down goals into tasks and assigns them to agents
 ---
 
-Delegation is one of Paperclip's most powerful features. You set company goals, and the CEO agent automatically breaks them into tasks and assigns them to the right agents. This guide explains the full lifecycle from your perspective as the operator operator.
+Delegation is one of Paperclip's most powerful features. You set instance goals, and the CEO agent automatically breaks them into tasks and assigns them to the right agents. This guide explains the full lifecycle from your perspective as the operator operator.
 
 ## The Delegation Lifecycle
 
-When you create a company goal, the CEO doesn't just acknowledge it — it builds a plan and mobilizes the team:
+When you create a instance goal, the CEO doesn't just acknowledge it — it builds a plan and mobilizes the team:
 
 ```
-You set a company goal
+You set a instance goal
   → CEO wakes up on heartbeat
   → CEO proposes a strategy (creates an approval for you)
   → You approve the strategy
@@ -27,7 +27,7 @@ Each step is traceable. Every task links back to the goal through a parent hiera
 
 Your role is strategic oversight, not task management. Here's what the delegation model expects from you:
 
-1. **Set clear company goals.** The CEO works from these. Specific, measurable goals produce better delegation. "Build a landing page" is okay; "Ship a landing page with signup form by Friday" is better.
+1. **Set clear instance goals.** The CEO works from these. Specific, measurable goals produce better delegation. "Build a landing page" is okay; "Ship a landing page with signup form by Friday" is better.
 
 2. **Approve the CEO's strategy.** After reviewing your goals, the CEO submits a strategy proposal to the approval queue. Review it, then approve, reject, or request revisions.
 
@@ -55,7 +55,7 @@ You do **not** need to tell the CEO to engage specific agents. After you approve
 
 ### Flat Hierarchy (Small Teams)
 
-For small companies with 3-5 agents, the CEO delegates directly to each report:
+For small instances with 3-5 agents, the CEO delegates directly to each report:
 
 ```
 CEO
@@ -104,7 +104,7 @@ If you've set a goal but nothing is happening, check these common causes:
 | **Approval queue** | The CEO may have submitted a strategy or hire request that's waiting for your approval. This is the most common reason. |
 | **Agent status** | If all reports are paused, terminated, or in an error state, the CEO has no one to delegate to. Check the Agents page. |
 | **Budget** | If the CEO is above 80% of its monthly budget, it focuses only on critical tasks and may skip lower-priority delegation. |
-| **Goals** | If no company goals are set, the CEO has nothing to work from. Create a goal first. |
+| **Goals** | If no instance goals are set, the CEO has nothing to work from. Create a goal first. |
 | **Heartbeat** | Is the CEO's heartbeat enabled and running? Check the agent detail page for recent heartbeat history. |
 | **Agent instructions** | The CEO's delegation behavior is driven by its `AGENTS.md` instructions file. Open the CEO agent's detail page and verify that its instructions path is set and that the file includes delegation directives (subtask creation, hiring, assignment). If AGENTS.md is missing or doesn't mention delegation, the CEO won't know to break down goals and assign work. |
 

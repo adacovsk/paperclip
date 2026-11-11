@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, ExternalLink, Settings } from "lucide-react";
 import type { InstanceSchedulerHeartbeatAgent } from "@paperclipai/shared";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -23,7 +23,7 @@ function humanize(value: string) {
 }
 
 function buildAgentHref(agent: InstanceSchedulerHeartbeatAgent) {
-  return `/${agent.companyIssuePrefix}/agents/${encodeURIComponent(agent.agentUrlKey)}`;
+  return `/agents/${encodeURIComponent(agent.agentUrlKey)}`;
 }
 
 export function InstanceSettings() {
@@ -46,7 +46,7 @@ export function InstanceSettings() {
 
   const toggleMutation = useMutation({
     mutationFn: async (agentRow: InstanceSchedulerHeartbeatAgent) => {
-      const agent = await agentsApi.get(agentRow.id, agentRow.companyId);
+      const agent = await agentsApi.get(agentRow.id);
       const runtimeConfig = asRecord(agent.runtimeConfig) ?? {};
       const heartbeat = asRecord(runtimeConfig.heartbeat) ?? {};
 
@@ -61,14 +61,13 @@ export function InstanceSettings() {
             },
           },
         },
-        agentRow.companyId,
       );
     },
     onSuccess: async (_, agentRow) => {
       setActionError(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.instance.schedulerHeartbeats }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(agentRow.companyId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentRow.id) }),
       ]);
     },
@@ -84,7 +83,7 @@ export function InstanceSettings() {
 
       const results = await Promise.allSettled(
         enabled.map(async (agentRow) => {
-          const agent = await agentsApi.get(agentRow.id, agentRow.companyId);
+          const agent = await agentsApi.get(agentRow.id);
           const runtimeConfig = asRecord(agent.runtimeConfig) ?? {};
           const heartbeat = asRecord(runtimeConfig.heartbeat) ?? {};
           await agentsApi.update(
@@ -95,7 +94,6 @@ export function InstanceSettings() {
                 heartbeat: { ...heartbeat, enabled: false },
               },
             },
-            agentRow.companyId,
           );
         }),
       );
@@ -114,12 +112,9 @@ export function InstanceSettings() {
     },
     onSuccess: async (updatedRows) => {
       setActionError(null);
-      const companies = new Set(updatedRows.map((row) => row.companyId));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.instance.schedulerHeartbeats }),
-        ...Array.from(companies, (companyId) =>
-          queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) }),
-        ),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list }),
         ...updatedRows.map((row) =>
           queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(row.id) }),
         ),
@@ -135,19 +130,6 @@ export function InstanceSettings() {
   const disabledCount = agents.length - activeCount;
   const enabledCount = agents.filter((agent) => agent.heartbeatEnabled).length;
   const anyEnabled = enabledCount > 0;
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, { companyName: string; agents: InstanceSchedulerHeartbeatAgent[] }>();
-    for (const agent of agents) {
-      let group = map.get(agent.companyId);
-      if (!group) {
-        group = { companyName: agent.companyName, agents: [] };
-        map.set(agent.companyId, group);
-      }
-      group.agents.push(agent);
-    }
-    return [...map.values()];
-  }, [agents]);
 
   if (heartbeatsQuery.isLoading) {
     return <div className="text-sm text-muted-foreground">Loading scheduler heartbeats...</div>;
@@ -171,14 +153,13 @@ export function InstanceSettings() {
           <h1 className="text-lg font-semibold">Scheduler Heartbeats</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Agents with a timer heartbeat enabled across all of your companies.
+          Agents with a timer heartbeat enabled on this instance.
         </p>
       </div>
 
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
         <span><span className="font-semibold text-foreground">{activeCount}</span> active</span>
         <span><span className="font-semibold text-foreground">{disabledCount}</span> disabled</span>
-        <span><span className="font-semibold text-foreground">{grouped.length}</span> {grouped.length === 1 ? "company" : "companies"}</span>
         {anyEnabled && (
           <Button
             variant="destructive"
@@ -211,71 +192,66 @@ export function InstanceSettings() {
         />
       ) : (
         <div className="space-y-4">
-          {grouped.map((group) => (
-            <Card key={group.companyName}>
-              <CardContent className="p-0">
-                <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {group.companyName}
-                </div>
-                <div className="divide-y">
-                  {group.agents.map((agent) => {
-                    const saving = toggleMutation.isPending && toggleMutation.variables?.id === agent.id;
-                    return (
-                      <div
-                        key={agent.id}
-                        className="flex items-center gap-3 px-3 py-2 text-sm"
+          <Card>
+            <CardContent className="p-0">
+              <div className="divide-y">
+                {agents.map((agent) => {
+                  const saving = toggleMutation.isPending && toggleMutation.variables?.id === agent.id;
+                  return (
+                    <div
+                      key={agent.id}
+                      className="flex items-center gap-3 px-3 py-2 text-sm"
+                    >
+                      <Badge
+                        variant={agent.schedulerActive ? "default" : "outline"}
+                        className="shrink-0 text-[10px] px-1.5 py-0"
                       >
-                        <Badge
-                          variant={agent.schedulerActive ? "default" : "outline"}
-                          className="shrink-0 text-[10px] px-1.5 py-0"
-                        >
-                          {agent.schedulerActive ? "On" : "Off"}
-                        </Badge>
+                        {agent.schedulerActive ? "On" : "Off"}
+                      </Badge>
+                      <Link
+                        to={buildAgentHref(agent)}
+                        className="font-medium truncate hover:underline"
+                      >
+                        {agent.agentName}
+                      </Link>
+                      <span className="hidden sm:inline text-muted-foreground truncate">
+                        {humanize(agent.title ?? agent.role)}
+                      </span>
+                      <span className="text-muted-foreground tabular-nums shrink-0">
+                        {agent.intervalSec}s
+                      </span>
+                      <span
+                        className="hidden md:inline text-muted-foreground truncate"
+                        title={agent.lastHeartbeatAt ? formatDateTime(agent.lastHeartbeatAt) : undefined}
+                      >
+                        {agent.lastHeartbeatAt
+                          ? relativeTime(agent.lastHeartbeatAt)
+                          : "never"}
+                      </span>
+                      <span className="ml-auto flex items-center gap-1.5 shrink-0">
                         <Link
                           to={buildAgentHref(agent)}
-                          className="font-medium truncate hover:underline"
+                          className="text-muted-foreground hover:text-foreground"
+                          title="Full agent config"
                         >
-                          {agent.agentName}
+                          <ExternalLink className="h-3.5 w-3.5" />
                         </Link>
-                        <span className="hidden sm:inline text-muted-foreground truncate">
-                          {humanize(agent.title ?? agent.role)}
-                        </span>
-                        <span className="text-muted-foreground tabular-nums shrink-0">
-                          {agent.intervalSec}s
-                        </span>
-                        <span
-                          className="hidden md:inline text-muted-foreground truncate"
-                          title={agent.lastHeartbeatAt ? formatDateTime(agent.lastHeartbeatAt) : undefined}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          disabled={saving}
+                          onClick={() => toggleMutation.mutate(agent)}
                         >
-                          {agent.lastHeartbeatAt
-                            ? relativeTime(agent.lastHeartbeatAt)
-                            : "never"}
-                        </span>
-                        <span className="ml-auto flex items-center gap-1.5 shrink-0">
-                          <Link
-                            to={buildAgentHref(agent)}
-                            className="text-muted-foreground hover:text-foreground"
-                            title="Full agent config"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </Link>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-xs"
-                            disabled={saving}
-                            onClick={() => toggleMutation.mutate(agent)}
-                          >
-                            {saving ? "..." : agent.heartbeatEnabled ? "Disable Timer Heartbeat" : "Enable Timer Heartbeat"}
-                          </Button>
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                          {saving ? "..." : agent.heartbeatEnabled ? "Disable Timer Heartbeat" : "Enable Timer Heartbeat"}
+                        </Button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

@@ -1,8 +1,9 @@
-import { and, desc, eq, gte, isNotNull, lt, lte, sql, type AnyColumn } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, lt, lte, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog, agents, companies, costEvents, issues, projects } from "@paperclipai/db";
-import { notFound, unprocessable } from "../errors.js";
+import { activityLog, agents, costEvents, instanceSettings, issues, projects } from "@paperclipai/db";
+import { notFound } from "../errors.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
+import { DEFAULT_SINGLETON_KEY, getOrCreateInstanceSettingsRow } from "./instance-settings.js";
 
 export interface CostDateRange {
   from?: Date;
@@ -21,7 +22,7 @@ const subscriptionBillingList = () =>
  * Cast to bigint, NOT int4: `sum(int4)` in Postgres already widens to bigint, and the
  * explicit `::int` cast this replaces forced it back into int4's ~2.1B ceiling — which
  * threw "integer out of range" on any aggregate whose token total crossed it (e.g. the
- * company-wide by-provider/by-biller rollups). `.mapWith(Number)` coerces the postgres
+ * instance-wide by-provider/by-biller rollups). `.mapWith(Number)` coerces the postgres
  * driver's bigint-as-string back to a JS number (safe: realistic token totals stay far
  * below Number.MAX_SAFE_INTEGER). Run counts and costCents keep `::int` — they are small
  * and the driver already returns int4 as a number.
@@ -46,11 +47,10 @@ function currentUtcMonthWindow(now = new Date()) {
 
 async function getMonthlySpendTotal(
   db: Db,
-  scope: { companyId: string; agentId?: string | null },
+  scope: { agentId?: string | null } = {},
 ) {
   const { start, end } = currentUtcMonthWindow();
   const conditions = [
-    eq(costEvents.companyId, scope.companyId),
     gte(costEvents.occurredAt, start),
     lt(costEvents.occurredAt, end),
   ];
@@ -69,7 +69,7 @@ async function getMonthlySpendTotal(
 export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
   const budgets = budgetService(db, budgetHooks);
   return {
-    createEvent: async (companyId: string, data: Omit<typeof costEvents.$inferInsert, "companyId">) => {
+    createEvent: async (data: typeof costEvents.$inferInsert) => {
       const agent = await db
         .select()
         .from(agents)
@@ -77,15 +77,11 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .then((rows) => rows[0] ?? null);
 
       if (!agent) throw notFound("Agent not found");
-      if (agent.companyId !== companyId) {
-        throw unprocessable("Agent does not belong to company");
-      }
 
       const event = await db
         .insert(costEvents)
         .values({
           ...data,
-          companyId,
           biller: data.biller ?? data.provider,
           billingType: data.billingType ?? "unknown",
           cachedInputTokens: data.cachedInputTokens ?? 0,
@@ -93,9 +89,9 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .returning()
         .then((rows) => rows[0]);
 
-      const [agentMonthSpend, companyMonthSpend] = await Promise.all([
-        getMonthlySpendTotal(db, { companyId, agentId: event.agentId }),
-        getMonthlySpendTotal(db, { companyId }),
+      const [agentMonthSpend, instanceMonthSpend] = await Promise.all([
+        getMonthlySpendTotal(db, { agentId: event.agentId }),
+        getMonthlySpendTotal(db),
       ]);
 
       await db
@@ -107,28 +103,22 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .where(eq(agents.id, event.agentId));
 
       await db
-        .update(companies)
+        .update(instanceSettings)
         .set({
-          spentMonthlyCents: companyMonthSpend,
+          spentMonthlyCents: instanceMonthSpend,
           updatedAt: new Date(),
         })
-        .where(eq(companies.id, companyId));
+        .where(eq(instanceSettings.singletonKey, DEFAULT_SINGLETON_KEY));
 
       await budgets.evaluateCostEvent(event);
 
       return event;
     },
 
-    summary: async (companyId: string, range?: CostDateRange) => {
-      const company = await db
-        .select()
-        .from(companies)
-        .where(eq(companies.id, companyId))
-        .then((rows) => rows[0] ?? null);
+    summary: async (range?: CostDateRange) => {
+      const instance = await getOrCreateInstanceSettingsRow(db);
 
-      if (!company) throw notFound("Company not found");
-
-      const conditions: ReturnType<typeof eq>[] = [eq(costEvents.companyId, companyId)];
+      const conditions: SQL[] = [];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
@@ -141,20 +131,19 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
 
       const spendCents = Number(total);
       const utilization =
-        company.budgetMonthlyCents > 0
-          ? (spendCents / company.budgetMonthlyCents) * 100
+        instance.budgetMonthlyCents > 0
+          ? (spendCents / instance.budgetMonthlyCents) * 100
           : 0;
 
       return {
-        companyId,
         spendCents,
-        budgetCents: company.budgetMonthlyCents,
+        budgetCents: instance.budgetMonthlyCents,
         utilizationPercent: Number(utilization.toFixed(2)),
       };
     },
 
-    byAgent: async (companyId: string, range?: CostDateRange) => {
-      const conditions: ReturnType<typeof eq>[] = [eq(costEvents.companyId, companyId)];
+    byAgent: async (range?: CostDateRange) => {
+      const conditions: SQL[] = [];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
@@ -182,8 +171,8 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .orderBy(desc(sql`coalesce(sum(${costEvents.costCents}), 0)::int`));
     },
 
-    byProvider: async (companyId: string, range?: CostDateRange) => {
-      const conditions: ReturnType<typeof eq>[] = [eq(costEvents.companyId, companyId)];
+    byProvider: async (range?: CostDateRange) => {
+      const conditions: SQL[] = [];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
@@ -211,8 +200,8 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .orderBy(desc(sql`coalesce(sum(${costEvents.costCents}), 0)::int`));
     },
 
-    byBiller: async (companyId: string, range?: CostDateRange) => {
-      const conditions: ReturnType<typeof eq>[] = [eq(costEvents.companyId, companyId)];
+    byBiller: async (range?: CostDateRange) => {
+      const conditions: SQL[] = [];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
@@ -244,7 +233,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
      * last 5 hours, last 24 hours, last 7 days.
      * purely internal consumption data, no external rate-limit sources.
      */
-    windowSpend: async (companyId: string) => {
+    windowSpend: async () => {
       const windows = [
         { label: "5h", hours: 5 },
         { label: "24h", hours: 24 },
@@ -264,12 +253,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
               outputTokens: tokenSum(costEvents.outputTokens),
             })
             .from(costEvents)
-            .where(
-              and(
-                eq(costEvents.companyId, companyId),
-                gte(costEvents.occurredAt, since),
-              ),
-            )
+            .where(gte(costEvents.occurredAt, since))
             .groupBy(costEvents.provider)
             .orderBy(desc(sql`coalesce(sum(${costEvents.costCents}), 0)::int`));
 
@@ -289,13 +273,13 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       return results.flat();
     },
 
-    byAgentModel: async (companyId: string, range?: CostDateRange) => {
-      const conditions: ReturnType<typeof eq>[] = [eq(costEvents.companyId, companyId)];
+    byAgentModel: async (range?: CostDateRange) => {
+      const conditions: SQL[] = [];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
       // single query: group by agent + provider + model.
-      // the (companyId, agentId, occurredAt) composite index covers this well.
+      // the (agentId, occurredAt) composite index covers this well.
       // order by provider + model for stable db-level ordering; cost-desc sort
       // within each agent's sub-rows is done client-side in the ui memo.
       return db
@@ -325,7 +309,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .orderBy(costEvents.provider, costEvents.biller, costEvents.billingType, costEvents.model);
     },
 
-    byProject: async (companyId: string, range?: CostDateRange) => {
+    byProject: async (range?: CostDateRange) => {
       const issueIdAsText = sql<string>`${issues.id}::text`;
       const runProjectLinks = db
         .selectDistinctOn([activityLog.runId, issues.projectId], {
@@ -342,8 +326,6 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         )
         .where(
           and(
-            eq(activityLog.companyId, companyId),
-            eq(issues.companyId, companyId),
             isNotNull(activityLog.runId),
             isNotNull(issues.projectId),
           ),
@@ -352,7 +334,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .as("run_project_links");
 
       const effectiveProjectId = sql<string | null>`coalesce(${costEvents.projectId}, ${runProjectLinks.projectId})`;
-      const conditions: ReturnType<typeof eq>[] = [eq(costEvents.companyId, companyId)];
+      const conditions: SQL[] = [];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 

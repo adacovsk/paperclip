@@ -79,11 +79,10 @@ export function approvalService(db: Db) {
   }
 
   return {
-    list: (companyId: string, status?: string) => {
-      const conditions = [eq(approvals.companyId, companyId)];
-      if (status) conditions.push(eq(approvals.status, status));
-      return db.select().from(approvals).where(and(...conditions));
-    },
+    list: (status?: string) =>
+      status
+        ? db.select().from(approvals).where(eq(approvals.status, status))
+        : db.select().from(approvals),
 
     getById: (id: string) =>
       db
@@ -92,10 +91,10 @@ export function approvalService(db: Db) {
         .where(eq(approvals.id, id))
         .then((rows) => rows[0] ?? null),
 
-    create: (companyId: string, data: Omit<typeof approvals.$inferInsert, "companyId">) =>
+    create: (data: typeof approvals.$inferInsert) =>
       db
         .insert(approvals)
-        .values({ ...data, companyId })
+        .values(data)
         .returning()
         .then((rows) => rows[0]),
 
@@ -116,7 +115,7 @@ export function approvalService(db: Db) {
           await agentsSvc.activatePendingApproval(payloadAgentId);
           hireApprovedAgentId = payloadAgentId;
         } else {
-          const created = await agentsSvc.create(updated.companyId, {
+          const created = await agentsSvc.create({
             name: String(payload.name ?? "New Agent"),
             role: String(payload.role ?? "general"),
             title: typeof payload.title === "string" ? payload.title : null,
@@ -145,7 +144,6 @@ export function approvalService(db: Db) {
             typeof payload.budgetMonthlyCents === "number" ? payload.budgetMonthlyCents : 0;
           if (budgetMonthlyCents > 0) {
             await budgets.upsertPolicy(
-              updated.companyId,
               {
                 scopeType: "agent",
                 scopeId: hireApprovedAgentId,
@@ -156,7 +154,6 @@ export function approvalService(db: Db) {
             );
           }
           void notifyHireApproved(db, {
-            companyId: updated.companyId,
             agentId: hireApprovedAgentId,
             source: "approval",
             sourceId: id,
@@ -231,17 +228,12 @@ export function approvalService(db: Db) {
     },
 
     listComments: async (approvalId: string) => {
-      const existing = await getExistingApproval(approvalId);
+      await getExistingApproval(approvalId);
       const { censorUsernameInLogs } = await instanceSettings.getGeneral();
       return db
         .select()
         .from(approvalComments)
-        .where(
-          and(
-            eq(approvalComments.approvalId, approvalId),
-            eq(approvalComments.companyId, existing.companyId),
-          ),
-        )
+        .where(eq(approvalComments.approvalId, approvalId))
         .orderBy(asc(approvalComments.createdAt))
         .then((comments) => comments.map((comment) => redactApprovalComment(comment, censorUsernameInLogs)));
     },
@@ -251,7 +243,7 @@ export function approvalService(db: Db) {
       body: string,
       actor: { agentId?: string; userId?: string },
     ) => {
-      const existing = await getExistingApproval(approvalId);
+      await getExistingApproval(approvalId);
       const currentUserRedactionOptions = {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
@@ -259,7 +251,6 @@ export function approvalService(db: Db) {
       return db
         .insert(approvalComments)
         .values({
-          companyId: existing.companyId,
           approvalId,
           authorAgentId: actor.agentId ?? null,
           authorUserId: actor.userId ?? null,

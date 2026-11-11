@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { companyService } from "../services/companies.ts";
+import { instanceProfileService } from "../services/instance-profile.ts";
 import { agentService } from "../services/agents.ts";
 
 function createSelectSequenceDb(results: unknown[]) {
@@ -24,13 +24,18 @@ describe("monthly spend hydration", () => {
     vi.clearAllMocks();
   });
 
-  it("recomputes company spentMonthlyCents from the current utc month instead of returning stale stored values", async () => {
+  it("recomputes instance spentMonthlyCents from the current utc month instead of returning stale stored values", async () => {
     const dbStub = createSelectSequenceDb([
       [{
-        id: "company-1",
+        id: "instance-1",
+        singletonKey: "default",
+        general: {},
+        experimental: {},
         name: "Paperclip",
         description: null,
         status: "active",
+        pauseReason: null,
+        pausedAt: null,
         issuePrefix: "PAP",
         issueCounter: 1,
         budgetMonthlyCents: 5000,
@@ -41,23 +46,18 @@ describe("monthly spend hydration", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       }],
-      [{
-        companyId: "company-1",
-        spentMonthlyCents: 420,
-      }],
+      [{ total: 420 }],
     ]);
 
-    const companies = companyService(dbStub.db as any);
-    const [company] = await companies.list();
+    const profile = await instanceProfileService(dbStub.db as any).get();
 
-    expect(company.spentMonthlyCents).toBe(420);
+    expect(profile.spentMonthlyCents).toBe(420);
   });
 
   it("recomputes agent spentMonthlyCents from the current utc month instead of returning stale stored values", async () => {
     const dbStub = createSelectSequenceDb([
       [{
         id: "agent-1",
-        companyId: "company-1",
         name: "Budget Agent",
         role: "general",
         title: null,

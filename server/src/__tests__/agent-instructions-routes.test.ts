@@ -28,7 +28,7 @@ const mockAccessService = vi.hoisted(() => ({
 
 const mockSecretService = vi.hoisted(() => ({
   resolveAdapterConfigForRuntime: vi.fn(),
-  normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown>) => config),
+  normalizeAdapterConfigForPersistence: vi.fn(async (config: Record<string, unknown>) => config),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
@@ -38,7 +38,7 @@ vi.mock("../services/index.js", () => ({
   agentInstructionsService: () => mockAgentInstructionsService,
   accessService: () => mockAccessService,
   approvalService: () => ({}),
-  companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
+  skillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
   budgetService: () => ({}),
   heartbeatService: () => ({}),
   issueApprovalService: () => ({}),
@@ -61,7 +61,6 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
       source: "local_implicit",
       isInstanceAdmin: false,
     };
@@ -75,7 +74,6 @@ function createApp() {
 function makeAgent() {
   return {
     id: "11111111-1111-4111-8111-111111111111",
-    companyId: "company-1",
     name: "Agent",
     role: "engineer",
     title: "Engineer",
@@ -100,7 +98,6 @@ describe("agent instructions bundle routes", () => {
     }));
     mockAgentInstructionsService.getBundle.mockResolvedValue({
       agentId: "11111111-1111-4111-8111-111111111111",
-      companyId: "company-1",
       mode: "managed",
       rootPath: "/tmp/agent-1",
       managedRootPath: "/tmp/agent-1",
@@ -156,7 +153,7 @@ describe("agent instructions bundle routes", () => {
 
   it("returns bundle metadata", async () => {
     const res = await request(createApp())
-      .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle?companyId=company-1");
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({
@@ -170,7 +167,7 @@ describe("agent instructions bundle routes", () => {
 
   it("writes a bundle file and persists compatibility config", async () => {
     const res = await request(createApp())
-      .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?companyId=company-1")
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file")
       .send({
         path: "AGENTS.md",
         content: "# Updated Agent\n",
@@ -212,7 +209,7 @@ describe("agent instructions bundle routes", () => {
     });
 
     const res = await request(createApp())
-      .patch("/api/agents/11111111-1111-4111-8111-111111111111?companyId=company-1")
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111")
       .send({
         adapterType: "claude_local",
         adapterConfig: {
@@ -251,7 +248,7 @@ describe("agent instructions bundle routes", () => {
     });
 
     const res = await request(createApp())
-      .patch("/api/agents/11111111-1111-4111-8111-111111111111?companyId=company-1")
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111")
       .send({
         adapterConfig: {
           command: "codex --profile engineer",
@@ -289,7 +286,7 @@ describe("agent instructions bundle routes", () => {
     });
 
     const res = await request(createApp())
-      .patch("/api/agents/11111111-1111-4111-8111-111111111111?companyId=company-1")
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111")
       .send({
         replaceAdapterConfig: true,
         adapterConfig: {

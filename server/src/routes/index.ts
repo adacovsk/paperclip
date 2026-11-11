@@ -1,6 +1,6 @@
 export { healthRoutes } from "./health.js";
-export { companyRoutes } from "./companies.js";
-export { companySkillRoutes } from "./company-skills.js";
+export { instanceProfileRoutes } from "./instance-profile.js";
+export { skillRoutes } from "./skills.js";
 export { agentRoutes } from "./agents.js";
 export { projectRoutes } from "./projects.js";
 export { issueRoutes } from "./issues.js";

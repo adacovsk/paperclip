@@ -33,7 +33,6 @@ interface CommentReassignment {
 interface CommentThreadProps {
   comments: CommentWithRunMeta[];
   linkedRuns?: LinkedRunItem[];
-  companyId?: string | null;
   projectId?: string | null;
   onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
   issueStatus?: string;
@@ -121,13 +120,11 @@ type TimelineItem =
 const TimelineList = memo(function TimelineList({
   timeline,
   agentMap,
-  companyId,
   projectId,
   highlightCommentId,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
-  companyId?: string | null;
   projectId?: string | null;
   highlightCommentId?: string | null;
 }) {
@@ -187,22 +184,19 @@ const TimelineList = memo(function TimelineList({
                 <Identity name="You" size="sm" />
               )}
               <span className="flex items-center gap-1.5">
-                {companyId ? (
-                  <PluginSlotOutlet
-                    slotTypes={["commentContextMenuItem"]}
-                    entityType="comment"
-                    context={{
-                      companyId,
-                      projectId: projectId ?? null,
-                      entityId: comment.id,
-                      entityType: "comment",
-                      parentEntityId: comment.issueId,
-                    }}
-                    className="flex flex-wrap items-center gap-1.5"
-                    itemClassName="inline-flex"
-                    missingBehavior="placeholder"
-                  />
-                ) : null}
+                <PluginSlotOutlet
+                  slotTypes={["commentContextMenuItem"]}
+                  entityType="comment"
+                  context={{
+                    projectId: projectId ?? null,
+                    entityId: comment.id,
+                    entityType: "comment",
+                    parentEntityId: comment.issueId,
+                  }}
+                  className="flex flex-wrap items-center gap-1.5"
+                  itemClassName="inline-flex"
+                  missingBehavior="placeholder"
+                />
                 <a
                   href={`#comment-${comment.id}`}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
@@ -213,24 +207,21 @@ const TimelineList = memo(function TimelineList({
               </span>
             </div>
             <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
-            {companyId ? (
-              <div className="mt-2 space-y-2">
-                <PluginSlotOutlet
-                  slotTypes={["commentAnnotation"]}
-                  entityType="comment"
-                  context={{
-                    companyId,
-                    projectId: projectId ?? null,
-                    entityId: comment.id,
-                    entityType: "comment",
-                    parentEntityId: comment.issueId,
-                  }}
-                  className="space-y-2"
-                  itemClassName="rounded-md"
-                  missingBehavior="placeholder"
-                />
-              </div>
-            ) : null}
+            <div className="mt-2 space-y-2">
+              <PluginSlotOutlet
+                slotTypes={["commentAnnotation"]}
+                entityType="comment"
+                context={{
+                  projectId: projectId ?? null,
+                  entityId: comment.id,
+                  entityType: "comment",
+                  parentEntityId: comment.issueId,
+                }}
+                className="space-y-2"
+                itemClassName="rounded-md"
+                missingBehavior="placeholder"
+              />
+            </div>
             {comment.runId && (
               <div className="mt-2 pt-2 border-t border-border/60">
                 {comment.runAgentId ? (
@@ -257,7 +248,6 @@ const TimelineList = memo(function TimelineList({
 export function CommentThread({
   comments,
   linkedRuns = [],
-  companyId,
   projectId,
   onAdd,
   agentMap,
@@ -406,7 +396,6 @@ export function CommentThread({
       <TimelineList
         timeline={timeline}
         agentMap={agentMap}
-        companyId={companyId}
         projectId={projectId}
         highlightCommentId={highlightCommentId}
       />

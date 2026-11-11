@@ -30,32 +30,6 @@ pnpm paperclipai issue checkout <issue-id> --agent-id <agent-id>
 pnpm paperclipai issue release <issue-id>
 ```
 
-## Company Commands
-
-```sh
-pnpm paperclipai company list
-pnpm paperclipai company get <company-id>
-
-# Export to portable folder package (writes manifest + markdown files)
-pnpm paperclipai company export <company-id> --out ./exports/acme --include company,agents
-
-# Preview import (no writes)
-pnpm paperclipai company import \
-  <owner>/<repo>/<path> \
-  --target existing \
-  --company-id <company-id> \
-  --ref main \
-  --collision rename \
-  --dry-run
-
-# Apply import
-pnpm paperclipai company import \
-  ./exports/acme \
-  --target new \
-  --new-company-name "Acme Imported" \
-  --include company,agents
-```
-
 ## Agent Commands
 
 ```sh

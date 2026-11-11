@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { activityLog, agents, companies, createDb, issueComments, issues } from "@paperclipai/db";
+import { activityLog, agents, createDb, instanceSettings, issueComments, issues } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -35,51 +35,39 @@ describeEmbeddedPostgres("issueService.create open-subtask dedupe", () => {
     await db.delete(activityLog);
     await db.delete(issues);
     await db.delete(agents);
-    await db.delete(companies);
+    await db.delete(instanceSettings);
   });
 
   afterAll(async () => {
     await tempDb?.cleanup();
   });
 
-  async function seedCompany() {
-    const companyId = randomUUID();
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
-    return companyId;
-  }
-
-  async function createParent(companyId: string) {
-    return svc.create(companyId, {
+  async function createParent() {
+    return svc.create({
       title: "Parent task",
       description: "A parent that stage subtasks hang off.",
       status: "in_review",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
   }
 
   it("returns the existing open subtask instead of failing the duplicate create", async () => {
-    const companyId = await seedCompany();
-    const parent = await createParent(companyId);
+    const parent = await createParent();
 
-    const first = await svc.create(companyId, {
+    const first = await svc.create({
       parentId: parent.id,
       dedupeKey: "verify",
       title: "Verify: first",
       description: "The stage subtask that wins the race.",
       status: "todo",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
 
-    const second = await svc.create(companyId, {
+    const second = await svc.create({
       parentId: parent.id,
       dedupeKey: "verify",
       title: "Verify: second",
       description: "The stage subtask that loses the race.",
       status: "todo",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
 
     // Create-or-get, not create-again and not a 500.
     expect(second.id).toBe(first.id);
@@ -90,20 +78,19 @@ describeEmbeddedPostgres("issueService.create open-subtask dedupe", () => {
   });
 
   it("resolves concurrent duplicate creates to one subtask", async () => {
-    const companyId = await seedCompany();
-    const parent = await createParent(companyId);
+    const parent = await createParent();
 
     // The race the partial unique index was added to close: both callers see no
     // existing subtask, both insert, one gets 23505.
     const results = await Promise.all(
       [1, 2, 3].map((n) =>
-        svc.create(companyId, {
+        svc.create({
           parentId: parent.id,
           dedupeKey: "review",
           title: `Review: caller ${n}`,
           description: "One of several concurrent stage-subtask creates.",
           status: "todo",
-        } as Parameters<typeof svc.create>[1]),
+        } as Parameters<typeof svc.create>[0]),
       ),
     );
 
@@ -115,50 +102,48 @@ describeEmbeddedPostgres("issueService.create open-subtask dedupe", () => {
   });
 
   it("allows a second subtask once the first is no longer open", async () => {
-    const companyId = await seedCompany();
-    const parent = await createParent(companyId);
+    const parent = await createParent();
 
-    const first = await svc.create(companyId, {
+    const first = await svc.create({
       parentId: parent.id,
       dedupeKey: "verify",
       title: "Verify: first attempt",
       description: "The stage subtask that finishes.",
       status: "todo",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
 
     await svc.update(first.id, { status: "done" });
 
-    const second = await svc.create(companyId, {
+    const second = await svc.create({
       parentId: parent.id,
       dedupeKey: "verify",
       title: "Verify: second attempt",
       description: "A fresh stage subtask after the first one closed.",
       status: "todo",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
 
     expect(second.id).not.toBe(first.id);
   });
 
   it("keeps the same dedupeKey independent across parents", async () => {
-    const companyId = await seedCompany();
-    const parentA = await createParent(companyId);
-    const parentB = await createParent(companyId);
+    const parentA = await createParent();
+    const parentB = await createParent();
 
-    const a = await svc.create(companyId, {
+    const a = await svc.create({
       parentId: parentA.id,
       dedupeKey: "verify",
       title: "Verify: parent A",
       description: "Stage subtask under the first parent.",
       status: "todo",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
 
-    const b = await svc.create(companyId, {
+    const b = await svc.create({
       parentId: parentB.id,
       dedupeKey: "verify",
       title: "Verify: parent B",
       description: "Stage subtask under the second parent.",
       status: "todo",
-    } as Parameters<typeof svc.create>[1]);
+    } as Parameters<typeof svc.create>[0]);
 
     expect(b.id).not.toBe(a.id);
   });

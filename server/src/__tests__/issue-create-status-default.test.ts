@@ -20,10 +20,10 @@ const mockRoutineService = vi.hoisted(() => ({
 
 vi.mock("../services/index.js", () => ({
   accessService: () => ({ canUser: vi.fn(async () => true), hasPermission: vi.fn(async () => true) }),
-  agentService: () => ({ getById: vi.fn(async () => ({ id: "agent-1", companyId: "company-1", role: "ceo", permissions: {} })) }),
+  agentService: () => ({ getById: vi.fn(async () => ({ id: "agent-1", role: "ceo", permissions: {} })) }),
   documentService: () => ({ getIssueDocumentPayload: vi.fn(async () => ({})) }),
   executionWorkspaceService: () => ({ getById: vi.fn() }),
-  goalService: () => ({ getById: vi.fn(), getDefaultCompanyGoal: vi.fn() }),
+  goalService: () => ({ getById: vi.fn(), getDefaultInstanceGoal: vi.fn() }),
   heartbeatService: () => ({ wakeup: vi.fn(async () => undefined), reportRunActivity: vi.fn(async () => undefined) }),
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
@@ -50,7 +50,7 @@ const OPERATOR = {
   userId: "user-1",
   source: "session",
   isInstanceAdmin: true,
-  companyIds: ["company-1"],
+  isMember: true,
 };
 
 const CRONLESS = "11111111-1111-4111-8111-111111111111";
@@ -63,11 +63,11 @@ function routine(assigneeAgentId: string, triggers: Array<Record<string, unknown
 const CRON_TRIGGER = { kind: "schedule", enabled: true, cronExpression: "15 20 * * *" };
 
 async function createIssue(body: Record<string, unknown>) {
-  return request(createApp()).post("/api/companies/company-1/issues").send({ title: "t", ...body });
+  return request(createApp()).post("/api/issues").send({ title: "t", ...body });
 }
 
 function statusPassedToCreate() {
-  return mockIssueService.create.mock.calls[0]?.[1]?.status;
+  return mockIssueService.create.mock.calls[0]?.[0]?.status;
 }
 
 describe("issue create resolves a reachable default status", () => {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Request, RequestHandler } from "express";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agentApiKeys, agents, companyMemberships, instanceUserRoles } from "@paperclipai/db";
+import { agentApiKeys, agents, instanceUserRoles, memberships } from "@paperclipai/db";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
@@ -42,27 +42,28 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         }
         if (session?.user?.id) {
           const userId = session.user.id;
-          const [roleRow, memberships] = await Promise.all([
+          const [roleRow, membershipRow] = await Promise.all([
             db
               .select({ id: instanceUserRoles.id })
               .from(instanceUserRoles)
               .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
               .then((rows) => rows[0] ?? null),
             db
-              .select({ companyId: companyMemberships.companyId })
-              .from(companyMemberships)
+              .select({ id: memberships.id })
+              .from(memberships)
               .where(
                 and(
-                  eq(companyMemberships.principalType, "user"),
-                  eq(companyMemberships.principalId, userId),
-                  eq(companyMemberships.status, "active"),
+                  eq(memberships.principalType, "user"),
+                  eq(memberships.principalId, userId),
+                  eq(memberships.status, "active"),
                 ),
-              ),
+              )
+              .then((rows) => rows[0] ?? null),
           ]);
           req.actor = {
             type: "operator",
             userId,
-            companyIds: memberships.map((row) => row.companyId),
+            isMember: Boolean(membershipRow),
             isInstanceAdmin: Boolean(roleRow),
             runId: runIdHeader ?? undefined,
             source: "session",
@@ -90,7 +91,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         req.actor = {
           type: "operator",
           userId: operatorKey.userId,
-          companyIds: access.companyIds,
+          isMember: access.isMember,
           isInstanceAdmin: access.isInstanceAdmin,
           keyId: operatorKey.id,
           runId: runIdHeader || undefined,
@@ -121,7 +122,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         .where(eq(agents.id, claims.sub))
         .then((rows) => rows[0] ?? null);
 
-      if (!agentRecord || agentRecord.companyId !== claims.company_id) {
+      if (!agentRecord) {
         next();
         return;
       }
@@ -134,7 +135,6 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
       req.actor = {
         type: "agent",
         agentId: claims.sub,
-        companyId: claims.company_id,
         keyId: undefined,
         runId: runIdHeader || claims.run_id || undefined,
         source: "agent_jwt",
@@ -162,7 +162,6 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
     req.actor = {
       type: "agent",
       agentId: key.agentId,
-      companyId: key.companyId,
       keyId: key.id,
       runId: runIdHeader || undefined,
       source: "agent_key",

@@ -19,12 +19,12 @@ These are aggregated per agent per month (UTC calendar month).
 
 ## Setting Budgets
 
-### Company Budget
+### Instance Budget
 
-Set an overall monthly budget for the company:
+Set an overall monthly budget for the instance:
 
 ```
-PATCH /api/companies/{companyId}
+PATCH /api/instance/profile
 { "budgetMonthlyCents": 100000 }
 ```
 
@@ -52,14 +52,14 @@ An auto-paused agent can be resumed by increasing its budget or waiting for the 
 
 ### Dashboard
 
-The dashboard shows current month spend vs budget for the company and each agent.
+The dashboard shows current month spend vs budget for the instance and each agent.
 
 ### Cost Breakdown API
 
 ```
-GET /api/companies/{companyId}/costs/summary     # Company total
-GET /api/companies/{companyId}/costs/by-agent     # Per-agent breakdown
-GET /api/companies/{companyId}/costs/by-project   # Per-project breakdown
+GET /api/costs/summary     # Instance total
+GET /api/costs/by-agent     # Per-agent breakdown
+GET /api/costs/by-project   # Per-project breakdown
 ```
 
 ## Best Practices

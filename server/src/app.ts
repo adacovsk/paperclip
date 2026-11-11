@@ -10,8 +10,8 @@ import { actorMiddleware } from "./middleware/auth.js";
 import { operatorMutationGuard } from "./middleware/operator-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
 import { healthRoutes } from "./routes/health.js";
-import { companyRoutes } from "./routes/companies.js";
-import { companySkillRoutes } from "./routes/company-skills.js";
+import { instanceProfileRoutes } from "./routes/instance-profile.js";
+import { skillRoutes } from "./routes/skills.js";
 import { agentRoutes } from "./routes/agents.js";
 import { projectRoutes } from "./routes/projects.js";
 import { issueRoutes } from "./routes/issues.js";
@@ -69,7 +69,6 @@ export async function createApp(
     allowedHostnames: string[];
     bindHost: string;
     authReady: boolean;
-    companyDeletionEnabled: boolean;
     instanceId?: string;
     hostVersion?: string;
     localPluginDir?: string;
@@ -80,7 +79,7 @@ export async function createApp(
   const app = express();
 
   app.use(express.json({
-    // Company import/export payloads can inline full portable packages.
+    // Import/export payloads can inline full portable packages.
     limit: "10mb",
     verify: (req, _res, buf) => {
       (req as unknown as { rawBody: Buffer }).rawBody = buf;
@@ -137,11 +136,10 @@ export async function createApp(
       deploymentMode: opts.deploymentMode,
       deploymentExposure: opts.deploymentExposure,
       authReady: opts.authReady,
-      companyDeletionEnabled: opts.companyDeletionEnabled,
     }),
   );
-  api.use("/companies", companyRoutes(db));
-  api.use(companySkillRoutes(db));
+  api.use(instanceProfileRoutes(db));
+  api.use(skillRoutes(db));
   api.use(agentRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));

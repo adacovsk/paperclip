@@ -225,7 +225,7 @@ def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str],
                     now: float, last_fired: dict[str, dict] | None = None) -> tuple[list[dict], list[tuple[dict, str]]]:
     """(firings owed a wake, [(firing a later one replaces, what replaces it)]).
 
-    `issues` are a company's open routine firings. A routine files one task per firing
+    `issues` are the instance's open routine firings. A routine files one task per firing
     and wakes its agent once; when that wake dies (the usage limit was out), the task
     sits assigned with no run, and the schedule's next firing files another beside it
     instead of retrying. Two daily routines went three days without one completed run
@@ -294,7 +294,7 @@ def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str],
 
 
 def routine_last_fired(routines: list[dict]) -> dict[str, dict]:
-    """`last_fired` for missed_routines, from the company's routine list."""
+    """`last_fired` for missed_routines, from the routine list."""
     out = {}
     for routine in routines:
         run = routine.get("lastRun") or {}
@@ -438,7 +438,7 @@ def file_wedges(api, found: list[dict], filed_before: list[dict]) -> list[str]:
                            f"wedge   {a['agentName']}: reopen {mine[-1]['identifier']} as a recurrence")
         else:
             created = api.write(
-                "POST", f"/companies/{api.company}/issues",
+                "POST", "/issues",
                 {"title": f"{prefix}holds queued runs, none running", "status": "blocked", "priority": "high",
                  "description": "The per-agent start lock or an `idle in transaction` backend is holding the "
                                 "queue. Guards that should bound it: `AGENT_START_LOCK_MAX_HOLD_MS`, "
@@ -607,7 +607,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     now = time.time()
     me = os.environ.get("PAPERCLIP_AGENT_ID")
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
-    live_runs = api.get(f"/companies/{api.company}/live-runs") or []
+    live_runs = api.get("/live-runs") or []
 
     pending = load(PENDING_FILE)
     finished = finish_toggles(api, pending)
@@ -619,7 +619,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
                            closed_parent_check(api, open_issues), parent_owed)
     routine_firings = api.issues(status=",".join(UNRUN_STATUSES + PARKED_STATUSES), includeRoutineExecutions="true")
-    last_fired = routine_last_fired(api.get(f"/companies/{api.company}/routines") or [])
+    last_fired = routine_last_fired(api.get("/routines") or [])
     refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now, last_fired)
     for old, by in superseded:
         supersede(api, old, by)
@@ -655,7 +655,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         main_nightly = previous.get("nightly") or nightly(project, now)
 
     names = {a["id"]: a["name"] for a in roster}
-    digest = run_digest(api.get(f"/companies/{api.company}/heartbeat-runs?limit={DIGEST_ROWS}") or [], names, now)
+    digest = run_digest(api.get(f"/heartbeat-runs?limit={DIGEST_ROWS}") or [], names, now)
 
     reap_at = previous.get("reapAt", 0)
     if now - reap_at >= REAP_SCAN_SECONDS and launch_reap(api.dry_run):
@@ -700,7 +700,7 @@ def main() -> int:
     project = Path(os.environ["PAPERCLIP_PROJECT"])
     api = dispatch.Api(args.dry_run)
     report = sweep(api, project, set(dispatch.open_pr_heads(project)),
-                   api.get(f"/companies/{api.company}/agents"), dispatch.verify_quiet_since(api))
+                   api.get("/agents"), dispatch.verify_quiet_since(api))
     print(json.dumps(report, indent=1))
     return 0
 

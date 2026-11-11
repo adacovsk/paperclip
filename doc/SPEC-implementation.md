@@ -15,14 +15,14 @@ When there is a conflict, `SPEC-implementation.md` controls V1 behavior.
 
 Paperclip V1 must provide a full control-plane loop for autonomous agents:
 
-1. A human operator creates a company and defines goals.
+1. A human operator names the instance and defines goals.
 2. The operator creates and manages agents in an org tree.
 3. Agents receive and execute tasks via heartbeat invocations.
 4. All work is tracked through tasks/comments with audit visibility.
 5. Token/cost usage is reported and budget limits can stop work.
 6. The operator can intervene anywhere (pause agents/tasks, override decisions).
 
-Success means one operator can run a small AI-native company end-to-end with clear visibility and control.
+Success means one operator can run a small AI-native organization end-to-end with clear visibility and control.
 
 ## 3. Explicit V1 Product Decisions
 
@@ -30,11 +30,11 @@ These decisions close open questions from `SPEC.md` for V1.
 
 | Topic | V1 Decision |
 |---|---|
-| Tenancy | Single-tenant deployment, multi-company data model |
-| Company model | Company is first-order; all business entities are company-scoped |
+| Tenancy | Single-tenant deployment; one instance is one organization |
+| Instance model | The instance is the top-level container; every business entity belongs to it |
 | Operator | Single human operator operator per deployment |
 | Org graph | Strict tree (`reports_to` nullable root); no multi-manager reporting |
-| Visibility | Full visibility to operator and all agents in same company |
+| Visibility | Full visibility to operator and all agents in the instance |
 | Communication | Tasks + comments only (no separate chat system) |
 | Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | No automatic reassignment; work recovery stays manual/explicit |
@@ -52,20 +52,20 @@ As of 2026-02-17, the repo already includes:
 - React UI pages for dashboard/agents/projects/goals/issues lists
 - PostgreSQL schema via Drizzle with embedded PostgreSQL fallback when `DATABASE_URL` is unset
 
-V1 implementation extends this baseline into a company-centric, governance-aware control plane.
+V1 implementation extends this baseline into an instance-wide, governance-aware control plane.
 
 ## 5. V1 Scope
 
 ## 5.1 In Scope
 
-- Company lifecycle (create/list/get/update/archive)
-- Goal hierarchy linked to company mission
+- Instance profile (get/update, pause/resume)
+- Goal hierarchy linked to instance mission
 - Agent lifecycle with org structure and adapter configuration
 - Task lifecycle with parent/child hierarchy and comments
 - Atomic task checkout and explicit task status transitions
 - Operator approvals for hires and CEO strategy proposal
 - Heartbeat invocation, status tracking, and cancellation
-- Cost event ingestion and rollups (agent/task/project/company)
+- Cost event ingestion and rollups (agent/task/project/instance)
 - Budget settings and hard-stop enforcement
 - Operator web UI for dashboard, org chart, tasks, agents, approvals, costs
 - Agent-facing API contract (task read/write, heartbeat report, cost report)
@@ -117,19 +117,22 @@ All core tables include `id`, `created_at`, `updated_at` unless noted.
 
 Human auth tables (`users`, `sessions`, and provider-specific auth artifacts) are managed by the selected auth library. This spec treats them as required dependencies and references `users.id` where user attribution is needed.
 
-## 7.1 `companies`
+## 7.1 `instance_settings`
+
+Singleton row (`singleton_key = 'default'`) holding the instance profile:
 
 - `id` uuid pk
 - `name` text not null
 - `description` text null
-- `status` enum: `active | paused | archived`
+- `status` enum: `active | paused`
+- `issue_prefix` text not null, `issue_counter` int not null
+- `budget_monthly_cents`, `spent_monthly_cents` int not null
 
-Invariant: every business record belongs to exactly one company.
+There is no tenant column: every business record belongs to the instance.
 
 ## 7.2 `agents`
 
 - `id` uuid pk
-- `company_id` uuid fk `companies.id` not null
 - `name` text not null
 - `role` text not null
 - `title` text null
@@ -145,7 +148,6 @@ Invariant: every business record belongs to exactly one company.
 
 Invariants:
 
-- agent and manager must be in same company
 - no cycles in reporting tree
 - `terminated` agents cannot be resumed
 
@@ -153,7 +155,6 @@ Invariants:
 
 - `id` uuid pk
 - `agent_id` uuid fk `agents.id` not null
-- `company_id` uuid fk `companies.id` not null
 - `name` text not null
 - `key_hash` text not null
 - `last_used_at` timestamptz null
@@ -164,20 +165,18 @@ Invariant: plaintext key shown once at creation; only hash stored.
 ## 7.4 `goals`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `title` text not null
 - `description` text null
-- `level` enum: `company | team | agent | task`
+- `level` enum: `instance | team | agent | task`
 - `parent_id` uuid fk `goals.id` null
 - `owner_agent_id` uuid fk `agents.id` null
 - `status` enum: `planned | active | achieved | cancelled`
 
-Invariant: at least one root `company` level goal per company.
+Invariant: at least one root `instance` level goal.
 
 ## 7.5 `projects`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `goal_id` uuid fk `goals.id` null
 - `name` text not null
 - `description` text null
@@ -188,7 +187,6 @@ Invariant: at least one root `company` level goal per company.
 ## 7.6 `issues` (core task entity)
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `project_id` uuid fk `projects.id` null
 - `goal_id` uuid fk `goals.id` null
 - `parent_id` uuid fk `issues.id` null
@@ -208,14 +206,13 @@ Invariant: at least one root `company` level goal per company.
 Invariants:
 
 - single assignee only
-- task must trace to company goal chain via `goal_id`, `parent_id`, or project-goal linkage
+- task must trace to instance goal chain via `goal_id`, `parent_id`, or project-goal linkage
 - `in_progress` requires assignee
 - terminal states: `done | cancelled`
 
 ## 7.7 `issue_comments`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `issue_id` uuid fk `issues.id` not null
 - `author_agent_id` uuid fk `agents.id` null
 - `author_user_id` uuid fk `users.id` null
@@ -224,7 +221,6 @@ Invariants:
 ## 7.8 `heartbeat_runs`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `agent_id` uuid fk not null
 - `invocation_source` enum: `scheduler | manual | callback`
 - `status` enum: `queued | running | succeeded | failed | cancelled | timed_out`
@@ -237,7 +233,6 @@ Invariants:
 ## 7.9 `cost_events`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `agent_id` uuid fk `agents.id` not null
 - `issue_id` uuid fk `issues.id` null
 - `project_id` uuid fk `projects.id` null
@@ -250,12 +245,11 @@ Invariants:
 - `cost_cents` int not null
 - `occurred_at` timestamptz not null
 
-Invariant: each event must attach to agent and company; rollups are aggregation, never manually edited.
+Invariant: each event must attach to an agent; rollups are aggregation, never manually edited.
 
 ## 7.10 `approvals`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `type` enum: `hire_agent | approve_ceo_strategy`
 - `requested_by_agent_id` uuid fk `agents.id` null
 - `requested_by_user_id` uuid fk `users.id` null
@@ -268,7 +262,6 @@ Invariant: each event must attach to agent and company; rollups are aggregation,
 ## 7.11 `activity_log`
 
 - `id` uuid pk
-- `company_id` uuid fk not null
 - `actor_type` enum: `agent | user | system`
 - `actor_id` uuid/text not null
 - `action` text not null
@@ -277,12 +270,12 @@ Invariant: each event must attach to agent and company; rollups are aggregation,
 - `details` jsonb null
 - `created_at` timestamptz not null default now()
 
-## 7.12 `company_secrets` + `company_secret_versions`
+## 7.12 `secrets` + `secret_versions`
 
 - Secret values are not stored inline in `agents.adapter_config.env`.
 - Agent env entries should use secret refs for sensitive values.
-- `company_secrets` tracks identity/provider metadata per company.
-- `company_secret_versions` stores encrypted/reference material per version.
+- `secrets` tracks identity/provider metadata per secret.
+- `secret_versions` stores encrypted/reference material per version.
 - Default provider in local deployments: `local_encrypted`.
 
 Operational policy:
@@ -293,28 +286,27 @@ Operational policy:
 
 ## 7.13 Required Indexes
 
-- `agents(company_id, status)`
-- `agents(company_id, reports_to)`
-- `issues(company_id, status)`
-- `issues(company_id, assignee_agent_id, status)`
-- `issues(company_id, parent_id)`
-- `issues(company_id, project_id)`
-- `cost_events(company_id, occurred_at)`
-- `cost_events(company_id, agent_id, occurred_at)`
-- `heartbeat_runs(company_id, agent_id, started_at desc)`
-- `approvals(company_id, status, type)`
-- `activity_log(company_id, created_at desc)`
-- `assets(company_id, created_at desc)`
-- `assets(company_id, object_key)` unique
-- `issue_attachments(company_id, issue_id)`
-- `company_secrets(company_id, name)` unique
-- `company_secret_versions(secret_id, version)` unique
+- `agents(status)`
+- `agents(reports_to)`
+- `issues(status)`
+- `issues(assignee_agent_id, status)`
+- `issues(parent_id)`
+- `issues(project_id)`
+- `cost_events(occurred_at)`
+- `cost_events(agent_id, occurred_at)`
+- `heartbeat_runs(agent_id, started_at desc)`
+- `approvals(status, type)`
+- `activity_log(created_at desc)`
+- `assets(created_at desc)`
+- `assets(object_key)` unique
+- `issue_attachments(issue_id)`
+- `secrets(name)` unique
+- `secret_versions(secret_id, version)` unique
 
 ## 7.14 `assets` + `issue_attachments`
 
 - `assets` stores provider-backed object metadata (not inline bytes):
   - `id` uuid pk
-  - `company_id` uuid fk not null
   - `provider` enum/text (`local_disk | s3`)
   - `object_key` text not null
   - `content_type` text not null
@@ -325,7 +317,6 @@ Operational policy:
   - `created_by_user_id` uuid/text fk null
 - `issue_attachments` links assets to issues/comments:
   - `id` uuid pk
-  - `company_id` uuid fk not null
   - `issue_id` uuid fk not null
   - `asset_id` uuid fk not null
   - `issue_comment_id` uuid fk null
@@ -334,7 +325,6 @@ Operational policy:
 
 - `documents` stores editable text-first documents:
   - `id` uuid pk
-  - `company_id` uuid fk not null
   - `title` text null
   - `format` text not null (`markdown`)
   - `latest_body` text not null
@@ -346,14 +336,12 @@ Operational policy:
   - `updated_by_user_id` uuid/text fk null
 - `document_revisions` stores append-only history:
   - `id` uuid pk
-  - `company_id` uuid fk not null
   - `document_id` uuid fk not null
   - `revision_number` int not null
   - `body` text not null
   - `change_summary` text null
 - `issue_documents` links documents to issues with a stable workflow key:
   - `id` uuid pk
-  - `company_id` uuid fk not null
   - `issue_id` uuid fk not null
   - `document_id` uuid fk not null
   - `key` text not null (`plan`, `design`, `notes`, etc.)
@@ -400,62 +388,59 @@ Side effects:
 ## 9.1 Operator Auth
 
 - Session-based auth for human operator
-- Operator has full read/write across all companies in deployment
+- Operator has full read/write across the instance
 - Every operator mutation writes to `activity_log`
 
 ## 9.2 Agent Auth
 
-- Bearer API key mapped to one agent and company
+- Bearer API key mapped to one agent
 - Agent key scope:
-  - read org/task/company context for own company
+  - read org/task/instance context
   - read/write own assigned tasks and comments
   - create tasks/comments for delegation
   - report heartbeat status
   - report cost events
 - Agent cannot:
   - bypass approval gates
-  - modify company-wide budgets directly
+  - modify instance-wide budgets directly
   - mutate auth/keys
 
 ## 9.3 Permission Matrix (V1)
 
 | Action | Operator | Agent |
 |---|---|---|
-| Create company | yes | no |
 | Hire/create agent | yes (direct) | request via approval |
 | Pause/resume agent | yes | no |
 | Create/update task | yes | yes |
 | Force reassign task | yes | limited |
 | Approve strategy/hire requests | yes | no |
 | Report cost | yes | yes |
-| Set company budget | yes | no |
+| Set instance budget | yes | no |
 | Set subordinate budget | yes | yes (manager subtree only) |
 
 ## 10. API Contract (REST)
 
 All endpoints are under `/api` and return JSON.
 
-## 10.1 Companies
+## 10.1 Instance Profile
 
-- `GET /companies`
-- `POST /companies`
-- `GET /companies/:companyId`
-- `PATCH /companies/:companyId`
-- `PATCH /companies/:companyId/branding`
-- `POST /companies/:companyId/archive`
+- `GET /instance/profile`
+- `PATCH /instance/profile`
+- `PATCH /instance/profile/branding`
+- `POST /instance/logo`
 
 ## 10.2 Goals
 
-- `GET /companies/:companyId/goals`
-- `POST /companies/:companyId/goals`
+- `GET /goals`
+- `POST /goals`
 - `GET /goals/:goalId`
 - `PATCH /goals/:goalId`
 - `DELETE /goals/:goalId` (soft delete optional, hard delete operator-only)
 
 ## 10.3 Agents
 
-- `GET /companies/:companyId/agents`
-- `POST /companies/:companyId/agents`
+- `GET /agents`
+- `POST /agents`
 - `GET /agents/:agentId`
 - `PATCH /agents/:agentId`
 - `POST /agents/:agentId/pause`
@@ -466,8 +451,8 @@ All endpoints are under `/api` and return JSON.
 
 ## 10.4 Tasks (Issues)
 
-- `GET /companies/:companyId/issues`
-- `POST /companies/:companyId/issues`
+- `GET /issues`
+- `POST /issues`
 - `GET /issues/:issueId`
 - `PATCH /issues/:issueId`
 - `GET /issues/:issueId/documents`
@@ -479,7 +464,7 @@ All endpoints are under `/api` and return JSON.
 - `POST /issues/:issueId/release`
 - `POST /issues/:issueId/comments`
 - `GET /issues/:issueId/comments`
-- `POST /companies/:companyId/issues/:issueId/attachments` (multipart upload)
+- `POST /issues/:issueId/attachments` (multipart upload)
 - `GET /issues/:issueId/attachments`
 - `GET /attachments/:attachmentId/content`
 - `DELETE /attachments/:attachmentId`
@@ -503,31 +488,31 @@ Server behavior:
 
 ## 10.5 Projects
 
-- `GET /companies/:companyId/projects`
-- `POST /companies/:companyId/projects`
+- `GET /projects`
+- `POST /projects`
 - `GET /projects/:projectId`
 - `PATCH /projects/:projectId`
 
 ## 10.6 Approvals
 
-- `GET /companies/:companyId/approvals?status=pending`
-- `POST /companies/:companyId/approvals`
+- `GET /approvals?status=pending`
+- `POST /approvals`
 - `POST /approvals/:approvalId/approve`
 - `POST /approvals/:approvalId/reject`
 
 ## 10.7 Cost and Budgets
 
-- `POST /companies/:companyId/cost-events`
-- `GET /companies/:companyId/costs/summary`
-- `GET /companies/:companyId/costs/by-agent`
-- `GET /companies/:companyId/costs/by-project`
-- `PATCH /companies/:companyId/budgets`
+- `POST /cost-events`
+- `GET /costs/summary`
+- `GET /costs/by-agent`
+- `GET /costs/by-project`
+- `PATCH /budgets`
 - `PATCH /agents/:agentId/budgets`
 
 ## 10.8 Activity and Dashboard
 
-- `GET /companies/:companyId/activity`
-- `GET /companies/:companyId/dashboard`
+- `GET /activity`
+- `GET /dashboard`
 
 Dashboard payload must include:
 
@@ -652,7 +637,7 @@ Operator can at any time:
 
 ## 13.1 Budget Layers
 
-- company monthly budget
+- instance monthly budget
 - agent monthly budget
 - optional project budget (if configured)
 
@@ -668,7 +653,7 @@ Operator may override by raising budget or explicitly resuming agent.
 
 ## 13.3 Cost Event Ingestion
 
-`POST /companies/:companyId/cost-events` body:
+`POST /cost-events` body:
 
 ```json
 {
@@ -688,7 +673,7 @@ Validation:
 
 - non-negative token counts
 - `costCents >= 0`
-- company ownership checks for all linked entities
+- existence checks for all linked entities
 
 ## 13.4 Rollups
 
@@ -700,17 +685,15 @@ Materialized rollups can be added later if query latency exceeds targets.
 V1 UI routes:
 
 - `/` dashboard
-- `/companies` company list/create
-- `/companies/:id/org` org chart and agent status
-- `/companies/:id/tasks` task list/kanban
-- `/companies/:id/agents/:agentId` agent detail
-- `/companies/:id/costs` cost and budget dashboard
-- `/companies/:id/approvals` pending/history approvals
-- `/companies/:id/activity` audit/event stream
+- `/org` org chart and agent status
+- `/tasks` task list/kanban
+- `/agents/:agentId` agent detail
+- `/costs` cost and budget dashboard
+- `/approvals` pending/history approvals
+- `/activity` audit/event stream
 
 Required UX behaviors:
 
-- global company selector
 - quick actions: pause/resume agent, create task, approve/reject request
 - conflict toasts on atomic checkout failure
 - no silent background failures; every failed run visible in UI
@@ -727,7 +710,7 @@ Required UX behaviors:
 
 - Drizzle migrations are source of truth
 - no destructive migration in-place for V1 upgrade path
-- provide migration script from existing minimal tables to company-scoped schema
+- provide migration script from existing minimal tables to the V1 schema
 
 ## 15.3 Logging and Audit
 
@@ -737,7 +720,7 @@ Required UX behaviors:
 
 ## 15.4 Reliability Targets
 
-- API p95 latency under 250 ms for standard CRUD at 1k tasks/company
+- API p95 latency under 250 ms for standard CRUD at 1k tasks
 - heartbeat invoke acknowledgement under 2 s for process adapter
 - no lost approval decisions (transactional writes)
 
@@ -747,7 +730,7 @@ Required UX behaviors:
 - redact secrets in logs (`adapter_config`, auth headers, env vars)
 - CSRF protection for operator session endpoints
 - rate limit auth and key-management endpoints
-- strict company boundary checks on every entity fetch/mutation
+- instance access checks (authenticated actor, active membership) on every entity fetch/mutation
 
 ## 17. Testing Strategy
 
@@ -766,7 +749,7 @@ Required UX behaviors:
 
 ## 17.3 End-to-End Tests
 
-- operator creates company -> hires CEO -> approves strategy -> CEO receives work
+- operator names the instance -> hires CEO -> approves strategy -> CEO receives work
 - agent reports cost -> budget threshold reached -> auto-pause occurs
 - task delegation across teams with request depth increment
 
@@ -782,11 +765,10 @@ A release candidate is blocked unless these pass:
 
 ## 18. Delivery Plan
 
-## Milestone 1: Company Core and Auth
+## Milestone 1: Instance Core and Auth
 
-- add `companies` and company scoping to existing entities
+- add the instance profile to `instance_settings`
 - add operator session auth and agent API keys
-- migrate existing API routes to company-aware paths
 
 ## Milestone 2: Task and Governance Semantics
 
@@ -809,21 +791,21 @@ A release candidate is blocked unless these pass:
 
 ## Milestone 5: Operator UI Completion
 
-- add company selector and org chart view
+- add org chart view
 - add approvals and cost pages
 
 ## Milestone 6: Hardening and Release
 
 - full integration/e2e suite
-- seed/demo company templates for local testing
+- seed/demo org templates for local testing
 - release checklist and docs update
 
 ## 19. Acceptance Criteria (Release Gate)
 
 V1 is complete only when all criteria are true:
 
-1. A operator user can create multiple companies and switch between them.
-2. A company can run at least one active heartbeat-enabled agent.
+1. An operator user can name the instance and set its goal.
+2. The instance can run at least one active heartbeat-enabled agent.
 3. Task checkout is conflict-safe with `409` on concurrent claims.
 4. Agents can update tasks/comments and report costs with API keys only.
 5. Operator can approve/reject hire and CEO strategy requests in UI.

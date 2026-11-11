@@ -78,36 +78,29 @@ The properties panel slides in when you click into a detail view and slides out 
 
 The sidebar is the primary navigation. It is grouped into logical sections with collapsible headers.
 
-### 3.1 Company Header
+### 3.1 Instance Header
 
 Top of sidebar. Always visible.
 
 ```
 ┌─────────────────────────┐
-│ [icon] Acme Corp      ▼ │  ← Company switcher dropdown
+│ [icon] Acme Corp        │  ← Instance name
 ├─────────────────────────┤
 │ [🔍]  [✏️]              │  ← Search + New Issue
 └─────────────────────────┘
 ```
 
-**Company switcher** is a dropdown button that occupies the full width of the sidebar header. It shows:
-- Company icon (first letter avatar with company color, or uploaded icon)
-- Company name (truncated with ellipsis if long)
-- Chevron-down icon
+The **instance header** occupies the full width of the sidebar header. It shows:
+- Instance icon (first letter avatar with brand color, or uploaded logo)
+- Instance name (truncated with ellipsis if long)
 
-Clicking opens a dropdown with:
-- List of all companies (with status dot: green=active, yellow=paused, gray=archived)
-- Search field at top of dropdown (for users with many companies)
-- Divider
-- `+ Create company` action at the bottom
-
-Below the company name, a row of icon buttons:
+Below the instance name, a row of icon buttons:
 - **Search** (magnifying glass icon) — opens Cmd+K search modal
-- **New Issue** (pencil/square-pen icon) — opens new issue modal in the current company context
+- **New Issue** (pencil/square-pen icon) — opens new issue modal
 
 ### 3.2 Personal Section
 
-No section header — these are always at the top, below the company header.
+No section header — these are always at the top, below the instance header.
 
 ```
   Inbox                    3
@@ -129,17 +122,17 @@ Section header: **Work** (collapsible, with a chevron toggle)
     Views
 ```
 
-- **Issues** — main task list for the selected company. This is the workhorse view.
+- **Issues** — main task list for the instance. This is the workhorse view.
 - **Projects** — project list. Projects group issues and link to goals.
-- **Goals** — company goal hierarchy.
+- **Goals** — instance goal hierarchy.
 - **Views** — saved filter/sort configurations (e.g., "Critical bugs", "Unassigned tasks", "CEO's tasks"). Users can create, name, and pin custom views here.
 
-### 3.4 Company Section
+### 3.4 Instance Section
 
-Section header: **Company** (collapsible)
+Section header: **Instance** (collapsible)
 
 ```
-  Company                  ▼
+  Instance                 ▼
     Dashboard
     Org Chart
     Agents
@@ -147,7 +140,7 @@ Section header: **Company** (collapsible)
     Activity
 ```
 
-- **Dashboard** — company health overview: agent statuses, task velocity, cost burn, pending approvals count.
+- **Dashboard** — instance health overview: agent statuses, task velocity, cost burn, pending approvals count.
 - **Org Chart** — interactive tree visualization of the agent reporting hierarchy.
 - **Agents** — flat list of all agents with status, role, last heartbeat, spend.
 - **Costs** — cost dashboard with breakdowns by agent, project, model, time.
@@ -268,7 +261,7 @@ The issue list is the default view when clicking "Issues" in the sidebar.
 Each row contains, left to right:
 1. **Checkbox** — for bulk selection. Hidden by default, appears on hover (left of priority).
 2. **Priority indicator** — icon representing critical/high/medium/low (see Color System above). Always visible.
-3. **Issue key** — e.g., `CLIP-5`. Monospace, muted color. The prefix is derived from the project (or company if no project).
+3. **Issue key** — e.g., `CLIP-5`. Monospace, muted color. The prefix is derived from the project (or the instance issue prefix if no project).
 4. **Status circle** — clickable to open status change dropdown (same as reference screenshot). The circle's fill/color reflects current status.
 5. **Title** — primary text, truncated with ellipsis if too long.
 6. **Assignee** — avatar (agent icon) + agent name, right-aligned. If unassigned, shows a dashed circle placeholder.
@@ -422,7 +415,7 @@ Triggered by the sidebar pencil icon, keyboard shortcut `C`, or the `+` buttons 
 ```
 
 **Top bar:**
-- Breadcrumb showing context: project key (or company key) `›` "New issue".
+- Breadcrumb showing context: project key (or instance issue prefix) `›` "New issue".
 - "Save as draft" button.
 - Expand icon (open as full page instead of modal).
 - Close `×`.
@@ -516,7 +509,7 @@ Goals are displayed as a hierarchical tree, since goals have parent-child relati
 ┌─────────────────────────────────────────────────────────┐
 │ Goals                                    [+ New goal]   │
 ├─────────────────────────────────────────────────────────┤
-│ ▼ 🎯 Build the #1 AI note-taking app    Company  Active│
+│ ▼ 🎯 Build the #1 AI note-taking app   Instance Active│
 │   ▼ 🎯 Grow signups to 10k              Team     Active│
 │       🎯 Launch marketing campaign       Agent  Planned │
 │       🎯 Optimize onboarding funnel      Agent  Planned │
@@ -526,7 +519,7 @@ Goals are displayed as a hierarchical tree, since goals have parent-child relati
 └─────────────────────────────────────────────────────────┘
 ```
 
-Each row: expand chevron (if has children), target icon, title, level badge (Company/Team/Agent/Task), status badge.
+Each row: expand chevron (if has children), target icon, title, level badge (Instance/Team/Agent/Task), status badge.
 
 Indentation reflects hierarchy. Clicking a goal opens its detail view.
 
@@ -538,7 +531,7 @@ Three-pane layout. Middle pane shows title, description, child goals, and linked
 
 ## 8. Dashboard
 
-The dashboard is the company health overview. Shown when clicking "Dashboard" in the Company section.
+The dashboard is the instance health overview. Shown when clicking "Dashboard" in the Instance section.
 
 ### 8.1 Layout
 
@@ -748,7 +741,7 @@ Right pane: Type, Status, Requested by, Requested at, Decided by, Decided at, De
 └─────────────────────────────────────────────────────────┘
 ```
 
-Top: company-wide budget progress bar (large, prominent).
+Top: instance-wide budget progress bar (large, prominent).
 
 Two side-by-side tables: breakdown by agent and by project. Each row shows entity name and spend amount.
 
@@ -823,7 +816,7 @@ Items are grouped by category, with the most actionable items first:
 - **[View details →]** link for complex approvals (approve_ceo_strategy) that need full review before deciding.
 - "See all approvals →" link in the category header navigates to `/approvals`.
 
-**Alerts.** Agent errors (failed heartbeats, error status) and budget alerts (agents or company approaching 80% or 100% limits). Each links to the relevant agent or cost page.
+**Alerts.** Agent errors (failed heartbeats, error status) and budget alerts (agents or the instance approaching 80% or 100% limits). Each links to the relevant agent or cost page.
 
 **Stale work.** Tasks in `in_progress` or `todo` with no activity (no comments, no status changes) beyond a configurable threshold (default: 24h). Each shows issue key, title, and time since last activity. Clicking navigates to the issue.
 
@@ -900,8 +893,7 @@ The properties panel is always dismissible — it should never block the main co
 Every list view should have a thoughtful empty state:
 
 - **No issues:** "No issues yet. Create your first issue to start tracking work." with a `[Create issue]` button.
-- **No agents:** "No agents in this company. Create an agent to start building your team." with a `[Create agent]` button.
-- **No company selected:** "Select a company to get started." with a company switcher or `[Create company]` button.
+- **No agents:** "No agents yet. Create an agent to start building your team." with a `[Create agent]` button.
 
 Empty states should use a muted illustration (simple line art, not cartoons) and a single call-to-action.
 
@@ -936,11 +928,11 @@ Build on top of shadcn/ui components with these customizations:
 
 ## 21. URL Structure
 
-All routes are company-scoped after company selection (company context stored in React context, not URL):
+Routes have no prefix segment; the instance is implicit:
 
 ```
 /                           → redirects to /dashboard
-/dashboard                  → company dashboard
+/dashboard                  → instance dashboard
 /inbox                      → inbox / attention items
 /my-issues                  → operator operator's issues
 /issues                     → issue list
@@ -957,8 +949,7 @@ All routes are company-scoped after company selection (company context stored in
 /approvals/:approvalId      → approval detail
 /costs                      → cost dashboard
 /activity                   → activity log
-/companies                  → company management (list/create)
-/settings                   → company settings
+/settings                   → instance profile and settings
 ```
 
 ---
@@ -966,7 +957,7 @@ All routes are company-scoped after company selection (company context stored in
 ## 22. Implementation Priority
 
 ### Phase 1: Shell and Navigation
-1. Sidebar redesign (grouped sections, icons, company switcher, badges)
+1. Sidebar redesign (grouped sections, icons, instance header, badges)
 2. Breadcrumb bar component
 3. Three-pane layout system
 4. Cmd+K search modal
@@ -985,7 +976,7 @@ All routes are company-scoped after company selection (company context stored in
 13. Goal hierarchy view
 14. Agent list + detail view
 
-### Phase 4: Company-Level Views
+### Phase 4: Instance-Level Views
 15. Inbox with inline approval actions (primary approval UX)
 16. Dashboard redesign with metric cards
 17. Org chart interactive visualization

@@ -1,4 +1,4 @@
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { Identity } from "./Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
@@ -38,10 +38,9 @@ const ACTION_VERBS: Record<string, string> = {
   "goal.deleted": "deleted",
   "cost.reported": "reported cost for",
   "cost.recorded": "recorded cost for",
-  "company.created": "created company",
-  "company.updated": "updated company",
-  "company.archived": "archived",
-  "company.budget_updated": "updated budget for",
+  "instance.updated": "updated instance",
+  "instance.branding_updated": "updated branding for",
+  "instance.budget_updated": "updated budget for",
 };
 
 function humanizeValue(value: unknown): string {

@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
-import { Link, useNavigate, useLocation } from "@/lib/router";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
@@ -64,7 +63,6 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, showTerminated: boolean
 }
 
 export function Agents() {
-  const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
@@ -79,24 +77,22 @@ export function Agents() {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data: agents, isLoading, error } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
 
   const { data: orgTree } = useQuery({
-    queryKey: queryKeys.org(selectedCompanyId!),
-    queryFn: () => agentsApi.org(selectedCompanyId!),
-    enabled: !!selectedCompanyId && effectiveView === "org",
+    queryKey: queryKeys.org,
+    queryFn: () => agentsApi.org(),
+    enabled: effectiveView === "org",
   });
 
   // This polls every 15s, so it fetches the live-runs endpoint (already filtered to
   // queued/running server-side) rather than the full run history the page only
   // reduced down to live runs anyway.
   const { data: runs } = useQuery({
-    queryKey: queryKeys.liveRuns(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.liveRuns,
+    queryFn: () => heartbeatsApi.liveRuns(),
     refetchInterval: 15_000,
   });
 
@@ -123,10 +119,6 @@ export function Agents() {
   useEffect(() => {
     setBreadcrumbs([{ label: "Agents" }]);
   }, [setBreadcrumbs]);
-
-  if (!selectedCompanyId) {
-    return <EmptyState icon={Bot} message="Select a company to view agents." />;
-  }
 
   if (isLoading) {
     return <PageSkeleton variant="list" />;

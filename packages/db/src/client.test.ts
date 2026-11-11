@@ -52,12 +52,12 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
-        const richMagnetoHash = await migrationHash("0030_rich_magneto.sql");
+        const instanceSettingsHash = await migrationHash("0036_cheerful_nitro.sql");
 
         await sql.unsafe(
-          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${richMagnetoHash}'`,
+          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${instanceSettingsHash}'`,
         );
-        await sql.unsafe(`DROP TABLE "company_logos"`);
+        await sql.unsafe(`DROP TABLE "instance_settings"`);
       } finally {
         await sql.end();
       }
@@ -65,7 +65,7 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
       const pendingState = await inspectMigrations(connectionString);
       expect(pendingState).toMatchObject({
         status: "needsMigrations",
-        pendingMigrations: ["0030_rich_magneto.sql"],
+        pendingMigrations: ["0036_cheerful_nitro.sql"],
         reason: "pending-migrations",
       });
 
@@ -81,60 +81,17 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
-              AND table_name IN ('company_logos', 'execution_workspaces')
+              AND table_name IN ('execution_workspaces', 'instance_settings')
             ORDER BY table_name
           `,
         );
         expect(rows.map((row) => row.table_name)).toEqual([
-          "company_logos",
           "execution_workspaces",
+          "instance_settings",
         ]);
       } finally {
         await verifySql.end();
       }
-    },
-  );
-
-  it(
-    "replays migration 0044 safely when its schema changes already exist",
-    async () => {
-      const connectionString = await createTempDatabase();
-
-      await applyPendingMigrations(connectionString);
-
-      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
-      try {
-        const illegalToadHash = await migrationHash("0044_illegal_toad.sql");
-
-        await sql.unsafe(
-          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${illegalToadHash}'`,
-        );
-
-        const columns = await sql.unsafe<{ column_name: string }[]>(
-          `
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'instance_settings'
-              AND column_name = 'general'
-          `,
-        );
-        expect(columns).toHaveLength(1);
-      } finally {
-        await sql.end();
-      }
-
-      const pendingState = await inspectMigrations(connectionString);
-      expect(pendingState).toMatchObject({
-        status: "needsMigrations",
-        pendingMigrations: ["0044_illegal_toad.sql"],
-        reason: "pending-migrations",
-      });
-
-      await applyPendingMigrations(connectionString);
-
-      const finalState = await inspectMigrations(connectionString);
-      expect(finalState.status).toBe("upToDate");
     },
   );
 

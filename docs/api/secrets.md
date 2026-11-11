@@ -8,7 +8,7 @@ Manage encrypted secrets that agents reference in their environment configuratio
 ## List Secrets
 
 ```
-GET /api/companies/{companyId}/secrets
+GET /api/secrets
 ```
 
 Returns secret metadata (not decrypted values).
@@ -16,7 +16,7 @@ Returns secret metadata (not decrypted values).
 ## Create Secret
 
 ```
-POST /api/companies/{companyId}/secrets
+POST /api/secrets
 {
   "name": "anthropic-api-key",
   "value": "sk-ant-..."

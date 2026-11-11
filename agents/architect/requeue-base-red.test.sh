@@ -25,7 +25,6 @@ fail() { printf 'FAIL - %s\n' "$1"; fails=$((fails+1)); }
 
 export XDG_CACHE_HOME="$D/cache"
 export PAPERCLIP_PROJECT="$D/proj"
-export PAPERCLIP_COMPANY_ID=co
 export PAPERCLIP_API_URL=http://api.invalid
 V="$XDG_CACHE_HOME/paperclip-verify"
 mkdir -p "$V" "$D/bin"

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { agents, companies, createDb, heartbeatRunEvents, heartbeatRuns } from "@paperclipai/db";
+import { agents, createDb, heartbeatRunEvents, heartbeatRuns } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -22,7 +22,6 @@ const DAY = 24 * 60 * 60 * 1000;
 describeEmbeddedPostgres("pruneRunHistory", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
-  let companyId!: string;
   let agentId!: string;
 
   const now = new Date("2026-09-24T00:00:00.000Z");
@@ -33,17 +32,9 @@ describeEmbeddedPostgres("pruneRunHistory", () => {
   }, 120_000);
 
   beforeEach(async () => {
-    companyId = randomUUID();
     agentId = randomUUID();
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "Worker",
       role: "engineer",
       status: "active",
@@ -58,7 +49,6 @@ describeEmbeddedPostgres("pruneRunHistory", () => {
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
-    await db.delete(companies);
   });
 
   afterAll(async () => {
@@ -69,7 +59,6 @@ describeEmbeddedPostgres("pruneRunHistory", () => {
     const id = randomUUID();
     await db.insert(heartbeatRuns).values({
       id,
-      companyId,
       agentId,
       status: opts.status,
       stdoutExcerpt: "x".repeat(200),
@@ -85,7 +74,6 @@ describeEmbeddedPostgres("pruneRunHistory", () => {
 
   async function addEvent(runId: string, ageDays: number) {
     await db.insert(heartbeatRunEvents).values({
-      companyId,
       runId,
       agentId,
       seq: 1,

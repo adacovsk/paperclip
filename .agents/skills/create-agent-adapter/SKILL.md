@@ -55,7 +55,7 @@ All adapter interfaces live in `packages/adapter-utils/src/types.ts`. Import fro
 // The execute function signature — every adapter must implement this
 interface AdapterExecutionContext {
   runId: string;
-  agent: AdapterAgent;          // { id, companyId, name, adapterType, adapterConfig }
+  agent: AdapterAgent;          // { id, name, adapterType, adapterConfig }
   runtime: AdapterRuntime;      // { sessionId, sessionParams, sessionDisplayId, taskKey }
   config: Record<string, unknown>;  // The agent's adapterConfig blob
   context: Record<string, unknown>; // Runtime context (taskId, wakeReason, approvalId, etc.)
@@ -144,7 +144,6 @@ interface AdapterEnvironmentTestResult {
 }
 
 interface AdapterEnvironmentTestContext {
-  companyId: string;
   adapterType: string;
   config: Record<string, unknown>; // runtime-resolved adapterConfig
 }
@@ -268,7 +267,7 @@ This is the most important file. It receives an `AdapterExecutionContext` and mu
 1. **Read config** — extract typed values from `ctx.config` using helpers (`asString`, `asNumber`, `asBoolean`, `asStringArray`, `parseObject` from `@paperclipai/adapter-utils/server-utils`)
 2. **Build environment** — call `buildPaperclipEnv(agent)` then layer in `PAPERCLIP_RUN_ID`, context vars (`PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`, `PAPERCLIP_WAKE_COMMENT_ID`, `PAPERCLIP_APPROVAL_ID`, `PAPERCLIP_APPROVAL_STATUS`, `PAPERCLIP_LINKED_ISSUE_IDS`), user env overrides, and auth token
 3. **Resolve session** — check `runtime.sessionParams` / `runtime.sessionId` for an existing session; validate it's compatible (e.g. same cwd); decide whether to resume or start fresh
-4. **Render prompt** — use `renderTemplate(template, data)` with the template variables: `agentId`, `companyId`, `runId`, `company`, `agent`, `run`, `context`
+4. **Render prompt** — use `renderTemplate(template, data)` with the template variables: `agentId`, `runId`, `agent`, `run`, `context`
 5. **Call onMeta** — emit adapter invocation metadata before spawning the process
 6. **Spawn the process** — use `runChildProcess()` for CLI-based agents or `fetch()` for HTTP-based agents
 7. **Parse output** — convert the agent's stdout into structured data (session id, usage, summary, errors)
@@ -280,7 +279,6 @@ This is the most important file. It receives an `AdapterExecutionContext` and mu
 | Variable | Source |
 |----------|--------|
 | `PAPERCLIP_AGENT_ID` | `agent.id` |
-| `PAPERCLIP_COMPANY_ID` | `agent.companyId` |
 | `PAPERCLIP_API_URL` | Server's own URL |
 | `PAPERCLIP_RUN_ID` | Current run id |
 | `PAPERCLIP_TASK_ID` | `context.taskId` or `context.issueId` |

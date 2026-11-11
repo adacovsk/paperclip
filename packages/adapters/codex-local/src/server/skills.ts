@@ -25,7 +25,7 @@ async function buildCodexSkillSnapshot(
     desired: desiredSet.has(entry.key),
     managed: true,
     state: desiredSet.has(entry.key) ? "configured" : "available",
-    origin: entry.required ? "paperclip_required" : "company_managed",
+    origin: entry.required ? "paperclip_required" : "library_managed",
     originLabel: entry.required ? "Required by Paperclip" : "Managed by Paperclip",
     readOnly: false,
     sourcePath: entry.source,

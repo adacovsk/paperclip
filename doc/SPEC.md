@@ -4,22 +4,22 @@ Target specification for the Paperclip control plane. Living document — update
 
 ---
 
-## 1. Company Model [DRAFT]
+## 1. Instance Model [DRAFT]
 
-A Company is a first-order object. One Paperclip instance runs multiple Companies. A Company does not have a standalone "goal" field — its direction is defined by its set of Initiatives (see Task Hierarchy Mapping).
+The Instance is the top-level object: one Paperclip instance is one organization. The Instance does not have a standalone "goal" field — its direction is defined by its set of Initiatives (see Task Hierarchy Mapping).
 
 ### Fields (Draft)
 
 | Field       | Type          | Notes                             |
 | ----------- | ------------- | --------------------------------- |
 | `id`        | uuid          | Primary key                       |
-| `name`      | string        | Company name                      |
+| `name`      | string        | Instance name                     |
 | `createdAt` | timestamp     |                                   |
 | `updatedAt` | timestamp     |                                   |
 
 ### Operator Governance [DRAFT]
 
-Every Company has a **Operator** that governs high-impact decisions. The Operator is the human oversight layer.
+Every Instance has an **Operator** that governs high-impact decisions. The Operator is the human oversight layer.
 
 **V1: Single human Operator.** One human operator.
 
@@ -33,7 +33,7 @@ Every Company has a **Operator** that governs high-impact decisions. The Operato
 
 The Operator has **unrestricted access** to the entire system at all times:
 
-- **Set and modify Company budgets** — the Operator sets top-level token/LLM cost budgets
+- **Set and modify Instance budgets** — the Operator sets top-level token/LLM cost budgets
 - **Pause/resume any Agent** — stop an Agent's heartbeat immediately
 - **Pause/resume any work item** — pause a task, project, subtask tree, milestone. Paused items are not picked up by Agents.
 - **Full project management access** — create, edit, comment on, modify, delete, reassign any task/project/milestone through the UI
@@ -44,7 +44,7 @@ The Operator is not just an approval gate — it's a live control surface. The h
 
 #### Budget Delegation
 
-The Operator sets Company-level budgets. The CEO can set budgets for Agents below them, and every manager Agent can do the same for their reports. How this cascading budget delegation works in practice is TBD, but the permission structure supports it. The Operator can manually override any budget at any level.
+The Operator sets Instance-level budgets. The CEO can set budgets for Agents below them, and every manager Agent can do the same for their reports. How this cascading budget delegation works in practice is TBD, but the permission structure supports it. The Operator can manually override any budget at any level.
 
 **Future governance models** (not V1):
 
@@ -55,8 +55,8 @@ The Operator sets Company-level budgets. The CEO can set budgets for Agents belo
 ### Open Questions
 
 - External revenue/expense tracking — future plugin. Token/LLM cost budgeting is core.
-- Company-level settings and configuration?
-- Company lifecycle (pause, archive, delete)?
+- Instance-level settings and configuration?
+- Instance lifecycle (pause, resume)?
 - What governance-gated actions exist beyond hiring and CEO strategy approval?
 
 ---
@@ -95,17 +95,17 @@ Each adapter type defines its own config schema. Examples:
 
 #### Exportable Org Configs
 
-A key goal: **the entire org's agent configurations are exportable.** You can export a company's complete agent setup — every agent, their adapter configs, org structure — as a portable artifact. This enables:
+A key goal: **the entire org's agent configurations are exportable.** You can export an instance's complete agent setup — every agent, their adapter configs, org structure — as a portable artifact. This enables:
 
-- Sharing company templates ("here's a pre-built marketing agency org")
-- Version controlling your company configuration
-- Duplicating/forking companies
+- Sharing org templates ("here's a pre-built marketing agency org")
+- Version controlling your instance configuration
+- Duplicating/forking an org into another instance
 
 #### Context Delivery
 
 Configurable per agent. Two ends of the spectrum:
 
-- **Fat payload** — Paperclip bundles relevant context (current tasks, messages, company state, metrics) into the heartbeat invocation. Suited for simple/stateless agents that can't call back to Paperclip.
+- **Fat payload** — Paperclip bundles relevant context (current tasks, messages, instance state, metrics) into the heartbeat invocation. Suited for simple/stateless agents that can't call back to Paperclip.
 - **Thin ping** — Heartbeat is just a wake-up signal. Agent calls Paperclip's API to fetch whatever context it needs. Suited for sophisticated agents that manage their own state.
 
 #### Minimum Contract
@@ -126,10 +126,10 @@ Paperclip ships **default agents** that demonstrate full integration: progress t
 
 Two export modes:
 
-1. **Template export** (default) — structure only: agent definitions, org chart, adapter configs, role descriptions. Optionally includes a few seed tasks to help get started. This is the blueprint for spinning up a new company.
+1. **Template export** (default) — structure only: agent definitions, org chart, adapter configs, role descriptions. Optionally includes a few seed tasks to help get started. This is the blueprint for spinning up a new instance.
 2. **Snapshot export** — full state: structure + current tasks, progress, agent status. A complete picture you could restore or fork.
 
-The usual workflow: export a template, create a new company from it, add a couple initial tasks, go.
+The usual workflow: export a template, load it into a new instance, add a couple initial tasks, go.
 
 ---
 
@@ -269,7 +269,7 @@ There is no separate messaging or chat system. Tasks are the communication chann
 
 ### Task Hierarchy Mapping
 
-Full hierarchy: **Initiative** (company goal) → Projects → Milestones → Issues → Sub-issues. Everything traces back to an initiative, and the "company goal" is just the first/primary initiative.
+Full hierarchy: **Initiative** (instance goal) → Projects → Milestones → Issues → Sub-issues. Everything traces back to an initiative, and the "instance goal" is just the first/primary initiative.
 
 ---
 
@@ -284,7 +284,7 @@ Fully-instrumented Agents report token/API usage back to Paperclip. Costs are tr
 - **Per Agent** — how much is this employee costing?
 - **Per task** — how much did this unit of work cost?
 - **Per project** — how much is this deliverable costing?
-- **Per Company** — total burn rate
+- **Per Instance** — total burn rate
 
 Costs should be denominated in both **tokens and dollars**.
 
@@ -294,7 +294,7 @@ Billing codes on tasks (see Org Structure) enable cost attribution across teams 
 
 Three tiers:
 
-1. **Visibility** — dashboards showing spend at every level (Agent, task, project, Company)
+1. **Visibility** — dashboards showing spend at every level (Agent, task, project, Instance)
 2. **Soft alerts** — configurable thresholds (e.g. warn at 80% of budget)
 3. **Hard ceiling** — auto-pause the Agent when budget is hit. Operator notified. Operator can override/raise the limit.
 
@@ -312,9 +312,9 @@ Budgets can be set to **unlimited** (no ceiling).
 
 ### Bootstrap Sequence
 
-How a Company goes from "created" to "running":
+How an Instance goes from "created" to "running":
 
-1. Human creates a Company and its initial Initiatives
+1. Human names the Instance and creates its initial Initiatives
 2. Human defines initial top-level tasks
 3. Human creates the CEO Agent (using the default CEO template or custom)
 4. CEO's first heartbeat: reviews the Initiatives and tasks, proposes a strategic breakdown (org structure, sub-tasks, hiring plan)
@@ -325,7 +325,7 @@ How a Company goes from "created" to "running":
 
 Paperclip ships default Agent templates:
 
-- **Default Agent** — a basic Claude Code or Codex loop. Knows the **Paperclip Skill** (SKILL.md) so it can interact with the task system, read Company context, report status.
+- **Default Agent** — a basic Claude Code or Codex loop. Knows the **Paperclip Skill** (SKILL.md) so it can interact with the task system, read Instance context, report status.
 - **Default CEO** — extends the Default Agent with CEO-specific behavior: strategic planning, delegation to reports, progress review, Operator communication.
 
 These are starting points. Users can customize or replace them entirely.
@@ -342,7 +342,7 @@ A skill definition that teaches agents how to interact with Paperclip. Provides:
 
 - Task CRUD (create, read, update, complete tasks)
 - Status reporting (check in, report progress)
-- Company context (read goal, org chart, current state)
+- Instance context (read goal, org chart, current state)
 - Cost reporting (log token/API usage)
 - Inter-agent communication rules
 
@@ -354,13 +354,13 @@ This skill is adapter-agnostic — it can be loaded into Claude Code, injected i
 
 ### Deployment Model
 
-**Single-tenant, self-hostable.** Not a SaaS. One instance = one operator's companies.
+**Single-tenant, self-hostable.** Not a SaaS. One instance = one operator's organization.
 
 #### Development Path (Progressive Deployment)
 
 1. **Local dev** — One command to install and run. Embedded Postgres. Everything on your machine. Agents run locally.
 2. **Hosted** — Deploy to Vercel/Supabase/AWS/anywhere. Remote agents connect to your server with a shared database. The UI is accessible via the web.
-3. **Open company** — Optionally make parts public (e.g. a job operator visible to the public for open companies).
+3. **Open instance** — Optionally make parts public (e.g. a job operator visible to the public for open instances).
 
 The key constraint: it must be trivial to go from "I'm trying this on my machine" to "my agents are running on remote servers talking to my Paperclip instance."
 
@@ -404,7 +404,7 @@ The agents are discouraged from assigning tasks to humans in the Paperclip SKILL
 
 ### API Design
 
-**Single unified REST API.** The same API serves both the frontend UI and agents. Authentication determines permissions — operator auth has full access, agent API keys have scoped access (their own tasks, cost reporting, company context).
+**Single unified REST API.** The same API serves both the frontend UI and agents. Authentication determines permissions — operator auth has full access, agent API keys have scoped access (their own tasks, cost reporting, instance context).
 
 No separate "agent API" vs. "operator API." Same endpoints, different authorization levels.
 
@@ -415,7 +415,7 @@ Paperclip manages task-linked work artifacts: issue documents (rich-text plans, 
 ### Open Questions
 
 - Real-time updates to the UI — WebSocket? SSE? Polling?
-- Agent API key scoping — what exactly can an Agent access? Only their own tasks? Their team's? The whole Company?
+- Agent API key scoping — what exactly can an Agent access? Only their own tasks? Their team's? The whole Instance?
 
 ### Crash Recovery: Manual, Not Automatic
 
@@ -451,7 +451,7 @@ Each is a distinct page/route:
 3. **Dashboard** — high-level metrics: agent count, active tasks, costs, goal progress, burn rate. The "glance" view from GOAL.md.
 4. **Agent Detail** — deep dive on a single agent: their tasks, activity, costs, configuration, status history.
 5. **Project/Initiative Views** — progress tracking against milestones and goals.
-6. **Cost Dashboard** — spend visualization at every level (agent, task, project, company).
+6. **Cost Dashboard** — spend visualization at every level (agent, task, project, instance).
 
 ### Operator Controls (Available Everywhere)
 
@@ -468,14 +468,14 @@ Each is a distinct page/route:
 
 ### Must Have (V1)
 
-- [ ] **Company CRUD** — create a Company with Initiatives
+- [ ] **Instance setup** — name the Instance and create its Initiatives
 - [ ] **Agent CRUD** — create/edit/pause/resume Agents with Adapter config
 - [ ] **Org chart** — define reporting structure, visualize it
 - [ ] **Process adapter** — invoke(), status(), cancel() for local child processes
-- [ ] **Task management** — full lifecycle with hierarchy (tasks trace to company goal)
+- [ ] **Task management** — full lifecycle with hierarchy (tasks trace to instance goal)
 - [ ] **Atomic task checkout** — single assignment, in_progress locking
 - [ ] **Operator governance** — human approves hires, pauses Agents, sets budgets, full PM access
-- [ ] **Cost tracking** — Agents report token usage, per-Agent/task/Company visibility
+- [ ] **Cost tracking** — Agents report token usage, per-Agent/task/Instance visibility
 - [ ] **Budget controls** — soft alerts + hard ceiling with auto-pause
 - [ ] **Default agent** — basic Claude Code/Codex loop with Paperclip skill
 - [ ] **Default CEO** — strategic planning, delegation, operator communication
@@ -491,7 +491,7 @@ Each is a distinct page/route:
 - Knowledge base - a future plugin
 - Advanced governance models (hiring budgets, multi-member boards)
 - Revenue/expense tracking beyond token costs - a future plugin
-- Public job operator / open company features
+- Public job operator / open instance features
 
 ---
 
@@ -521,7 +521,7 @@ Things Paperclip explicitly does **not** do:
 ## 13. Principles (Consolidated)
 
 1. **Unopinionated about how you run your Agents.** Any language, any framework, any runtime. Paperclip is the control plane, not the execution plane.
-2. **Company is the unit of organization.** Everything lives under a Company.
+2. **The Instance is the unit of organization.** Everything lives in the Instance.
 3. **Tasks are the communication channel.** All Agent communication flows through tasks + comments. No side channels.
 4. **All work traces to the goal.** Hierarchical task management — nothing exists in isolation.
 5. **Operator governs.** Humans retain control through the Operator. Conservative defaults (human approval required).

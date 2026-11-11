@@ -66,9 +66,8 @@ Paperclip plugin design is based on the following assumptions:
 
 1. Paperclip is single-tenant and self-hosted.
 2. Plugin installation is global to the instance.
-3. "Companies" remain core Paperclip business objects, but they are not plugin trust boundaries.
-4. Operator governance, approval gates, budget hard-stops, and core task invariants remain owned by Paperclip core.
-5. Projects already have a real workspace model via `project_workspaces`, and local/runtime plugins should build on that instead of inventing a separate workspace abstraction.
+3. Operator governance, approval gates, budget hard-stops, and core task invariants remain owned by Paperclip core.
+4. Projects already have a real workspace model via `project_workspaces`, and local/runtime plugins should build on that instead of inventing a separate workspace abstraction.
 
 ## 3. Goals
 
@@ -104,16 +103,12 @@ The first plugin system must not:
 
 The single Paperclip deployment an operator installs and controls.
 
-### 5.2 Company
-
-A first-class Paperclip business object inside the instance.
-
-### 5.3 Project Workspace
+### 5.2 Project Workspace
 
 A workspace attached to a project through `project_workspaces`.
 Plugins resolve workspace paths from this model to locate local directories for file, terminal, git, and process operations.
 
-### 5.4 Platform Module
+### 5.3 Platform Module
 
 A trusted in-process extension loaded directly by Paperclip core.
 
@@ -124,7 +119,7 @@ Examples:
 - secret providers
 - run-log backends
 
-### 5.5 Plugin
+### 5.4 Plugin
 
 An installable instance-wide extension package loaded through the Paperclip plugin runtime.
 
@@ -138,12 +133,12 @@ Examples:
 - terminal
 - git workflow
 
-### 5.6 Plugin Worker
+### 5.5 Plugin Worker
 
 The runtime process used for a plugin.
 In this spec, third-party plugins run out-of-process by default.
 
-### 5.7 Capability
+### 5.6 Capability
 
 A named permission the host grants to a plugin.
 Plugins may only call host APIs that are covered by granted capabilities.
@@ -211,14 +206,14 @@ Plugins that need local tooling (file browsing, git, terminals, process tracking
 
 Plugin installation is global and operator-driven.
 
-There is no per-company install table and no per-company enable/disable switch.
+There is no per-project install table and no per-project enable/disable switch.
 
 If a plugin needs business-object-specific mappings, those are stored as plugin configuration or plugin state.
 
 Examples:
 
 - one global Linear plugin install
-- mappings from company A to Linear team X and company B to Linear team Y
+- mappings from project A to Linear team X and project B to Linear team Y
 - one global git plugin install
 - per-project workspace state stored under `project_workspace`
 
@@ -379,7 +374,7 @@ Tool names are automatically namespaced by plugin ID at runtime (e.g. `linear:se
 
 When an agent invokes a plugin tool during a run, the host routes the call to the plugin worker via a `executeTool` RPC method:
 
-- `executeTool(input)` — receives tool name, parsed parameters, and run context (agent ID, run ID, company ID, project ID)
+- `executeTool(input)` — receives tool name, parsed parameters, and run context (agent ID, run ID, project ID)
 
 The worker executes the tool logic and returns a typed result. The host enforces capability gates — a plugin must declare `agent.tools.register` to contribute tools, and individual tools may require additional capabilities (e.g. `http.outbound` for tools that call external APIs).
 
@@ -567,7 +562,7 @@ The plugin UI calls the host bridge, which forwards the request to the worker. T
 Input includes:
 
 - data key (plugin-defined, e.g. `"sync-health"`, `"issue-detail"`)
-- context (company id, project id, entity id, etc.)
+- context (project id, entity id, etc.)
 - optional query parameters
 
 ### 13.9 `performAction`
@@ -589,7 +584,7 @@ The host provides:
 
 - tool name (without plugin namespace prefix)
 - parsed parameters matching the tool's declared schema
-- run context: agent ID, run ID, company ID, project ID
+- run context: agent ID, run ID, project ID
 
 The worker executes the tool and returns a typed result (string content, structured data, or error).
 
@@ -674,7 +669,6 @@ export interface PluginContext {
 
 export interface EventFilter {
   projectId?: string;
-  companyId?: string;
   agentId?: string;
   [key: string]: unknown;
 }
@@ -691,7 +685,7 @@ The host enforces capabilities in the SDK layer and refuses calls outside the gr
 
 ### Data Read
 
-- `companies.read`
+- `instance.read`
 - `projects.read`
 - `project.workspaces.read`
 - `issues.read`
@@ -762,8 +756,7 @@ The host must emit typed domain events that plugins may subscribe to.
 
 Minimum event set:
 
-- `company.created`
-- `company.updated`
+- `instance.updated`
 - `project.created`
 - `project.updated`
 - `project.workspace_created`
@@ -800,10 +793,9 @@ Plugins may provide an optional filter when subscribing to events. The filter is
 Supported filter fields:
 
 - `projectId` — only receive events for a specific project
-- `companyId` — only receive events for a specific company
 - `agentId` — only receive events for a specific agent
 
-Filters are optional. If omitted, the plugin receives all events of the subscribed type. Filters may be combined (e.g. filter by both company and project).
+Filters are optional. If omitted, the plugin receives all events of the subscribed type. Filters may be combined (e.g. filter by both project and agent).
 
 ### 16.2 Plugin-to-Plugin Events
 
@@ -865,7 +857,7 @@ A plugin's `dist/ui/` directory contains a built React bundle. The host serves t
 1. The host defines **extension slots** — designated mount points in the UI where plugin components can appear (pages, tabs, widgets, sidebar entries, action bars).
 2. The plugin's UI bundle exports named components for each slot it wants to fill.
 3. The host mounts the plugin component into the slot, passing it a **host bridge** object.
-4. The plugin component uses the bridge to fetch data from its own worker (via `getData`), call actions (via `performAction`), read host context (current company, project, entity), and use shared host UI primitives (design tokens, common components).
+4. The plugin component uses the bridge to fetch data from its own worker (via `getData`), call actions (via `performAction`), read host context (current project, entity), and use shared host UI primitives (design tokens, common components).
 
 **Concrete example: a Linear plugin ships a dashboard widget.**
 
@@ -876,7 +868,7 @@ The plugin's UI bundle exports:
 import { usePluginData, usePluginAction, MetricCard, StatusBadge } from "@paperclipai/plugin-sdk/ui";
 
 export function DashboardWidget({ context }: PluginWidgetProps) {
-  const { data, loading } = usePluginData("sync-health", { companyId: context.companyId });
+  const { data, loading } = usePluginData("sync-health", { projectId: context.projectId });
   const resync = usePluginAction("resync");
 
   if (loading) return <Spinner />;
@@ -887,7 +879,7 @@ export function DashboardWidget({ context }: PluginWidgetProps) {
       {data.mappings.map(m => (
         <StatusBadge key={m.id} label={m.label} status={m.status} />
       ))}
-      <button onClick={() => resync({ companyId: context.companyId })}>Resync Now</button>
+      <button onClick={() => resync({ projectId: context.projectId })}>Resync Now</button>
     </div>
   );
 }
@@ -896,7 +888,7 @@ export function DashboardWidget({ context }: PluginWidgetProps) {
 **What happens at runtime:**
 
 1. User opens the dashboard. The host sees that the Linear plugin registered a `DashboardWidget` export.
-2. The host mounts the plugin's `DashboardWidget` component into the dashboard widget slot, passing `context` (current company, user, etc.) and the bridge.
+2. The host mounts the plugin's `DashboardWidget` component into the dashboard widget slot, passing `context` (current user, project, etc.) and the bridge.
 3. `usePluginData("sync-health", ...)` calls through the bridge → host → plugin worker's `getData` RPC → returns JSON → the plugin component renders it however it wants.
 4. When the user clicks "Resync Now", `usePluginAction("resync")` calls through the bridge → host → plugin worker's `performAction` RPC.
 
@@ -956,11 +948,11 @@ In development, the host may support a `devUiUrl` override in plugin config that
 
 These routes are instance-level.
 
-## 19.2 Company-Context Routes
+## 19.2 Plugin Page Routes
 
-- `/:companyPrefix/plugins/:pluginId`
+- `/plugins/:pluginId`
 
-These routes exist because the operator UI is organized around companies even though plugin installation is global.
+These are the plugin's main pages in the operator UI.
 
 ## 19.3 Detail Tabs
 
@@ -974,7 +966,7 @@ Plugins may add tabs to:
 
 Recommended route pattern:
 
-- `/:companyPrefix/<entity>/:id?tab=<plugin-tab-id>`
+- `/<entity>/:id?tab=<plugin-tab-id>`
 
 ## 19.4 Dashboard Widgets
 
@@ -985,7 +977,7 @@ Plugins may add cards or sections to the dashboard.
 Plugins may add sidebar links to:
 
 - global plugin settings
-- company-context plugin pages
+- plugin main pages
 
 ## 19.6 Shared Components In `@paperclipai/plugin-sdk/ui`
 
@@ -1121,7 +1113,7 @@ Indexes:
 
 - `id` uuid pk
 - `plugin_id` uuid fk `plugins.id` not null
-- `scope_kind` enum: `instance | company | project | project_workspace | agent | issue | goal | run`
+- `scope_kind` enum: `instance | project | project_workspace | agent | issue | goal | run`
 - `scope_id` uuid/text null
 - `namespace` text not null
 - `state_key` text not null
@@ -1299,11 +1291,11 @@ Route:
 
 - `/settings/plugins/:pluginId`
 
-## 24.3 Company-Context Plugin Page
+## 24.3 Plugin Main Page
 
-Each plugin may expose a company-context main page:
+Each plugin may expose a main page:
 
-- `/:companyPrefix/plugins/:pluginId`
+- `/plugins/:pluginId`
 
 This page is where operator users do most day-to-day work.
 
@@ -1473,7 +1465,7 @@ const state = await harness.state.get({ pluginId: manifest.id, scopeKind: "issue
 expect(state).toBeDefined();
 
 // Simulate a UI data request
-const data = await harness.getData("sync-health", { companyId: "comp-1" });
+const data = await harness.getData("sync-health", { projectId: "proj-1" });
 expect(data.syncedCount).toBeGreaterThan(0);
 ```
 

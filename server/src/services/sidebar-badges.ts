@@ -16,18 +16,12 @@ export const FAILED_HEARTBEAT_FRESHNESS_MS = 60 * 60 * 1000; // 1 hour
 export function sidebarBadgeService(db: Db) {
   return {
     get: async (
-      companyId: string,
       extra?: { joinRequests?: number; unreadTouchedIssues?: number },
     ): Promise<SidebarBadges> => {
       const actionableApprovals = await db
         .select({ count: sql<number>`count(*)` })
         .from(approvals)
-        .where(
-          and(
-            eq(approvals.companyId, companyId),
-            inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
-          ),
-        )
+        .where(inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES))
         .then((rows) => Number(rows[0]?.count ?? 0));
 
       // Bounding the scan by the freshness window returns the same answer: an
@@ -44,8 +38,6 @@ export function sidebarBadgeService(db: Db) {
         .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
         .where(
           and(
-            eq(heartbeatRuns.companyId, companyId),
-            eq(agents.companyId, companyId),
             not(eq(agents.status, "terminated")),
             gte(heartbeatRuns.createdAt, new Date(freshnessCutoff)),
           ),

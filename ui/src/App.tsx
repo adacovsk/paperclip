@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { lazy, Suspense } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Layout } from "./components/Layout";
@@ -13,8 +13,8 @@ import { healthApi } from "./api/health";
 // named exports, so unwrap the named member. The `import()` argument stays a string
 // literal so the bundler can still statically split each page into its own chunk.
 function lazyPage<M, K extends keyof M>(factory: () => Promise<M>, name: K) {
-  // Preserve the page's real prop type (e.g. NotFoundPage's `scope`) through the
-  // named-export unwrap; the ComponentType constraint is only a gate.
+  // Preserve the page's real prop type through the named-export unwrap; the
+  // ComponentType constraint is only a gate.
   type Comp = M[K] extends ComponentType<infer P> ? ComponentType<P> : never;
   return lazy(() =>
     factory().then((module) => ({ default: module[name] as unknown as Comp })),
@@ -41,8 +41,11 @@ const ApprovalDetail = lazyPage(() => import("./pages/ApprovalDetail"), "Approva
 const Costs = lazyPage(() => import("./pages/Costs"), "Costs");
 const Activity = lazyPage(() => import("./pages/Activity"), "Activity");
 const Inbox = lazyPage(() => import("./pages/Inbox"), "Inbox");
-const CompanySettings = lazyPage(() => import("./pages/CompanySettings"), "CompanySettings");
-const CompanySkills = lazyPage(() => import("./pages/CompanySkills"), "CompanySkills");
+const InstanceProfileSettings = lazyPage(
+  () => import("./pages/InstanceProfileSettings"),
+  "InstanceProfileSettings",
+);
+const Skills = lazyPage(() => import("./pages/Skills"), "Skills");
 const DesignGuide = lazyPage(() => import("./pages/DesignGuide"), "DesignGuide");
 const InstanceGeneralSettings = lazyPage(
   () => import("./pages/InstanceGeneralSettings"),
@@ -68,10 +71,10 @@ const CliAuthPage = lazyPage(() => import("./pages/CliAuth"), "CliAuthPage");
 const InviteLandingPage = lazyPage(() => import("./pages/InviteLanding"), "InviteLandingPage");
 const NotFoundPage = lazyPage(() => import("./pages/NotFound"), "NotFoundPage");
 import { queryKeys } from "./lib/queryKeys";
-import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
+import { useInstanceProfile } from "./hooks/useInstanceProfile";
 import { loadLastInboxTab } from "./lib/inbox";
-import { shouldRedirectCompanylessRouteToOnboarding } from "./lib/onboarding-route";
+import { stripIssuePrefixFromPath } from "./lib/issue-prefix-redirect";
 
 function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
   return (
@@ -143,11 +146,10 @@ function CloudAccessGate() {
 function operatorRoutes() {
   return (
     <>
-      <Route index element={<Navigate to="dashboard" replace />} />
+      <Route index element={<Navigate to="/dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
-      <Route path="company/settings" element={<CompanySettings />} />
-      <Route path="skills/*" element={<CompanySkills />} />
+      <Route path="skills/*" element={<Skills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
@@ -195,7 +197,7 @@ function operatorRoutes() {
       <Route path="design-guide" element={<DesignGuide />} />
       <Route path="tests/ux/runs" element={<RunTranscriptUxLab />} />
       <Route path=":pluginRoutePath" element={<PluginPage />} />
-      <Route path="*" element={<NotFoundPage scope="operator" />} />
+      <Route path="*" element={<NotFoundPage />} />
     </>
   );
 }
@@ -209,108 +211,37 @@ function LegacySettingsRedirect() {
   return <Navigate to={`/instance/settings/general${location.search}${location.hash}`} replace />;
 }
 
+/**
+ * Issue comments link to `/<issuePrefix>/<rest>`; send those to `/<rest>`.
+ * This is the only route that recognises the issue prefix in a URL.
+ */
+function IssuePrefixRedirect() {
+  const location = useLocation();
+  const { profile } = useInstanceProfile();
+  const target = stripIssuePrefixFromPath(
+    `${location.pathname}${location.search}${location.hash}`,
+    profile?.issuePrefix,
+  );
+  if (target) return <Navigate to={target} replace />;
+  return <Outlet />;
+}
+
 function OnboardingRoutePage() {
-  const { companies } = useCompany();
+  const { profile } = useInstanceProfile();
   const { openOnboarding } = useDialog();
-  const { companyPrefix } = useParams<{ companyPrefix?: string }>();
-  const matchedCompany =
-    (companyPrefix
-      ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase())
-      : undefined) ?? companies[0] ?? null;
-
-  const title = matchedCompany
-    ? `Add another agent to ${matchedCompany.name}`
-    : "Create your company";
-  const description = matchedCompany
-    ? "Run onboarding again to add an agent and a starter task."
-    : "Get started by creating a company and your first agent.";
+  const instanceName = profile?.name?.trim();
 
   return (
     <div className="mx-auto max-w-xl py-10">
       <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-        <div className="mt-4">
-          <Button
-            onClick={() =>
-              matchedCompany
-                ? openOnboarding({ initialStep: 2, companyId: matchedCompany.id })
-                : openOnboarding()
-            }
-          >
-            {matchedCompany ? "Add Agent" : "Start Onboarding"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CompanyRootRedirect() {
-  const { companies, selectedCompany, loading } = useCompany();
-  const location = useLocation();
-
-  if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
-  }
-
-  const targetCompany = selectedCompany ?? companies[0] ?? null;
-  if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <NoCompaniesStartPage />;
-  }
-
-  return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
-}
-
-function UnprefixedOperatorRedirect() {
-  const location = useLocation();
-  const { companies, selectedCompany, loading } = useCompany();
-
-  if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
-  }
-
-  const targetCompany = selectedCompany ?? companies[0] ?? null;
-  if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <NoCompaniesStartPage />;
-  }
-
-  return (
-    <Navigate
-      to={`/${targetCompany.issuePrefix}${location.pathname}${location.search}${location.hash}`}
-      replace
-    />
-  );
-}
-
-function NoCompaniesStartPage() {
-  const { openOnboarding } = useDialog();
-
-  return (
-    <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">Create your company</h1>
+        <h1 className="text-xl font-semibold">
+          {instanceName ? `Add an agent to ${instanceName}` : "Set up your instance"}
+        </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Get started by creating a company.
+          Run onboarding to name the instance, set its first goal, and add an agent with a starter task.
         </p>
         <div className="mt-4">
-          <Button onClick={() => openOnboarding()}>Create Company</Button>
+          <Button onClick={() => openOnboarding()}>Start Onboarding</Button>
         </div>
       </div>
     </div>
@@ -334,40 +265,21 @@ export function App() {
         <Route path="invite/:token" element={<InviteLandingPage />} />
 
         <Route element={<CloudAccessGate />}>
-          <Route index element={<CompanyRootRedirect />} />
-          <Route path="onboarding" element={<OnboardingRoutePage />} />
-          <Route path="instance" element={<Navigate to="/instance/settings/general" replace />} />
-          <Route path="instance/settings" element={<Layout />}>
-            <Route index element={<Navigate to="general" replace />} />
-            <Route path="general" element={<InstanceGeneralSettings />} />
-            <Route path="heartbeats" element={<InstanceSettings />} />
-            <Route path="experimental" element={<InstanceExperimentalSettings />} />
-            <Route path="plugins" element={<PluginManager />} />
-            <Route path="plugins/:pluginId" element={<PluginSettings />} />
+          <Route element={<IssuePrefixRedirect />}>
+            <Route path="instance" element={<Navigate to="/instance/settings/general" replace />} />
+            <Route path="instance/settings" element={<Layout />}>
+              <Route index element={<Navigate to="general" replace />} />
+              <Route path="general" element={<InstanceGeneralSettings />} />
+              <Route path="profile" element={<InstanceProfileSettings />} />
+              <Route path="heartbeats" element={<InstanceSettings />} />
+              <Route path="experimental" element={<InstanceExperimentalSettings />} />
+              <Route path="plugins" element={<PluginManager />} />
+              <Route path="plugins/:pluginId" element={<PluginSettings />} />
+            </Route>
+            <Route element={<Layout />}>
+              {operatorRoutes()}
+            </Route>
           </Route>
-          <Route path="issues" element={<UnprefixedOperatorRedirect />} />
-          <Route path="issues/:issueId" element={<UnprefixedOperatorRedirect />} />
-          <Route path="routines" element={<UnprefixedOperatorRedirect />} />
-          <Route path="routines/:routineId" element={<UnprefixedOperatorRedirect />} />
-          <Route path="skills/*" element={<UnprefixedOperatorRedirect />} />
-          <Route path="settings" element={<LegacySettingsRedirect />} />
-          <Route path="settings/*" element={<LegacySettingsRedirect />} />
-          <Route path="agents" element={<UnprefixedOperatorRedirect />} />
-          <Route path="agents/new" element={<UnprefixedOperatorRedirect />} />
-          <Route path="agents/:agentId" element={<UnprefixedOperatorRedirect />} />
-          <Route path="agents/:agentId/:tab" element={<UnprefixedOperatorRedirect />} />
-          <Route path="agents/:agentId/runs/:runId" element={<UnprefixedOperatorRedirect />} />
-          <Route path="projects" element={<UnprefixedOperatorRedirect />} />
-          <Route path="projects/:projectId" element={<UnprefixedOperatorRedirect />} />
-          <Route path="projects/:projectId/overview" element={<UnprefixedOperatorRedirect />} />
-          <Route path="projects/:projectId/issues" element={<UnprefixedOperatorRedirect />} />
-          <Route path="projects/:projectId/issues/:filter" element={<UnprefixedOperatorRedirect />} />
-          <Route path="projects/:projectId/configuration" element={<UnprefixedOperatorRedirect />} />
-          <Route path="tests/ux/runs" element={<UnprefixedOperatorRedirect />} />
-          <Route path=":companyPrefix" element={<Layout />}>
-            {operatorRoutes()}
-          </Route>
-          <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
       </Routes>
       </Suspense>

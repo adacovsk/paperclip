@@ -43,7 +43,7 @@ Please include a "thinking path" at the top of your PR message that explains fro
 
 ### Thinking Path Example 1:
 
-> - Paperclip orchestrates ai-agents for zero-human companies
+> - Paperclip orchestrates ai-agents for zero-human organizations
 > - There are many types of adapters for each LLM model provider
 > - But LLM's have a context limit and not all agents can automatically compact their context
 > - So we need to have an adapter-specific configuration for which adapters can and cannot automatically compact their context
@@ -52,7 +52,7 @@ Please include a "thinking path" at the top of your PR message that explains fro
 
 ### Thinking Path Example 2:
 
-> - Paperclip orchestrates ai-agents for zero-human companies
+> - Paperclip orchestrates ai-agents for zero-human organizations
 > - But humans want to watch the agents and oversee their work
 > - Human users also operate in teams and so they need their own logins, profiles, views etc.
 > - So we have a multi-user system for humans

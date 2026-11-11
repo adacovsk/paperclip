@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { routineRoutes } from "../routes/routines.js";
 import { errorHandler } from "../middleware/index.js";
 
-const companyId = "22222222-2222-4222-8222-222222222222";
 const agentId = "11111111-1111-4111-8111-111111111111";
 const routineId = "33333333-3333-4333-8333-333333333333";
 const projectId = "44444444-4444-4444-8444-444444444444";
@@ -12,7 +11,6 @@ const otherAgentId = "55555555-5555-4555-8555-555555555555";
 
 const routine = {
   id: routineId,
-  companyId,
   projectId,
   goalId: null,
   parentIssueId: null,
@@ -38,7 +36,6 @@ const pausedRoutine = {
 };
 const trigger = {
   id: "66666666-6666-4666-8666-666666666666",
-  companyId,
   routineId,
   kind: "schedule",
   label: "weekday",
@@ -123,11 +120,11 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
-      .post(`/api/companies/${companyId}/routines`)
+      .post("/api/routines")
       .send({
         projectId,
         title: "Daily routine",
@@ -145,7 +142,7 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
@@ -166,7 +163,7 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
@@ -186,7 +183,7 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
@@ -208,7 +205,7 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
@@ -228,7 +225,7 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
@@ -247,11 +244,11 @@ describe("routine routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: [companyId],
+      isMember: true,
     });
 
     const res = await request(app)
-      .post(`/api/companies/${companyId}/routines`)
+      .post("/api/routines")
       .send({
         projectId,
         title: "Daily routine",
@@ -259,7 +256,7 @@ describe("routine routes", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(mockRoutineService.create).toHaveBeenCalledWith(companyId, expect.objectContaining({
+    expect(mockRoutineService.create).toHaveBeenCalledWith(expect.objectContaining({
       projectId,
       title: "Daily routine",
       assigneeAgentId: agentId,

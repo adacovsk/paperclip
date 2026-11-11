@@ -18,7 +18,6 @@ const mockOperatorAuthService = vi.hoisted(() => ({
   approveCliAuthChallenge: vi.fn(),
   cancelCliAuthChallenge: vi.fn(),
   resolveOperatorAccess: vi.fn(),
-  resolveOperatorActivityCompanyIds: vi.fn(),
   assertCurrentOperatorKey: vi.fn(),
   revokeOperatorApiKey: vi.fn(),
 }));
@@ -79,7 +78,7 @@ describe("cli auth routes", () => {
     const res = await request(app)
       .post("/api/cli-auth/challenges")
       .send({
-        command: "paperclipai company import",
+        command: "paperclipai import",
         clientName: "paperclipai cli",
         requestedAccess: "operator",
       });
@@ -100,11 +99,9 @@ describe("cli auth routes", () => {
     mockOperatorAuthService.describeCliAuthChallenge.mockResolvedValue({
       id: "challenge-1",
       status: "pending",
-      command: "paperclipai company import",
+      command: "paperclipai import",
       clientName: "paperclipai cli",
       requestedAccess: "operator",
-      requestedCompanyId: null,
-      requestedCompanyName: null,
       approvedAt: null,
       cancelledAt: null,
       expiresAt: "2026-03-23T13:00:00.000Z",
@@ -126,23 +123,21 @@ describe("cli auth routes", () => {
         id: "challenge-1",
         operatorApiKeyId: "operator-key-1",
         requestedAccess: "operator",
-        requestedCompanyId: "company-1",
         expiresAt: new Date("2026-03-23T13:00:00.000Z"),
       },
     });
     mockOperatorAuthService.resolveOperatorAccess.mockResolvedValue({
       user: { id: "user-1", name: "User One", email: "user@example.com" },
-      companyIds: ["company-1"],
+      isMember: true,
       isInstanceAdmin: false,
     });
-    mockOperatorAuthService.resolveOperatorActivityCompanyIds.mockResolvedValue(["company-1"]);
 
     const app = await createApp({
       type: "operator",
       userId: "user-1",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: ["company-1"],
+      isMember: true,
     });
     const res = await request(app)
       .post("/api/cli-auth/challenges/challenge-1/approve")
@@ -160,51 +155,49 @@ describe("cli auth routes", () => {
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        companyId: "company-1",
         action: "operator_api_key.created",
       }),
     );
   });
 
-  it("logs approve activity for instance admins without company memberships", async () => {
+  it("logs approve activity once for instance admins without a membership", async () => {
     mockOperatorAuthService.approveCliAuthChallenge.mockResolvedValue({
       status: "approved",
       challenge: {
         id: "challenge-2",
         operatorApiKeyId: "operator-key-2",
         requestedAccess: "instance_admin_required",
-        requestedCompanyId: null,
         expiresAt: new Date("2026-03-23T13:00:00.000Z"),
       },
     });
-    mockOperatorAuthService.resolveOperatorActivityCompanyIds.mockResolvedValue(["company-a", "company-b"]);
 
     const app = await createApp({
       type: "operator",
       userId: "admin-1",
       source: "session",
       isInstanceAdmin: true,
-      companyIds: [],
     });
     const res = await request(app)
       .post("/api/cli-auth/challenges/challenge-2/approve")
       .send({ token: "pcp_cli_auth_secret" });
 
     expect(res.status).toBe(200);
-    expect(mockOperatorAuthService.resolveOperatorActivityCompanyIds).toHaveBeenCalledWith({
-      userId: "admin-1",
-      requestedCompanyId: null,
-      operatorApiKeyId: "operator-key-2",
-    });
-    expect(mockLogActivity).toHaveBeenCalledTimes(2);
+    expect(mockLogActivity).toHaveBeenCalledTimes(1);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId: "admin-1",
+        action: "operator_api_key.created",
+        details: expect.objectContaining({ operatorApiKeyId: "operator-key-2" }),
+      }),
+    );
   });
 
-  it("logs revoke activity with resolved audit company ids", async () => {
+  it("logs revoke activity for the revoked key", async () => {
     mockOperatorAuthService.assertCurrentOperatorKey.mockResolvedValue({
       id: "operator-key-3",
       userId: "admin-2",
     });
-    mockOperatorAuthService.resolveOperatorActivityCompanyIds.mockResolvedValue(["company-z"]);
 
     const app = await createApp({
       type: "operator",
@@ -212,19 +205,14 @@ describe("cli auth routes", () => {
       keyId: "operator-key-3",
       source: "operator_key",
       isInstanceAdmin: true,
-      companyIds: [],
     });
     const res = await request(app).post("/api/cli-auth/revoke-current").send({});
 
     expect(res.status).toBe(200);
-    expect(mockOperatorAuthService.resolveOperatorActivityCompanyIds).toHaveBeenCalledWith({
-      userId: "admin-2",
-      operatorApiKeyId: "operator-key-3",
-    });
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        companyId: "company-z",
+        actorId: "admin-2",
         action: "operator_api_key.revoked",
       }),
     );

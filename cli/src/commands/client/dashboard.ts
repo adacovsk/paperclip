@@ -8,27 +8,21 @@ import {
   type BaseClientOptions,
 } from "./common.js";
 
-interface DashboardGetOptions extends BaseClientOptions {
-  companyId?: string;
-}
-
 export function registerDashboardCommands(program: Command): void {
   const dashboard = program.command("dashboard").description("Dashboard summary operations");
 
   addCommonClientOptions(
     dashboard
       .command("get")
-      .description("Get dashboard summary for a company")
-      .requiredOption("-C, --company-id <id>", "Company ID")
-      .action(async (opts: DashboardGetOptions) => {
+      .description("Get dashboard summary")
+      .action(async (opts: BaseClientOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const row = await ctx.api.get<DashboardSummary>(`/api/companies/${ctx.companyId}/dashboard`);
+          const ctx = resolveCommandContext(opts);
+          const row = await ctx.api.get<DashboardSummary>("/api/dashboard");
           printOutput(row, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 }

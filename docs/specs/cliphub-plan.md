@@ -1,18 +1,18 @@
 # ClipHub: Marketplace for Paperclip Team Configurations
 
-> Supersession note: company import/export and its package format have been removed from Paperclip.
+> Supersession note: the earlier import/export package format has been removed from Paperclip.
 
-> The "app store" for whole-company AI teams — pre-built Paperclip configurations, agent blueprints, skills, and governance templates that ship real work from day one.
+> The "app store" for whole AI teams — pre-built Paperclip configurations, agent blueprints, skills, and governance templates that ship real work from day one.
 
 ## 1. Vision & Positioning
 
-**ClipHub** sells **entire team configurations** — org charts, agent roles, inter-agent workflows, governance rules, and project templates — for Paperclip-managed companies.
+**ClipHub** sells **entire team configurations** — org charts, agent roles, inter-agent workflows, governance rules, and project templates — for Paperclip instances.
 
 | Dimension | ClipHub |
 |---|---|
 | Unit of sale | Team blueprint (multi-agent org) |
-| Buyer | Founder / team lead spinning up an AI company |
-| Install target | Paperclip company (agents, projects, governance) |
+| Buyer | Founder / team lead spinning up an AI team |
+| Install target | Paperclip instance (agents, projects, governance) |
 | Value prop | "Skip org design — get a shipping team in minutes" |
 | Price range | $0–$499 per blueprint (+ individual add-ons) |
 
@@ -22,7 +22,7 @@
 
 ### 2.1 Team Blueprints (primary product)
 
-A complete Paperclip company configuration:
+A complete Paperclip instance configuration:
 
 - **Org chart**: Agents with roles, titles, reporting chains, capabilities
 - **Agent configs**: Adapter type, model, prompt templates, instructions paths
@@ -148,8 +148,8 @@ interface TeamBlueprint {
   // Projects
   projects: ProjectTemplate[];
 
-  // Company-level config
-  companyDefaults: {
+  // Instance-level config
+  instanceDefaults: {
     name: string;
     defaultModel: string;
     defaultAdapter: string;
@@ -218,10 +218,10 @@ interface Purchase {
   id: string;
   listingId: string;
   buyerUserId: string;
-  buyerCompanyId: string | null;    // Target Paperclip company
+  buyerInstanceUrl: string | null;  // Target Paperclip instance
   pricePaidCents: number;
   paymentIntentId: string | null;   // Stripe
-  installedAt: string | null;       // When deployed to company
+  installedAt: string | null;       // When deployed to the instance
   status: 'pending' | 'completed' | 'refunded';
   createdAt: string;
 }
@@ -286,7 +286,7 @@ interface Review {
 | `PATCH` | `/api/listings/:id` | Update listing |
 | `DELETE` | `/api/listings/:id` | Archive listing |
 | `POST` | `/api/listings/:id/purchase` | Purchase listing (Stripe checkout) |
-| `POST` | `/api/listings/:id/install` | Install to Paperclip company |
+| `POST` | `/api/listings/:id/install` | Install to a Paperclip instance |
 | `GET` | `/api/listings/:id/reviews` | Get reviews |
 | `POST` | `/api/listings/:id/reviews` | Submit review |
 | `GET` | `/api/creators/:slug` | Creator profile |
@@ -305,8 +305,8 @@ interface Review {
 Homepage → Browse marketplace → Filter by type/category
   → Click listing → Read details, reviews, preview org chart
   → Click "Buy" → Stripe checkout (or free install)
-  → Post-purchase: "Install to Company" button
-  → Select target Paperclip company (or create new)
+  → Post-purchase: "Install" button
+  → Select target Paperclip instance
   → ClipHub API calls Paperclip API to:
       1. Create agents with configs from blueprint
       2. Set up reporting chains
@@ -334,7 +334,7 @@ Sign up as creator → Connect Stripe
 ### 5.3 Creator: Export from Paperclip → Publish
 
 ```
-Running Paperclip company → "Export as Blueprint" (CLI or UI)
+Running Paperclip instance → "Export as Blueprint" (CLI or UI)
   → Paperclip exports:
       - Agent configs (sanitized — no secrets)
       - Org chart / reporting chains
@@ -362,8 +362,8 @@ Running Paperclip company → "Export as Blueprint" (CLI or UI)
 |---|---|
 | Product card | Org chart mini-preview + agent count badge |
 | Detail page | Interactive org chart + per-agent breakdown |
-| Install flow | One-click deploy to Paperclip company |
-| Social proof | "X companies running this blueprint" |
+| Install flow | One-click deploy to a Paperclip instance |
+| Social proof | "X instances running this blueprint" |
 | Preview | Live demo sandbox (stretch goal) |
 
 ### 6.3 Listing Card Design
@@ -404,12 +404,12 @@ Running Paperclip company → "Export as Blueprint" (CLI or UI)
 
 ### 7.1 Install API Flow
 
-When a buyer clicks "Install to Company":
+When a buyer clicks "Install":
 
 ```
 POST /api/listings/:id/install
 {
-  "targetCompanyId": "uuid",         // Existing Paperclip company
+  "targetInstanceUrl": "https://…",  // Existing Paperclip instance
   "overrides": {                      // Optional customization
     "agentModel": "claude-sonnet-4-6", // Override default model
     "budgetScale": 0.5,               // Scale budgets
@@ -421,9 +421,9 @@ POST /api/listings/:id/install
 The install handler:
 
 1. Validates buyer owns the purchase
-2. Validates target company access
+2. Validates target instance access
 3. For each agent in blueprint:
-   - `POST /api/companies/:id/agents` (if `paperclip-create-agent` supports it, or via approval flow)
+   - `POST /api/agents` (if `paperclip-create-agent` supports it, or via approval flow)
    - Sets adapter config, prompt template, instructions path
 4. Sets reporting chains
 5. Creates projects and workspaces
@@ -508,7 +508,7 @@ blueprint/
 - [ ] Listing detail page with org chart visualization
 - [ ] Creator registration and listing creation wizard
 - [ ] Free installs only (no payments yet)
-- [ ] Install flow: blueprint → Paperclip company
+- [ ] Install flow: blueprint → Paperclip instance
 
 ### Phase 2: Payments & Social
 - [ ] Stripe Connect integration

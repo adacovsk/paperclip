@@ -24,8 +24,6 @@ All commands support:
 | `--profile <name>` | Context profile name |
 | `--json` | Output as JSON |
 
-Company-scoped commands also accept `--company-id <id>`.
-
 For clean local instances, pass `--data-dir` on the command you run:
 
 ```sh
@@ -38,7 +36,7 @@ Store defaults to avoid repeating flags:
 
 ```sh
 # Set defaults
-pnpm paperclipai context set --api-base http://localhost:3100 --company-id <id>
+pnpm paperclipai context set --api-base http://localhost:3100
 
 # View current context
 pnpm paperclipai context show

@@ -16,7 +16,6 @@ cli/tmp/
 check-*.mjs
 !scripts/check-*.mjs
 new-agent*.json
-newcompany.json
 seed-*.mjs
 server/check-*.mjs
 server/seed-*.mjs

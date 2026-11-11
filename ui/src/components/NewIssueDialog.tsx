@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, ty
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
-import { useCompany } from "../context/CompanyContext";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -11,6 +10,7 @@ import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { useInstanceProfile } from "../hooks/useInstanceProfile";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { useToast } from "../context/ToastContext";
@@ -269,7 +269,7 @@ function issueExecutionWorkspaceModeForExistingWorkspace(mode: string | null | u
 
 export function NewIssueDialog() {
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
-  const { companies, selectedCompanyId, selectedCompany } = useCompany();
+  const { profile } = useInstanceProfile();
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const [title, setTitle] = useState("");
@@ -286,49 +286,44 @@ export function NewIssueDialog() {
   const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
   const [expanded, setExpanded] = useState(false);
-  const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const executionWorkspaceDefaultProjectId = useRef<string | null>(null);
 
-  const effectiveCompanyId = dialogCompanyId ?? selectedCompanyId;
-  const dialogCompany = companies.find((c) => c.id === effectiveCompanyId) ?? selectedCompany;
-
   // Popover states
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(effectiveCompanyId!),
-    queryFn: () => agentsApi.list(effectiveCompanyId!),
-    enabled: !!effectiveCompanyId && newIssueOpen,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+    enabled: newIssueOpen,
   });
 
   const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(effectiveCompanyId!),
-    queryFn: () => projectsApi.list(effectiveCompanyId!),
-    enabled: !!effectiveCompanyId && newIssueOpen,
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
+    enabled: newIssueOpen,
   });
   const { data: reusableExecutionWorkspaces } = useQuery({
-    queryKey: queryKeys.executionWorkspaces.list(effectiveCompanyId!, {
+    queryKey: queryKeys.executionWorkspaces.list({
       projectId,
       projectWorkspaceId: projectWorkspaceId || undefined,
       reuseEligible: true,
     }),
     queryFn: () =>
-      executionWorkspacesApi.list(effectiveCompanyId!, {
+      executionWorkspacesApi.list({
         projectId,
         projectWorkspaceId: projectWorkspaceId || undefined,
         reuseEligible: true,
       }),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(projectId),
+    enabled: newIssueOpen && Boolean(projectId),
   });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -346,7 +341,6 @@ export function NewIssueDialog() {
   );
   const { orderedProjects } = useProjectOrder({
     projects: activeProjects,
-    companyId: effectiveCompanyId,
     userId: currentUserId,
   });
 
@@ -385,21 +379,17 @@ export function NewIssueDialog() {
   }, [agents, orderedProjects]);
 
   const { data: assigneeAdapterModels } = useQuery({
-    queryKey:
-      effectiveCompanyId && assigneeAdapterType
-        ? queryKeys.agents.adapterModels(effectiveCompanyId, assigneeAdapterType)
-        : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
-    queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
+    queryKey: queryKeys.agents.adapterModels(assigneeAdapterType ?? "none"),
+    queryFn: () => agentsApi.adapterModels(assigneeAdapterType!),
+    enabled: newIssueOpen && supportsAssigneeOverrides,
   });
 
   const createIssue = useMutation({
     mutationFn: async ({
-      companyId,
       stagedFiles: pendingStagedFiles,
       ...data
-    }: { companyId: string; stagedFiles: StagedIssueFile[] } & Record<string, unknown>) => {
-      const issue = await issuesApi.create(companyId, data);
+    }: { stagedFiles: StagedIssueFile[] } & Record<string, unknown>) => {
+      const issue = await issuesApi.create(data);
       const failures: string[] = [];
 
       for (const stagedFile of pendingStagedFiles) {
@@ -413,32 +403,29 @@ export function NewIssueDialog() {
               baseRevisionId: null,
             });
           } else {
-            await issuesApi.uploadAttachment(companyId, issue.id, stagedFile.file);
+            await issuesApi.uploadAttachment(issue.id, stagedFile.file);
           }
         } catch {
           failures.push(stagedFile.file.name);
         }
       }
 
-      return { issue, companyId, failures };
+      return { issue, failures };
     },
-    onSuccess: ({ issue, companyId, failures }) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(companyId) });
+    onSuccess: ({ issue, failures }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges });
       if (draftTimer.current) clearTimeout(draftTimer.current);
       if (failures.length > 0) {
-        const prefix = (companies.find((company) => company.id === companyId)?.issuePrefix ?? "").trim();
         const issueRef = issue.identifier ?? issue.id;
         pushToast({
           title: `Created ${issueRef} with upload warnings`,
           body: `${failures.length} staged ${failures.length === 1 ? "file" : "files"} could not be added.`,
           tone: "warn",
-          action: prefix
-            ? { label: `Open ${issueRef}`, href: `/${prefix}/issues/${issueRef}` }
-            : undefined,
+          action: { label: `Open ${issueRef}`, href: `/issues/${issueRef}` },
         });
       }
       clearDraft();
@@ -449,8 +436,7 @@ export function NewIssueDialog() {
 
   const uploadDescriptionImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!effectiveCompanyId) throw new Error("No company selected");
-      return assetsApi.uploadImage(effectiveCompanyId, file, "issues/drafts");
+      return assetsApi.uploadImage(file, "issues/drafts");
     },
   });
 
@@ -502,7 +488,6 @@ export function NewIssueDialog() {
   // Restore draft or apply defaults when dialog opens
   useEffect(() => {
     if (!newIssueOpen) return;
-    setDialogCompanyId(selectedCompanyId);
     executionWorkspaceDefaultProjectId.current = null;
 
     const draft = loadDraft();
@@ -604,24 +589,9 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
     setExpanded(false);
-    setDialogCompanyId(null);
     setStagedFiles([]);
     setIsFileDragOver(false);
-    setCompanyOpen(false);
     executionWorkspaceDefaultProjectId.current = null;
-  }
-
-  function handleCompanyChange(companyId: string) {
-    if (companyId === effectiveCompanyId) return;
-    setDialogCompanyId(companyId);
-    setAssigneeValue("");
-    setProjectId("");
-    setProjectWorkspaceId("");
-    setAssigneeModelOverride("");
-    setAssigneeThinkingEffort("");
-    setAssigneeChrome(false);
-    setExecutionWorkspaceMode("shared_workspace");
-    setSelectedExecutionWorkspaceId("");
   }
 
   function discardDraft() {
@@ -631,7 +601,7 @@ export function NewIssueDialog() {
   }
 
   function handleSubmit() {
-    if (!effectiveCompanyId || !title.trim() || createIssue.isPending) return;
+    if (!title.trim() || createIssue.isPending) return;
     const assigneeAdapterOverrides = buildAssigneeAdapterOverrides({
       adapterType: assigneeAdapterType,
       modelOverride: assigneeModelOverride,
@@ -654,7 +624,6 @@ export function NewIssueDialog() {
       ? { mode: requestedExecutionWorkspaceMode }
       : null;
     createIssue.mutate({
-      companyId: effectiveCompanyId,
       stagedFiles,
       title: title.trim(),
       description: description.trim() || undefined,
@@ -897,59 +866,24 @@ export function NewIssueDialog() {
         {/* Header bar */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Popover open={companyOpen} onOpenChange={setCompanyOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity",
-                    !dialogCompany?.brandColor && "bg-muted",
-                  )}
-                  style={
-                    dialogCompany?.brandColor
-                      ? {
-                          backgroundColor: dialogCompany.brandColor,
-                          color: pickTextColorForSolidBg(dialogCompany.brandColor),
-                        }
-                      : undefined
-                  }
-                >
-                  {(dialogCompany?.name ?? "").slice(0, 3).toUpperCase()}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-48 p-1" align="start">
-                {companies.filter((c) => c.status !== "archived").map((c) => (
-                  <button
-                    key={c.id}
-                    className={cn(
-                      "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
-                      c.id === effectiveCompanyId && "bg-accent",
-                    )}
-                    onClick={() => {
-                      handleCompanyChange(c.id);
-                      setCompanyOpen(false);
-                    }}
-                  >
-                    <span
-                      className={cn(
-                        "px-1 py-0.5 rounded text-[10px] font-semibold leading-none",
-                        !c.brandColor && "bg-muted",
-                      )}
-                      style={
-                        c.brandColor
-                          ? {
-                              backgroundColor: c.brandColor,
-                              color: pickTextColorForSolidBg(c.brandColor),
-                            }
-                          : undefined
+            {profile && (
+              <span
+                className={cn(
+                  "px-1.5 py-0.5 rounded text-xs font-semibold",
+                  !profile.brandColor && "bg-muted",
+                )}
+                style={
+                  profile.brandColor
+                    ? {
+                        backgroundColor: profile.brandColor,
+                        color: pickTextColorForSolidBg(profile.brandColor),
                       }
-                    >
-                      {c.name.slice(0, 3).toUpperCase()}
-                    </span>
-                    <span className="truncate">{c.name}</span>
-                  </button>
-                ))}
-              </PopoverContent>
-            </Popover>
+                    : undefined
+                }
+              >
+                {profile.name.slice(0, 3).toUpperCase()}
+              </span>
+            )}
             <span className="text-muted-foreground/60">&rsaquo;</span>
             <span>New issue</span>
           </div>

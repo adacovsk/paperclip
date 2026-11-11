@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "@/lib/router";
-import { useCompany } from "../context/CompanyContext";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
-import { companySkillsApi } from "../api/companySkills";
+import { skillsApi } from "../api/skills";
 import { queryKeys } from "../lib/queryKeys";
 import { AGENT_ROLES } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
@@ -59,7 +58,6 @@ function createValuesForAdapterType(
 }
 
 export function NewAgent() {
-  const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -76,9 +74,8 @@ export function NewAgent() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
 
   const {
@@ -87,17 +84,13 @@ export function NewAgent() {
     isLoading: adapterModelsLoading,
     isFetching: adapterModelsFetching,
   } = useQuery({
-    queryKey: selectedCompanyId
-      ? queryKeys.agents.adapterModels(selectedCompanyId, configValues.adapterType)
-      : ["agents", "none", "adapter-models", configValues.adapterType],
-    queryFn: () => agentsApi.adapterModels(selectedCompanyId!, configValues.adapterType),
-    enabled: Boolean(selectedCompanyId),
+    queryKey: queryKeys.agents.adapterModels(configValues.adapterType),
+    queryFn: () => agentsApi.adapterModels(configValues.adapterType),
   });
 
-  const { data: companySkills } = useQuery({
-    queryKey: queryKeys.companySkills.list(selectedCompanyId ?? ""),
-    queryFn: () => companySkillsApi.list(selectedCompanyId!),
-    enabled: Boolean(selectedCompanyId),
+  const { data: librarySkills } = useQuery({
+    queryKey: queryKeys.skills.list,
+    queryFn: () => skillsApi.list(),
   });
 
   const isFirstAgent = !agents || agents.length === 0;
@@ -131,10 +124,10 @@ export function NewAgent() {
 
   const createAgent = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
-      agentsApi.hire(selectedCompanyId!, data),
+      agentsApi.hire(data),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
+      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list() });
       navigate(agentUrl(result.agent));
     },
     onError: (error) => {
@@ -148,7 +141,7 @@ export function NewAgent() {
   }
 
   function handleSubmit() {
-    if (!selectedCompanyId || !name.trim()) return;
+    if (!name.trim()) return;
     setFormError(null);
     if (configValues.adapterType === "opencode_local") {
       const selectedModel = configValues.model.trim();
@@ -199,7 +192,7 @@ export function NewAgent() {
     });
   }
 
-  const availableSkills = (companySkills ?? []).filter((skill) => !skill.key.startsWith("paperclipai/paperclip/"));
+  const availableSkills = (librarySkills ?? []).filter((skill) => !skill.key.startsWith("paperclipai/paperclip/"));
 
   function toggleSkill(key: string, checked: boolean) {
     setSelectedSkillKeys((prev) => {
@@ -291,14 +284,14 @@ export function NewAgent() {
         <div className="border-t border-border px-4 py-4">
           <div className="space-y-3">
             <div>
-              <h2 className="text-sm font-medium">Company skills</h2>
+              <h2 className="text-sm font-medium">Library skills</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Optional skills from the company library. Built-in Paperclip runtime skills are added automatically.
+                Optional skills from the skill library. Built-in Paperclip runtime skills are added automatically.
               </p>
             </div>
             {availableSkills.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No optional company skills installed yet.
+                No optional library skills installed yet.
               </p>
             ) : (
               <div className="space-y-3">

@@ -4,16 +4,16 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
-  companies,
-  companySecrets,
-  companySecretVersions,
   createDb,
   heartbeatRuns,
+  instanceSettings,
   issues,
   projects,
   routineRuns,
   routines,
   routineTriggers,
+  secrets,
+  secretVersions,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -45,13 +45,13 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     await db.delete(routineRuns);
     await db.delete(routineTriggers);
     await db.delete(routines);
-    await db.delete(companySecretVersions);
-    await db.delete(companySecrets);
+    await db.delete(secretVersions);
+    await db.delete(secrets);
     await db.delete(heartbeatRuns);
     await db.delete(issues);
     await db.delete(projects);
     await db.delete(agents);
-    await db.delete(companies);
+    await db.delete(instanceSettings);
   });
 
   afterAll(async () => {
@@ -72,10 +72,8 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
       },
     ) => Promise<unknown>;
   }) {
-    const companyId = randomUUID();
     const agentId = randomUUID();
     const projectId = randomUUID();
-    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const wakeups: Array<{
       agentId: string;
       opts: {
@@ -89,16 +87,22 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
       };
     }> = [];
 
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix,
-      requireOperatorApprovalForNewAgents: false,
-    });
+    // The singleton row outlives per-test cleanup, so seed it idempotently.
+    await db
+      .insert(instanceSettings)
+      .values({
+        singletonKey: "default",
+        name: "Paperclip",
+        issuePrefix: "TST",
+        requireOperatorApprovalForNewAgents: false,
+      })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: { name: "Paperclip", issuePrefix: "TST", requireOperatorApprovalForNewAgents: false },
+      });
 
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "CodexCoder",
       role: "engineer",
       status: "active",
@@ -110,7 +114,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
 
     await db.insert(projects).values({
       id: projectId,
-      companyId,
       name: "Routines",
       status: "in_progress",
     });
@@ -128,7 +131,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
           const queuedRunId = randomUUID();
           await db.insert(heartbeatRuns).values({
             id: queuedRunId,
-            companyId,
             agentId: wakeupAgentId,
             invocationSource: wakeupOpts.source ?? "assignment",
             triggerDetail: wakeupOpts.triggerDetail ?? null,
@@ -148,7 +150,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     });
     const issueSvc = issueService(db);
     const routine = await svc.create(
-      companyId,
       {
         projectId,
         goalId: null,
@@ -164,13 +165,13 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
       {},
     );
 
-    return { companyId, agentId, issueSvc, projectId, routine, svc, wakeups };
+    return { agentId, issueSvc, projectId, routine, svc, wakeups };
   }
 
   it("creates a fresh execution issue when the previous routine issue is open but idle", async () => {
-    const { companyId, issueSvc, routine, svc } = await seedFixture();
+    const { issueSvc, routine, svc } = await seedFixture();
     const previousRunId = randomUUID();
-    const previousIssue = await issueSvc.create(companyId, {
+    const previousIssue = await issueSvc.create({
       projectId: routine.projectId,
       title: routine.title,
       description: routine.description,
@@ -184,7 +185,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
 
     await db.insert(routineRuns).values({
       id: previousRunId,
-      companyId,
       routineId: routine.id,
       triggerId: null,
       source: "manual",
@@ -254,10 +254,10 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
   });
 
   it("coalesces only when the existing routine issue has a live execution run", async () => {
-    const { agentId, companyId, issueSvc, routine, svc } = await seedFixture();
+    const { agentId, issueSvc, routine, svc } = await seedFixture();
     const previousRunId = randomUUID();
     const liveHeartbeatRunId = randomUUID();
-    const previousIssue = await issueSvc.create(companyId, {
+    const previousIssue = await issueSvc.create({
       projectId: routine.projectId,
       title: routine.title,
       description: routine.description,
@@ -271,7 +271,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
 
     await db.insert(routineRuns).values({
       id: previousRunId,
-      companyId,
       routineId: routine.id,
       triggerId: null,
       source: "manual",
@@ -282,7 +281,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
 
     await db.insert(heartbeatRuns).values({
       id: liveHeartbeatRunId,
-      companyId,
       agentId,
       invocationSource: "assignment",
       triggerDetail: "system",
@@ -329,7 +327,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
         const queuedRunId = randomUUID();
         await db.insert(heartbeatRuns).values({
           id: queuedRunId,
-          companyId: routine.companyId,
           agentId: wakeupAgentId,
           invocationSource: wakeupOpts.source ?? "assignment",
           triggerDetail: wakeupOpts.triggerDetail ?? null,

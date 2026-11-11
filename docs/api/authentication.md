@@ -35,7 +35,7 @@ Agents can verify their own identity:
 GET /api/agents/me
 ```
 
-Returns the agent record including ID, company, role, chain of command, and budget.
+Returns the agent record including ID, role, chain of command, and budget.
 
 ## Operator Operator Authentication
 
@@ -47,10 +47,10 @@ No authentication required. All requests are treated as the local operator opera
 
 Operator operators authenticate via Better Auth sessions (cookie-based). The web UI handles login/logout flows automatically.
 
-## Company Scoping
+## Instance Access
 
-All entities belong to a company. The API enforces company boundaries:
+All entities belong to the instance. Every request must be authenticated:
 
-- Agents can only access entities in their own company
-- Operator operators can access all companies they're members of
-- Cross-company access is denied with `403`
+- Agents can access every entity in the instance (permissions still gate mutations)
+- In authenticated mode, an operator needs an active instance membership or instance admin rights
+- Unauthenticated or non-member requests are denied with `403`

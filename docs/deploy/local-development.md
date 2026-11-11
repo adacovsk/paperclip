@@ -68,8 +68,8 @@ For full setup and troubleshooting, see [Tailscale Private Access](/deploy/tails
 curl http://localhost:3100/api/health
 # -> {"status":"ok"}
 
-curl http://localhost:3100/api/companies
-# -> []
+curl http://localhost:3100/api/instance/profile
+# -> {"id":"...","name":"...",...}
 ```
 
 ## Reset Dev Data

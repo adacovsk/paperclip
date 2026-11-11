@@ -130,9 +130,9 @@ When a local agent run has no resolved project/session workspace, Paperclip fall
 
 This path honors `PAPERCLIP_HOME` and `PAPERCLIP_INSTANCE_ID` in non-default setups.
 
-For `codex_local`, Paperclip also manages a per-company Codex home under the instance root and seeds it from the shared Codex login/config home (`$CODEX_HOME` or `~/.codex`):
+For `codex_local`, Paperclip also manages a Codex home under the instance root and seeds it from the shared Codex login/config home (`$CODEX_HOME` or `~/.codex`):
 
-- `~/.paperclip/instances/default/companies/<company-id>/codex-home`
+- `~/.paperclip/instances/default/codex-home`
 
 ## Worktree-local Instances
 
@@ -156,7 +156,7 @@ This command:
 
 Seed modes:
 
-- `minimal` keeps core app state like companies, projects, issues, comments, approvals, and auth state, preserves schema for all tables, but omits row data from heavy operational history such as heartbeat runs, wake requests, activity logs, runtime services, and agent session state
+- `minimal` keeps core app state like the instance profile, projects, issues, comments, approvals, and auth state, preserves schema for all tables, but omits row data from heavy operational history such as heartbeat runs, wake requests, activity logs, runtime services, and agent session state
 - `full` makes a full logical clone of the source instance
 - `--no-seed` creates an empty isolated instance
 
@@ -264,13 +264,13 @@ In another terminal:
 
 ```sh
 curl http://localhost:3100/api/health
-curl http://localhost:3100/api/companies
+curl http://localhost:3100/api/instance/profile
 ```
 
 Expected:
 
 - `/api/health` returns `{"status":"ok"}`
-- `/api/companies` returns a JSON array
+- `/api/instance/profile` returns the instance profile JSON object
 
 ## Reset Local Dev Database
 
@@ -344,19 +344,6 @@ pnpm secrets:migrate-inline-env         # dry run
 pnpm secrets:migrate-inline-env --apply # apply migration
 ```
 
-## Company Deletion Toggle
-
-Company deletion is intended as a dev/debug capability and can be disabled at runtime:
-
-```sh
-PAPERCLIP_ENABLE_COMPANY_DELETION=false
-```
-
-Default behavior:
-
-- `local_trusted`: enabled
-- `authenticated`: disabled
-
 ## CLI Client Operations
 
 Paperclip CLI now includes client-side control-plane commands in addition to setup commands.
@@ -364,15 +351,15 @@ Paperclip CLI now includes client-side control-plane commands in addition to set
 Quick examples:
 
 ```sh
-pnpm paperclipai issue list --company-id <company-id>
-pnpm paperclipai issue create --company-id <company-id> --title "Investigate checkout conflict"
+pnpm paperclipai issue list
+pnpm paperclipai issue create --title "Investigate checkout conflict"
 pnpm paperclipai issue update <issue-id> --status in_progress --comment "Started triage"
 ```
 
 Set defaults once with context profiles:
 
 ```sh
-pnpm paperclipai context set --api-base http://localhost:3100 --company-id <company-id>
+pnpm paperclipai context set --api-base http://localhost:3100
 ```
 
 Then run commands without repeating flags:

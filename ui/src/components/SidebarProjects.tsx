@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { NavLink, useLocation } from "@/lib/router";
+import { NavLink, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
 import {
@@ -12,7 +12,6 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { authApi } from "../api/auth";
@@ -33,16 +32,12 @@ type ProjectSidebarSlot = ReturnType<typeof usePluginSlots>["slots"][number];
 
 function SortableProjectItem({
   activeProjectRef,
-  companyId,
-  companyPrefix,
   isMobile,
   project,
   projectSidebarSlots,
   setSidebarOpen,
 }: {
   activeProjectRef: string | null;
-  companyId: string | null;
-  companyPrefix: string | null;
   isMobile: boolean;
   project: Project;
   projectSidebarSlots: ProjectSidebarSlot[];
@@ -98,8 +93,6 @@ function SortableProjectItem({
                 key={`${project.id}:${slot.pluginKey}:${slot.id}`}
                 slot={slot}
                 context={{
-                  companyId,
-                  companyPrefix,
                   projectId: project.id,
                   projectRef: routeRef,
                   entityId: project.id,
@@ -117,15 +110,13 @@ function SortableProjectItem({
 
 export function SidebarProjects() {
   const [open, setOpen] = useState(true);
-  const { selectedCompany, selectedCompanyId } = useCompany();
   const { openNewProject } = useDialog();
   const { isMobile, setSidebarOpen } = useSidebar();
   const location = useLocation();
 
   const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(selectedCompanyId!),
-    queryFn: () => projectsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
   });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -134,8 +125,6 @@ export function SidebarProjects() {
   const { slots: projectSidebarSlots } = usePluginSlots({
     slotTypes: ["projectSidebarItem"],
     entityType: "project",
-    companyId: selectedCompanyId,
-    enabled: !!selectedCompanyId,
   });
 
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
@@ -146,11 +135,10 @@ export function SidebarProjects() {
   );
   const { orderedProjects, persistOrder } = useProjectOrder({
     projects: visibleProjects,
-    companyId: selectedCompanyId,
     userId: currentUserId,
   });
 
-  const projectMatch = location.pathname.match(/^\/(?:[^/]+\/)?projects\/([^/]+)/);
+  const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
   const activeProjectRef = projectMatch?.[1] ?? null;
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -216,8 +204,6 @@ export function SidebarProjects() {
                 <SortableProjectItem
                   key={project.id}
                   activeProjectRef={activeProjectRef}
-                  companyId={selectedCompanyId}
-                  companyPrefix={selectedCompany?.issuePrefix ?? null}
                   isMobile={isMobile}
                   project={project}
                   projectSidebarSlots={projectSidebarSlots}

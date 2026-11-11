@@ -11,15 +11,15 @@ function pickEarliestGoal(goals: Goal[]) {
   return [...goals].sort((a, b) => goalCreatedAt(a) - goalCreatedAt(b))[0] ?? null;
 }
 
-export function selectDefaultCompanyGoalId(goals: Goal[]): string | null {
-  const companyGoals = goals.filter((goal) => goal.level === "company");
-  const rootGoals = companyGoals.filter((goal) => !goal.parentId);
+export function selectDefaultInstanceGoalId(goals: Goal[]): string | null {
+  const instanceGoals = goals.filter((goal) => goal.level === "instance");
+  const rootGoals = instanceGoals.filter((goal) => !goal.parentId);
   const activeRootGoals = rootGoals.filter((goal) => goal.status === "active");
 
   return (
     pickEarliestGoal(activeRootGoals)?.id ??
     pickEarliestGoal(rootGoals)?.id ??
-    pickEarliestGoal(companyGoals)?.id ??
+    pickEarliestGoal(instanceGoals)?.id ??
     null
   );
 }

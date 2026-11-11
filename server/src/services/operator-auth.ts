@@ -5,8 +5,7 @@ import {
   authUsers,
   operatorApiKeys,
   cliAuthChallenges,
-  companies,
-  companyMemberships,
+  memberships,
   instanceUserRoles,
 } from "@paperclipai/db";
 import { conflict, forbidden, notFound } from "../errors.js";
@@ -51,7 +50,7 @@ function challengeStatusForRow(row: typeof cliAuthChallenges.$inferSelect): CliA
 
 export function operatorAuthService(db: Db) {
   async function resolveOperatorAccess(userId: string) {
-    const [user, memberships, adminRole] = await Promise.all([
+    const [user, membership, adminRole] = await Promise.all([
       db
         .select({
           id: authUsers.id,
@@ -62,16 +61,16 @@ export function operatorAuthService(db: Db) {
         .where(eq(authUsers.id, userId))
         .then((rows) => rows[0] ?? null),
       db
-        .select({ companyId: companyMemberships.companyId })
-        .from(companyMemberships)
+        .select({ id: memberships.id })
+        .from(memberships)
         .where(
           and(
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, userId),
-            eq(companyMemberships.status, "active"),
+            eq(memberships.principalType, "user"),
+            eq(memberships.principalId, userId),
+            eq(memberships.status, "active"),
           ),
         )
-        .then((rows) => rows.map((row) => row.companyId)),
+        .then((rows) => rows[0] ?? null),
       db
         .select({ id: instanceUserRoles.id })
         .from(instanceUserRoles)
@@ -81,49 +80,9 @@ export function operatorAuthService(db: Db) {
 
     return {
       user,
-      companyIds: memberships,
+      isMember: Boolean(membership),
       isInstanceAdmin: Boolean(adminRole),
     };
-  }
-
-  async function resolveOperatorActivityCompanyIds(input: {
-    userId: string;
-    requestedCompanyId?: string | null;
-    operatorApiKeyId?: string | null;
-  }) {
-    const access = await resolveOperatorAccess(input.userId);
-    const companyIds = new Set(access.companyIds);
-
-    if (companyIds.size === 0 && input.requestedCompanyId?.trim()) {
-      companyIds.add(input.requestedCompanyId.trim());
-    }
-
-    if (companyIds.size === 0 && input.operatorApiKeyId?.trim()) {
-      const challengeCompanyIds = await db
-        .select({ requestedCompanyId: cliAuthChallenges.requestedCompanyId })
-        .from(cliAuthChallenges)
-        .where(eq(cliAuthChallenges.operatorApiKeyId, input.operatorApiKeyId.trim()))
-        .then((rows) =>
-          rows
-            .map((row) => row.requestedCompanyId?.trim() ?? null)
-            .filter((value): value is string => Boolean(value)),
-        );
-      for (const companyId of challengeCompanyIds) {
-        companyIds.add(companyId);
-      }
-    }
-
-    if (companyIds.size === 0 && access.isInstanceAdmin) {
-      const allCompanyIds = await db
-        .select({ id: companies.id })
-        .from(companies)
-        .then((rows) => rows.map((row) => row.id));
-      for (const companyId of allCompanyIds) {
-        companyIds.add(companyId);
-      }
-    }
-
-    return Array.from(companyIds);
   }
 
   async function findOperatorApiKeyByToken(token: string) {
@@ -159,7 +118,6 @@ export function operatorAuthService(db: Db) {
     command: string;
     clientName?: string | null;
     requestedAccess: "operator" | "instance_admin_required";
-    requestedCompanyId?: string | null;
   }) {
     const challengeSecret = createCliAuthSecret();
     const pendingOperatorToken = createOperatorApiToken();
@@ -177,7 +135,6 @@ export function operatorAuthService(db: Db) {
         command: input.command.trim(),
         clientName: input.clientName?.trim() || null,
         requestedAccess: input.requestedAccess,
-        requestedCompanyId: input.requestedCompanyId?.trim() || null,
         pendingKeyHash: hashBearerToken(pendingOperatorToken),
         pendingKeyName,
         expiresAt,
@@ -211,22 +168,13 @@ export function operatorAuthService(db: Db) {
     const challenge = await getCliAuthChallengeBySecret(id, token);
     if (!challenge) return null;
 
-    const [company, approvedBy] = await Promise.all([
-      challenge.requestedCompanyId
-        ? db
-            .select({ id: companies.id, name: companies.name })
-            .from(companies)
-            .where(eq(companies.id, challenge.requestedCompanyId))
-            .then((rows) => rows[0] ?? null)
-        : Promise.resolve(null),
-      challenge.approvedByUserId
-        ? db
-            .select({ id: authUsers.id, name: authUsers.name, email: authUsers.email })
-            .from(authUsers)
-            .where(eq(authUsers.id, challenge.approvedByUserId))
-            .then((rows) => rows[0] ?? null)
-        : Promise.resolve(null),
-    ]);
+    const approvedBy = challenge.approvedByUserId
+      ? await db
+          .select({ id: authUsers.id, name: authUsers.name, email: authUsers.email })
+          .from(authUsers)
+          .where(eq(authUsers.id, challenge.approvedByUserId))
+          .then((rows) => rows[0] ?? null)
+      : null;
 
     return {
       id: challenge.id,
@@ -234,8 +182,6 @@ export function operatorAuthService(db: Db) {
       command: challenge.command,
       clientName: challenge.clientName ?? null,
       requestedAccess: challenge.requestedAccess as "operator" | "instance_admin_required",
-      requestedCompanyId: challenge.requestedCompanyId ?? null,
-      requestedCompanyName: company?.name ?? null,
       approvedAt: challenge.approvedAt?.toISOString() ?? null,
       cancelledAt: challenge.cancelledAt?.toISOString() ?? null,
       expiresAt: challenge.expiresAt.toISOString(),
@@ -349,6 +295,5 @@ export function operatorAuthService(db: Db) {
     approveCliAuthChallenge,
     cancelCliAuthChallenge,
     assertCurrentOperatorKey,
-    resolveOperatorActivityCompanyIds,
   };
 }

@@ -1,5 +1,4 @@
 import { pgTable, uuid, text, timestamp, date, index, jsonb } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { goals } from "./goals.js";
 import { agents } from "./agents.js";
 
@@ -7,7 +6,6 @@ export const projects = pgTable(
   "projects",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     goalId: uuid("goal_id").references(() => goals.id),
     name: text("name").notNull(),
     description: text("description"),
@@ -23,6 +21,5 @@ export const projects = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyIdx: index("projects_company_idx").on(table.companyId),
   }),
 );

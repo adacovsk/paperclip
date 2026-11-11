@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { companySkillRoutes } from "../routes/company-skills.js";
+import { skillRoutes } from "../routes/skills.js";
 import { errorHandler } from "../middleware/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
@@ -13,7 +13,7 @@ const mockAccessService = vi.hoisted(() => ({
   hasPermission: vi.fn(),
 }));
 
-const mockCompanySkillService = vi.hoisted(() => ({
+const mockSkillService = vi.hoisted(() => ({
   importFromSource: vi.fn(),
 }));
 
@@ -22,7 +22,7 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
-  companySkillService: () => mockCompanySkillService,
+  skillService: () => mockSkillService,
   logActivity: mockLogActivity,
 }));
 
@@ -33,15 +33,15 @@ function createApp(actor: Record<string, unknown>) {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", companySkillRoutes({} as any));
+  app.use("/api", skillRoutes({} as any));
   app.use(errorHandler);
   return app;
 }
 
-describe("company skill mutation permissions", () => {
+describe("skill mutation permissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCompanySkillService.importFromSource.mockResolvedValue({
+    mockSkillService.importFromSource.mockResolvedValue({
       imported: [],
       warnings: [],
     });
@@ -50,63 +50,56 @@ describe("company skill mutation permissions", () => {
     mockAccessService.hasPermission.mockResolvedValue(false);
   });
 
-  it("allows local operator operators to mutate company skills", async () => {
+  it("allows local operator operators to mutate skills", async () => {
     const res = await request(createApp({
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
       source: "local_implicit",
       isInstanceAdmin: false,
     }))
-      .post("/api/companies/company-1/skills/import")
+      .post("/api/skills/import")
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
-      "company-1",
+    expect(mockSkillService.importFromSource).toHaveBeenCalledWith(
       "https://github.com/vercel-labs/agent-browser",
     );
   });
 
-  it("blocks same-company agents without management permission from mutating company skills", async () => {
+  it("blocks agents without management permission from mutating skills", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       permissions: {},
     });
 
     const res = await request(createApp({
       type: "agent",
       agentId: "agent-1",
-      companyId: "company-1",
       runId: "run-1",
     }))
-      .post("/api/companies/company-1/skills/import")
+      .post("/api/skills/import")
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
     expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(mockCompanySkillService.importFromSource).not.toHaveBeenCalled();
+    expect(mockSkillService.importFromSource).not.toHaveBeenCalled();
   });
 
-  it("allows agents with canCreateAgents to mutate company skills", async () => {
+  it("allows agents with canCreateAgents to mutate skills", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       permissions: { canCreateAgents: true },
     });
 
     const res = await request(createApp({
       type: "agent",
       agentId: "agent-1",
-      companyId: "company-1",
       runId: "run-1",
     }))
-      .post("/api/companies/company-1/skills/import")
+      .post("/api/skills/import")
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
-      "company-1",
+    expect(mockSkillService.importFromSource).toHaveBeenCalledWith(
       "https://github.com/vercel-labs/agent-browser",
     );
   });

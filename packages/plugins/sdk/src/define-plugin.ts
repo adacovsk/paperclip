@@ -34,10 +34,9 @@
  *     });
  *
  *     // Register data for the UI
- *     ctx.data.register("sync-health", async ({ companyId }) => {
+ *     ctx.data.register("sync-health", async () => {
  *       const state = await ctx.state.get({
- *         scopeKind: "company",
- *         scopeId: String(companyId),
+ *         scopeKind: "instance",
  *         stateKey: "last-sync",
  *       });
  *       return { lastSync: state };

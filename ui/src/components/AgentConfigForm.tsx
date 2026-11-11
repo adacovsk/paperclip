@@ -4,7 +4,7 @@ import { AGENT_ADAPTER_TYPES } from "@paperclipai/shared";
 import type {
   Agent,
   AdapterEnvironmentTestResult,
-  CompanySecret,
+  Secret,
   EnvBinding,
 } from "@paperclipai/shared";
 import type { AdapterModel } from "../api/agents";
@@ -27,7 +27,6 @@ import { FolderOpen, Heart, ChevronDown, X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractModelName, extractProviderId } from "../lib/model-utils";
 import { queryKeys } from "../lib/queryKeys";
-import { useCompany } from "../context/CompanyContext";
 import {
   Field,
   ToggleField,
@@ -175,30 +174,25 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const showAdapterTestEnvironmentButton = props.showAdapterTestEnvironmentButton ?? true;
   const showCreateRunPolicySection = props.showCreateRunPolicySection ?? true;
   const hideInstructionsFile = props.hideInstructionsFile ?? false;
-  const { selectedCompanyId } = useCompany();
   const queryClient = useQueryClient();
 
   const { data: availableSecrets = [] } = useQuery({
-    queryKey: selectedCompanyId ? queryKeys.secrets.list(selectedCompanyId) : ["secrets", "none"],
-    queryFn: () => secretsApi.list(selectedCompanyId!),
-    enabled: Boolean(selectedCompanyId),
+    queryKey: queryKeys.secrets.list,
+    queryFn: () => secretsApi.list(),
   });
 
   const createSecret = useMutation({
     mutationFn: (input: { name: string; value: string }) => {
-      if (!selectedCompanyId) throw new Error("Select a company to create secrets");
-      return secretsApi.create(selectedCompanyId, input);
+      return secretsApi.create(input);
     },
     onSuccess: () => {
-      if (!selectedCompanyId) return;
-      queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(selectedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list });
     },
   });
 
   const uploadMarkdownImage = useMutation({
     mutationFn: async ({ file, namespace }: { file: File; namespace: string }) => {
-      if (!selectedCompanyId) throw new Error("Select a company to upload images");
-      return assetsApi.uploadImage(selectedCompanyId, file, namespace);
+      return assetsApi.uploadImage(file, namespace);
     },
   });
 
@@ -327,34 +321,26 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     data: fetchedModels,
     error: fetchedModelsError,
   } = useQuery({
-    queryKey: selectedCompanyId
-      ? queryKeys.agents.adapterModels(selectedCompanyId, adapterType)
-      : ["agents", "none", "adapter-models", adapterType],
-    queryFn: () => agentsApi.adapterModels(selectedCompanyId!, adapterType),
-    enabled: Boolean(selectedCompanyId),
+    queryKey: queryKeys.agents.adapterModels(adapterType),
+    queryFn: () => agentsApi.adapterModels(adapterType),
   });
   const models = fetchedModels ?? externalModels ?? [];
   const {
     data: detectedModelData,
     refetch: refetchDetectedModel,
   } = useQuery({
-    queryKey: selectedCompanyId
-      ? queryKeys.agents.detectModel(selectedCompanyId, adapterType)
-      : ["agents", "none", "detect-model", adapterType],
+    queryKey: queryKeys.agents.detectModel(adapterType),
     queryFn: () => {
-      if (!selectedCompanyId) {
-        throw new Error("Select a company to detect the Hermes model");
-      }
-      return agentsApi.detectModel(selectedCompanyId, adapterType);
+      return agentsApi.detectModel(adapterType);
     },
-    enabled: Boolean(selectedCompanyId && isHermesLocal),
+    enabled: isHermesLocal,
   });
   const detectedModel = detectedModelData?.model ?? null;
 
-  const { data: companyAgents = [] } = useQuery({
-    queryKey: selectedCompanyId ? queryKeys.agents.list(selectedCompanyId) : ["agents", "none", "list"],
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: Boolean(!isCreate && selectedCompanyId),
+  const { data: instanceAgents = [] } = useQuery({
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+    enabled: !isCreate,
   });
 
   /** Props passed to adapter-specific config field components */
@@ -393,10 +379,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
   const testEnvironment = useMutation({
     mutationFn: async () => {
-      if (!selectedCompanyId) {
-        throw new Error("Select a company to test adapter environment");
-      }
-      return agentsApi.testEnvironment(selectedCompanyId, adapterType, {
+      return agentsApi.testEnvironment(adapterType, {
         adapterConfig: buildAdapterConfigForTest(),
       });
     },
@@ -506,7 +489,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
             <Field label="Reports to" hint={help.reportsTo}>
               <ReportsToPicker
-                agents={companyAgents}
+                agents={instanceAgents}
                 value={eff("identity", "reportsTo", props.agent.reportsTo ?? null)}
                 onChange={(id) => mark("identity", "reportsTo", id)}
                 excludeAgentIds={[props.agent.id]}
@@ -570,7 +553,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               size="sm"
               className="h-7 px-2.5 text-xs"
               onClick={() => testEnvironment.mutate()}
-              disabled={testEnvironment.isPending || !selectedCompanyId}
+              disabled={testEnvironment.isPending}
             >
               {testEnvironment.isPending ? "Testing..." : "Test environment"}
             </Button>
@@ -1088,8 +1071,8 @@ function EnvVarEditor({
   onChange,
 }: {
   value: Record<string, EnvBinding>;
-  secrets: CompanySecret[];
-  onCreateSecret: (name: string, value: string) => Promise<CompanySecret>;
+  secrets: Secret[];
+  onCreateSecret: (name: string, value: string) => Promise<Secret>;
   onChange: (env: Record<string, EnvBinding> | undefined) => void;
 }) {
   type Row = {

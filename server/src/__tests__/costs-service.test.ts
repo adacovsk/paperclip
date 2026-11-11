@@ -30,8 +30,8 @@ function makeDb(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const mockCompanyService = vi.hoisted(() => ({
-  getById: vi.fn(),
+const mockInstanceProfileService = vi.hoisted(() => ({
+  get: vi.fn(),
   update: vi.fn(),
 }));
 const mockAgentService = vi.hoisted(() => ({
@@ -61,7 +61,6 @@ const mockFinanceService = vi.hoisted(() => ({
 }));
 const mockBudgetService = vi.hoisted(() => ({
   overview: vi.fn().mockResolvedValue({
-    companyId: "company-1",
     policies: [],
     activeIncidents: [],
     pausedAgentCount: 0,
@@ -76,7 +75,7 @@ vi.mock("../services/index.js", () => ({
   budgetService: () => mockBudgetService,
   costService: () => mockCostService,
   financeService: () => mockFinanceService,
-  companyService: () => mockCompanyService,
+  instanceProfileService: () => mockInstanceProfileService,
   agentService: () => mockAgentService,
   heartbeatService: () => mockHeartbeatService,
   logActivity: mockLogActivity,
@@ -108,15 +107,14 @@ function createAppWithActor(actor: any) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockCompanyService.update.mockResolvedValue({
-    id: "company-1",
+  mockInstanceProfileService.update.mockResolvedValue({
+    id: "instance-1",
     name: "Paperclip",
     budgetMonthlyCents: 100,
     spentMonthlyCents: 0,
   });
   mockAgentService.update.mockResolvedValue({
     id: "agent-1",
-    companyId: "company-1",
     name: "Budget Agent",
     budgetMonthlyCents: 100,
     spentMonthlyCents: 0,
@@ -128,7 +126,7 @@ describe("cost routes", () => {
   it("accepts valid ISO date strings and passes them to cost summary routes", async () => {
     const app = createApp();
     const res = await request(app)
-      .get("/api/companies/company-1/costs/summary")
+      .get("/api/costs/summary")
       .query({ from: "2026-01-01T00:00:00.000Z", to: "2026-01-31T23:59:59.999Z" });
     expect(res.status).toBe(200);
   });
@@ -136,7 +134,7 @@ describe("cost routes", () => {
   it("returns 400 for an invalid 'from' date string", async () => {
     const app = createApp();
     const res = await request(app)
-      .get("/api/companies/company-1/costs/summary")
+      .get("/api/costs/summary")
       .query({ from: "not-a-date" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/invalid 'from' date/i);
@@ -145,7 +143,7 @@ describe("cost routes", () => {
   it("returns 400 for an invalid 'to' date string", async () => {
     const app = createApp();
     const res = await request(app)
-      .get("/api/companies/company-1/costs/summary")
+      .get("/api/costs/summary")
       .query({ to: "banana" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/invalid 'to' date/i);
@@ -154,7 +152,7 @@ describe("cost routes", () => {
   it("returns finance summary rows for valid requests", async () => {
     const app = createApp();
     const res = await request(app)
-      .get("/api/companies/company-1/costs/finance-summary")
+      .get("/api/costs/finance-summary")
       .query({ from: "2026-02-01T00:00:00.000Z", to: "2026-02-28T23:59:59.999Z" });
     expect(res.status).toBe(200);
     expect(mockFinanceService.summary).toHaveBeenCalled();
@@ -163,7 +161,7 @@ describe("cost routes", () => {
   it("returns 400 for invalid finance event list limits", async () => {
     const app = createApp();
     const res = await request(app)
-      .get("/api/companies/company-1/costs/finance-events")
+      .get("/api/costs/finance-events")
       .query({ limit: "0" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/invalid 'limit'/i);
@@ -172,33 +170,32 @@ describe("cost routes", () => {
   it("accepts valid finance event list limits", async () => {
     const app = createApp();
     const res = await request(app)
-      .get("/api/companies/company-1/costs/finance-events")
+      .get("/api/costs/finance-events")
       .query({ limit: "25" });
     expect(res.status).toBe(200);
-    expect(mockFinanceService.list).toHaveBeenCalledWith("company-1", undefined, 25);
+    expect(mockFinanceService.list).toHaveBeenCalledWith(undefined, 25);
   });
 
-  it("rejects company budget updates for operator users outside the company", async () => {
+  it("rejects instance budget updates for operator users without instance membership", async () => {
     const app = createAppWithActor({
       type: "operator",
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: ["company-2"],
+      isMember: false,
     });
 
     const res = await request(app)
-      .patch("/api/companies/company-1/budgets")
+      .patch("/api/budgets")
       .send({ budgetMonthlyCents: 2500 });
 
     expect(res.status).toBe(403);
-    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(mockInstanceProfileService.update).not.toHaveBeenCalled();
   });
 
-  it("rejects agent budget updates for operator users outside the agent company", async () => {
+  it("rejects agent budget updates for operator users without instance membership", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
-      companyId: "company-1",
       name: "Budget Agent",
       budgetMonthlyCents: 100,
       spentMonthlyCents: 0,
@@ -208,7 +205,7 @@ describe("cost routes", () => {
       userId: "operator-user",
       source: "session",
       isInstanceAdmin: false,
-      companyIds: ["company-2"],
+      isMember: false,
     });
 
     const res = await request(app)

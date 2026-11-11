@@ -1,5 +1,5 @@
 import type { Goal } from "@paperclipai/shared";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { StatusBadge } from "./StatusBadge";
 import { ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";

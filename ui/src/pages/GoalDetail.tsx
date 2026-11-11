@@ -1,11 +1,10 @@
 import { useEffect } from "react";
-import { useParams } from "@/lib/router";
+import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { goalsApi } from "../api/goals";
 import { projectsApi } from "../api/projects";
 import { assetsApi } from "../api/assets";
 import { usePanel } from "../context/PanelContext";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -23,7 +22,6 @@ import type { Goal, Project } from "@paperclipai/shared";
 
 export function GoalDetail() {
   const { goalId } = useParams<{ goalId: string }>();
-  const { selectedCompanyId, setSelectedCompanyId } = useCompany();
   const { openNewGoal } = useDialog();
   const { openPanel, closePanel } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -38,24 +36,16 @@ export function GoalDetail() {
     queryFn: () => goalsApi.get(goalId!),
     enabled: !!goalId
   });
-  const resolvedCompanyId = goal?.companyId ?? selectedCompanyId;
 
   const { data: allGoals } = useQuery({
-    queryKey: queryKeys.goals.list(resolvedCompanyId!),
-    queryFn: () => goalsApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId
+    queryKey: queryKeys.goals.list,
+    queryFn: () => goalsApi.list(),
   });
 
   const { data: allProjects } = useQuery({
-    queryKey: queryKeys.projects.list(resolvedCompanyId!),
-    queryFn: () => projectsApi.list(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
   });
-
-  useEffect(() => {
-    if (!goal?.companyId || goal.companyId === selectedCompanyId) return;
-    setSelectedCompanyId(goal.companyId, { source: "route_sync" });
-  }, [goal?.companyId, selectedCompanyId, setSelectedCompanyId]);
 
   const updateGoal = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
@@ -64,19 +54,15 @@ export function GoalDetail() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.goals.detail(goalId!)
       });
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.goals.list(resolvedCompanyId)
-        });
-      }
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.goals.list
+      });
     }
   });
 
   const uploadImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!resolvedCompanyId) throw new Error("No company selected");
       return assetsApi.uploadImage(
-        resolvedCompanyId,
         file,
         `goals/${goalId ?? "draft"}`
       );

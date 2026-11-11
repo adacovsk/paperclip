@@ -20,8 +20,8 @@ function resolveUserId(userId: string | null | undefined): string {
   return trimmed.length > 0 ? trimmed : ANONYMOUS_USER_ID;
 }
 
-export function getProjectOrderStorageKey(companyId: string, userId: string | null | undefined): string {
-  return `${PROJECT_ORDER_STORAGE_PREFIX}:${companyId}:${resolveUserId(userId)}`;
+export function getProjectOrderStorageKey(userId: string | null | undefined): string {
+  return `${PROJECT_ORDER_STORAGE_PREFIX}:${resolveUserId(userId)}`;
 }
 
 export function readProjectOrder(storageKey: string): string[] {

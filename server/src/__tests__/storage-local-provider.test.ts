@@ -28,34 +28,41 @@ describe("local disk storage provider", () => {
     const service = createStorageService(createLocalDiskStorageProvider(root));
     const content = Buffer.from("hello image bytes", "utf8");
     const stored = await service.putFile({
-      companyId: "company-1",
       namespace: "issues/issue-1",
       originalFilename: "demo.png",
       contentType: "image/png",
       body: content,
     });
 
-    const fetched = await service.getObject("company-1", stored.objectKey);
+    const fetched = await service.getObject(stored.objectKey);
     const fetchedBody = await readStreamToBuffer(fetched.stream);
 
     expect(fetchedBody.toString("utf8")).toBe("hello image bytes");
     expect(stored.sha256).toHaveLength(64);
   });
 
-  it("blocks cross-company object access", async () => {
+  it("rejects object keys that escape the storage root", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-storage-"));
+    tempRoots.push(root);
+
+    const service = createStorageService(createLocalDiskStorageProvider(root));
+    await expect(service.getObject("../outside/demo.png")).rejects.toMatchObject({ status: 400 });
+    await expect(service.getObject("/etc/passwd")).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("stores new objects under the namespace without an owner prefix", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-storage-"));
     tempRoots.push(root);
 
     const service = createStorageService(createLocalDiskStorageProvider(root));
     const stored = await service.putFile({
-      companyId: "company-a",
       namespace: "issues/issue-1",
       originalFilename: "demo.png",
       contentType: "image/png",
       body: Buffer.from("hello", "utf8"),
     });
 
-    await expect(service.getObject("company-b", stored.objectKey)).rejects.toMatchObject({ status: 403 });
+    expect(stored.objectKey.startsWith("issues/issue-1/")).toBe(true);
   });
 
   it("delete is idempotent", async () => {
@@ -64,15 +71,14 @@ describe("local disk storage provider", () => {
 
     const service = createStorageService(createLocalDiskStorageProvider(root));
     const stored = await service.putFile({
-      companyId: "company-1",
       namespace: "issues/issue-1",
       originalFilename: "demo.png",
       contentType: "image/png",
       body: Buffer.from("hello", "utf8"),
     });
 
-    await service.deleteObject("company-1", stored.objectKey);
-    await service.deleteObject("company-1", stored.objectKey);
-    await expect(service.getObject("company-1", stored.objectKey)).rejects.toMatchObject({ status: 404 });
+    await service.deleteObject(stored.objectKey);
+    await service.deleteObject(stored.objectKey);
+    await expect(service.getObject(stored.objectKey)).rejects.toMatchObject({ status: 404 });
   });
 });

@@ -18,7 +18,6 @@ interface ContextOptions {
 
 interface ContextSetOptions extends ContextOptions {
   apiBase?: string;
-  companyId?: string;
   apiKeyEnvVarName?: string;
   use?: boolean;
 }
@@ -59,7 +58,6 @@ export function registerContextCommands(program: Command): void {
         name,
         current: name === store.currentProfile,
         apiBase: profile.apiBase ?? null,
-        companyId: profile.companyId ?? null,
         apiKeyEnvVarName: profile.apiKeyEnvVarName ?? null,
       }));
       printOutput(rows, { json: opts.json });
@@ -83,7 +81,6 @@ export function registerContextCommands(program: Command): void {
     .option("--context <path>", "Path to CLI context file")
     .option("--profile <name>", "Profile name (default: current profile)")
     .option("--api-base <url>", "Default API base URL")
-    .option("--company-id <id>", "Default company ID")
     .option("--api-key-env-var-name <name>", "Env var containing API key (recommended)")
     .option("--use", "Set this profile as active")
     .option("--json", "Output raw JSON")
@@ -95,7 +92,6 @@ export function registerContextCommands(program: Command): void {
         targetProfile,
         {
           apiBase: opts.apiBase,
-          companyId: opts.companyId,
           apiKeyEnvVarName: opts.apiKeyEnvVarName,
         },
         opts.context,

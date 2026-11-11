@@ -209,7 +209,7 @@ async function main() {
     It runs on any Node.js route, generates in &lt;10ms, and produces identical output every time.
   </p>
   <p>
-    Routes: <code>GET /api/companies/:id/org.svg?style=monochrome</code> and <code>GET /api/companies/:id/org.png?style=circuit</code>
+    Routes: <code>GET /api/org.svg?style=monochrome</code> and <code>GET /api/org.png?style=circuit</code>
   </p>
 </div>
 </body></html>`;

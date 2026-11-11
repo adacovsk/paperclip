@@ -62,7 +62,6 @@ describe("gemini execute", () => {
         runId: "run-1",
         agent: {
           id: "agent-1",
-          companyId: "company-1",
           name: "Gemini Coder",
           adapterType: "gemini_local",
           adapterConfig: {},
@@ -108,7 +107,6 @@ describe("gemini execute", () => {
           "PAPERCLIP_AGENT_ID",
           "PAPERCLIP_API_KEY",
           "PAPERCLIP_API_URL",
-          "PAPERCLIP_COMPANY_ID",
           "PAPERCLIP_RUN_ID",
         ]),
       );
@@ -141,7 +139,7 @@ describe("gemini execute", () => {
     try {
       await execute({
         runId: "run-yolo",
-        agent: { id: "a1", companyId: "c1", name: "G", adapterType: "gemini_local", adapterConfig: {} },
+        agent: { id: "a1", name: "G", adapterType: "gemini_local", adapterConfig: {} },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,

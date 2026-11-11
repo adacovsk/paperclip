@@ -1,8 +1,7 @@
 import { useState, type ComponentType } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@/lib/router";
+import { useNavigate } from "react-router-dom";
 import { useDialog } from "../context/DialogContext";
-import { useCompany } from "../context/CompanyContext";
 import { agentsApi } from "../api/agents";
 import { queryKeys } from "../lib/queryKeys";
 import {
@@ -94,14 +93,13 @@ const ADVANCED_ADAPTER_OPTIONS: Array<{
 
 export function NewAgentDialog() {
   const { newAgentOpen, closeNewAgent, openNewIssue } = useDialog();
-  const { selectedCompanyId } = useCompany();
   const navigate = useNavigate();
   const [showAdvancedCards, setShowAdvancedCards] = useState(false);
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && newAgentOpen,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+    enabled: newAgentOpen,
   });
 
   const ceoAgent = (agents ?? []).find((a) => a.role === "ceo");

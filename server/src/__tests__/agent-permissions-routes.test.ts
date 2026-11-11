@@ -5,11 +5,9 @@ import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
-const companyId = "22222222-2222-4222-8222-222222222222";
 
 const baseAgent = {
   id: agentId,
-  companyId,
   name: "Builder",
   urlKey: "builder",
   role: "engineer",
@@ -79,7 +77,7 @@ const mockSecretService = vi.hoisted(() => ({
 const mockAgentInstructionsService = vi.hoisted(() => ({
   materializeManagedBundle: vi.fn(),
 }));
-const mockCompanySkillService = vi.hoisted(() => ({
+const mockSkillService = vi.hoisted(() => ({
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
 }));
@@ -91,7 +89,7 @@ vi.mock("../services/index.js", () => ({
   agentInstructionsService: () => mockAgentInstructionsService,
   accessService: () => mockAccessService,
   approvalService: () => mockApprovalService,
-  companySkillService: () => mockCompanySkillService,
+  skillService: () => mockSkillService,
   budgetService: () => mockBudgetService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
@@ -108,7 +106,7 @@ function createDbStub() {
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
           then: vi.fn().mockResolvedValue([{
-            id: companyId,
+            id: "instance-1",
             name: "Paperclip",
             requireOperatorApprovalForNewAgents: false,
           }]),
@@ -140,7 +138,6 @@ describe("agent permission routes", () => {
     mockAgentService.updatePermissions.mockResolvedValue(baseAgent);
     mockAccessService.getMembership.mockResolvedValue({
       id: "membership-1",
-      companyId,
       principalType: "agent",
       principalId: agentId,
       status: "active",
@@ -151,8 +148,8 @@ describe("agent permission routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([]);
     mockAccessService.ensureMembership.mockResolvedValue(undefined);
     mockAccessService.setPrincipalPermission.mockResolvedValue(undefined);
-    mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
-    mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(async (_companyId, requested) => requested);
+    mockSkillService.listRuntimeSkillEntries.mockResolvedValue([]);
+    mockSkillService.resolveRequestedSkillKeys.mockImplementation(async (requested) => requested);
     mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
     mockAgentInstructionsService.materializeManagedBundle.mockImplementation(
       async (agent: Record<string, unknown>, files: Record<string, string>) => ({
@@ -167,12 +164,12 @@ describe("agent permission routes", () => {
         },
       }),
     );
-    mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
-    mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(
-      async (_companyId: string, requested: string[]) => requested,
+    mockSkillService.listRuntimeSkillEntries.mockResolvedValue([]);
+    mockSkillService.resolveRequestedSkillKeys.mockImplementation(
+      async (requested: string[]) => requested,
     );
-    mockSecretService.normalizeAdapterConfigForPersistence.mockImplementation(async (_companyId, config) => config);
-    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (_companyId, config) => ({ config }));
+    mockSecretService.normalizeAdapterConfigForPersistence.mockImplementation(async (config) => config);
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (config) => ({ config }));
     mockLogActivity.mockResolvedValue(undefined);
   });
 
@@ -182,11 +179,10 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app)
-      .post(`/api/companies/${companyId}/agents`)
+      .post(`/api/agents`)
       .send({
         name: "Builder",
         role: "engineer",
@@ -196,14 +192,12 @@ describe("agent permission routes", () => {
 
     expect(res.status).toBe(201);
     expect(mockAccessService.ensureMembership).toHaveBeenCalledWith(
-      companyId,
       "agent",
       agentId,
       "member",
       "active",
     );
     expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
-      companyId,
       "agent",
       agentId,
       "tasks:assign",
@@ -216,7 +210,6 @@ describe("agent permission routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([
       {
         id: "grant-1",
-        companyId,
         principalType: "agent",
         principalId: agentId,
         permissionKey: "tasks:assign",
@@ -232,7 +225,6 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app).get(`/api/agents/${agentId}`);
@@ -248,8 +240,6 @@ describe("agent permission routes", () => {
     const app = createApp({
       type: "agent",
       agentId: "33333333-3333-4333-8333-333333333333",
-      companyId,
-      companyIds: [companyId],
     });
 
     const res = await request(app).get(`/api/agents/${agentId}`);
@@ -266,15 +256,13 @@ describe("agent permission routes", () => {
       runtimeConfig: { heartbeat: { sessionCompaction: { enabled: true } } },
     });
     mockAccessService.hasPermission.mockImplementation(
-      async (_companyId: string, _type: string, _id: string, key: string) =>
+      async (_type: string, _id: string, key: string) =>
         key === "agents:read_config",
     );
 
     const app = createApp({
       type: "agent",
       agentId: "33333333-3333-4333-8333-333333333333",
-      companyId,
-      companyIds: [companyId],
     });
 
     const res = await request(app).get(`/api/agents/${agentId}`);
@@ -286,19 +274,17 @@ describe("agent permission routes", () => {
 
   it("does not let agents:read_config stand in for agents:create on a write route", async () => {
     mockAccessService.hasPermission.mockImplementation(
-      async (_companyId: string, _type: string, _id: string, key: string) =>
+      async (_type: string, _id: string, key: string) =>
         key === "agents:read_config",
     );
 
     const app = createApp({
       type: "agent",
       agentId: "33333333-3333-4333-8333-333333333333",
-      companyId,
-      companyIds: [companyId],
     });
 
     const res = await request(app)
-      .post(`/api/companies/${companyId}/agents`)
+      .post(`/api/agents`)
       .send({ name: "Builder", role: "engineer", adapterType: "process", adapterConfig: {} });
 
     expect(res.status).toBe(403);
@@ -310,19 +296,17 @@ describe("agent permission routes", () => {
   // callers, and it must keep the agents:create bar.
   it("does not let agents:read_config reach the adapter test-environment probe", async () => {
     mockAccessService.hasPermission.mockImplementation(
-      async (_companyId: string, _type: string, _id: string, key: string) =>
+      async (_type: string, _id: string, key: string) =>
         key === "agents:read_config",
     );
 
     const app = createApp({
       type: "agent",
       agentId: "33333333-3333-4333-8333-333333333333",
-      companyId,
-      companyIds: [companyId],
     });
 
     const res = await request(app)
-      .post(`/api/companies/${companyId}/adapters/process/test-environment`)
+      .post(`/api/adapters/process/test-environment`)
       .send({ adapterConfig: { command: "echo" } });
 
     expect(res.status).toBe(403);
@@ -332,7 +316,6 @@ describe("agent permission routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([
       {
         id: "grant-3",
-        companyId,
         principalType: "agent",
         principalId: agentId,
         permissionKey: "agents:create",
@@ -348,7 +331,6 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app).get(`/api/agents/${agentId}`);
@@ -364,7 +346,6 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app)
@@ -373,7 +354,6 @@ describe("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
-      companyId,
       "agent",
       agentId,
       "agents:read_config",
@@ -388,7 +368,6 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app)
@@ -397,7 +376,6 @@ describe("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalledWith(
-      companyId,
       "agent",
       agentId,
       "agents:read_config",
@@ -410,7 +388,6 @@ describe("agent permission routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([
       {
         id: "grant-2",
-        companyId,
         principalType: "agent",
         principalId: agentId,
         permissionKey: "agents:read_config",
@@ -426,7 +403,6 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app).get(`/api/agents/${agentId}`);
@@ -447,7 +423,6 @@ describe("agent permission routes", () => {
       userId: "operator-user",
       source: "local_implicit",
       isInstanceAdmin: true,
-      companyIds: [companyId],
     });
 
     const res = await request(app)
@@ -456,7 +431,6 @@ describe("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
-      companyId,
       "agent",
       agentId,
       "tasks:assign",

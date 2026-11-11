@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useState, type SVGProps } from "react";
-import { Link, useNavigate, useParams } from "@/lib/router";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  CompanySkillCreateRequest,
-  CompanySkillDetail,
-  CompanySkillFileDetail,
-  CompanySkillFileInventoryEntry,
-  CompanySkillListItem,
-  CompanySkillProjectScanResult,
-  CompanySkillSourceBadge,
-  CompanySkillUpdateStatus,
+  SkillCreateRequest,
+  SkillDetail,
+  SkillFileDetail,
+  SkillFileInventoryEntry,
+  SkillListItem,
+  SkillProjectScanResult,
+  SkillSourceBadge,
+  SkillUpdateStatus,
 } from "@paperclipai/shared";
-import { companySkillsApi } from "../api/companySkills";
-import { useCompany } from "../context/CompanyContext";
+import { skillsApi } from "../api/skills";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -58,7 +57,7 @@ type SkillTreeNode = {
   name: string;
   path: string | null;
   kind: "dir" | "file";
-  fileKind?: CompanySkillFileInventoryEntry["kind"];
+  fileKind?: SkillFileInventoryEntry["kind"];
   children: SkillTreeNode[];
 };
 
@@ -103,7 +102,7 @@ function mergeFrontmatter(markdown: string, body: string) {
   return ["---", parsed.frontmatter, "---", "", body].join("\n");
 }
 
-function buildTree(entries: CompanySkillFileInventoryEntry[]) {
+function buildTree(entries: SkillFileInventoryEntry[]) {
   const root: SkillTreeNode = { name: "", path: null, kind: "dir", children: [] };
 
   for (const entry of entries) {
@@ -142,7 +141,7 @@ function buildTree(entries: CompanySkillFileInventoryEntry[]) {
   return root.children;
 }
 
-function sourceMeta(sourceBadge: CompanySkillSourceBadge, sourceLabel: string | null) {
+function sourceMeta(sourceBadge: SkillSourceBadge, sourceLabel: string | null) {
   const normalizedLabel = sourceLabel?.toLowerCase() ?? "";
   const isSkillsShManaged =
     normalizedLabel.includes("skills.sh") || normalizedLabel.includes("vercel-labs/skills");
@@ -170,7 +169,7 @@ function shortRef(ref: string | null | undefined) {
   return ref.slice(0, 7);
 }
 
-function formatProjectScanSummary(result: CompanySkillProjectScanResult) {
+function formatProjectScanSummary(result: SkillProjectScanResult) {
   const parts = [
     `${result.discovered} found`,
     `${result.imported.length} imported`,
@@ -181,7 +180,7 @@ function formatProjectScanSummary(result: CompanySkillProjectScanResult) {
   return `${parts.join(", ")} across ${result.scannedWorkspaces} workspace${result.scannedWorkspaces === 1 ? "" : "s"}.`;
 }
 
-function fileIcon(kind: CompanySkillFileInventoryEntry["kind"]) {
+function fileIcon(kind: SkillFileInventoryEntry["kind"]) {
   if (kind === "script" || kind === "reference") return FileCode2;
   return FileText;
 }
@@ -245,7 +244,7 @@ function NewSkillForm({
   isPending,
   onCancel,
 }: {
-  onCreate: (payload: CompanySkillCreateRequest) => void;
+  onCreate: (payload: SkillCreateRequest) => void;
   isPending: boolean;
   onCancel: () => void;
 }) {
@@ -391,7 +390,7 @@ function SkillList({
   onSelectSkill,
   onSelectPath,
 }: {
-  skills: CompanySkillListItem[];
+  skills: SkillListItem[];
   selectedSkillId: string | null;
   skillFilter: string;
   expandedSkillId: string | null;
@@ -507,10 +506,10 @@ function SkillPane({
   savePending,
 }: {
   loading: boolean;
-  detail: CompanySkillDetail | null | undefined;
-  file: CompanySkillFileDetail | null | undefined;
+  detail: SkillDetail | null | undefined;
+  file: SkillFileDetail | null | undefined;
   fileLoading: boolean;
-  updateStatus: CompanySkillUpdateStatus | null | undefined;
+  updateStatus: SkillUpdateStatus | null | undefined;
   updateStatusLoading: boolean;
   viewMode: "preview" | "code";
   editMode: boolean;
@@ -732,11 +731,10 @@ function SkillPane({
   );
 }
 
-export function CompanySkills() {
+export function Skills() {
   const { "*": routePath } = useParams<{ "*": string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const [skillFilter, setSkillFilter] = useState("");
@@ -748,8 +746,8 @@ export function CompanySkills() {
   const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState("");
-  const [displayedDetail, setDisplayedDetail] = useState<CompanySkillDetail | null>(null);
-  const [displayedFile, setDisplayedFile] = useState<CompanySkillFileDetail | null>(null);
+  const [displayedDetail, setDisplayedDetail] = useState<SkillDetail | null>(null);
+  const [displayedFile, setDisplayedFile] = useState<SkillFileDetail | null>(null);
   const [scanStatusMessage, setScanStatusMessage] = useState<string | null>(null);
   const parsedRoute = useMemo(() => parseSkillRoute(routePath), [routePath]);
   const routeSkillId = parsedRoute.skillId;
@@ -763,9 +761,8 @@ export function CompanySkills() {
   }, [routeSkillId, setBreadcrumbs]);
 
   const skillsQuery = useQuery({
-    queryKey: queryKeys.companySkills.list(selectedCompanyId ?? ""),
-    queryFn: () => companySkillsApi.list(selectedCompanyId!),
-    enabled: Boolean(selectedCompanyId),
+    queryKey: queryKeys.skills.list,
+    queryFn: () => skillsApi.list(),
   });
 
   const selectedSkillId = useMemo(() => {
@@ -779,23 +776,22 @@ export function CompanySkills() {
   }, [navigate, routeSkillId, selectedSkillId]);
 
   const detailQuery = useQuery({
-    queryKey: queryKeys.companySkills.detail(selectedCompanyId ?? "", selectedSkillId ?? ""),
-    queryFn: () => companySkillsApi.detail(selectedCompanyId!, selectedSkillId!),
-    enabled: Boolean(selectedCompanyId && selectedSkillId),
+    queryKey: queryKeys.skills.detail(selectedSkillId ?? ""),
+    queryFn: () => skillsApi.detail(selectedSkillId!),
+    enabled: Boolean(selectedSkillId),
   });
 
   const fileQuery = useQuery({
-    queryKey: queryKeys.companySkills.file(selectedCompanyId ?? "", selectedSkillId ?? "", selectedPath),
-    queryFn: () => companySkillsApi.file(selectedCompanyId!, selectedSkillId!, selectedPath),
-    enabled: Boolean(selectedCompanyId && selectedSkillId && selectedPath),
+    queryKey: queryKeys.skills.file(selectedSkillId ?? "", selectedPath),
+    queryFn: () => skillsApi.file(selectedSkillId!, selectedPath),
+    enabled: Boolean(selectedSkillId && selectedPath),
   });
 
   const updateStatusQuery = useQuery({
-    queryKey: queryKeys.companySkills.updateStatus(selectedCompanyId ?? "", selectedSkillId ?? ""),
-    queryFn: () => companySkillsApi.updateStatus(selectedCompanyId!, selectedSkillId!),
+    queryKey: queryKeys.skills.updateStatus(selectedSkillId ?? ""),
+    queryFn: () => skillsApi.updateStatus(selectedSkillId!),
     enabled: Boolean(
-      selectedCompanyId
-      && selectedSkillId
+      selectedSkillId
       && (detailQuery.data?.sourceType === "github" || displayedDetail?.sourceType === "github"),
     ),
     staleTime: 60_000,
@@ -849,9 +845,9 @@ export function CompanySkills() {
   const activeFile = fileQuery.data ?? displayedFile;
 
   const importSkill = useMutation({
-    mutationFn: (importSource: string) => companySkillsApi.importFromSource(selectedCompanyId!, importSource),
+    mutationFn: (importSource: string) => skillsApi.importFromSource(importSource),
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.skills.list });
       if (result.imported[0]) navigate(skillRoute(result.imported[0].id));
       pushToast({
         tone: "success",
@@ -873,9 +869,9 @@ export function CompanySkills() {
   });
 
   const createSkill = useMutation({
-    mutationFn: (payload: CompanySkillCreateRequest) => companySkillsApi.create(selectedCompanyId!, payload),
+    mutationFn: (payload: SkillCreateRequest) => skillsApi.create(payload),
     onSuccess: async (skill) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.skills.list });
       navigate(skillRoute(skill.id));
       setCreateOpen(false);
       pushToast({
@@ -894,13 +890,13 @@ export function CompanySkills() {
   });
 
   const scanProjects = useMutation({
-    mutationFn: () => companySkillsApi.scanProjects(selectedCompanyId!),
+    mutationFn: () => skillsApi.scanProjects(),
     onMutate: () => {
       setScanStatusMessage("Scanning project workspaces for skills...");
     },
     onSuccess: async (result) => {
       setScanStatusMessage("Refreshing skills list...");
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.skills.list });
       const summary = formatProjectScanSummary(result);
       setScanStatusMessage(summary);
       pushToast({
@@ -933,17 +929,16 @@ export function CompanySkills() {
   });
 
   const saveFile = useMutation({
-    mutationFn: () => companySkillsApi.updateFile(
-      selectedCompanyId!,
+    mutationFn: () => skillsApi.updateFile(
       selectedSkillId!,
       selectedPath,
       activeFile?.markdown ? mergeFrontmatter(activeFile.content, draft) : draft,
     ),
     onSuccess: async (result) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.file(selectedCompanyId!, selectedSkillId!, selectedPath) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.list }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.detail(selectedSkillId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.file(selectedSkillId!, selectedPath) }),
       ]);
       setDraft(result.markdown ? splitFrontmatter(result.content).body : result.content);
       setEditMode(false);
@@ -963,13 +958,13 @@ export function CompanySkills() {
   });
 
   const installUpdate = useMutation({
-    mutationFn: () => companySkillsApi.installUpdate(selectedCompanyId!, selectedSkillId!),
+    mutationFn: () => skillsApi.installUpdate(selectedSkillId!),
     onSuccess: async (skill) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.updateStatus(selectedCompanyId!, selectedSkillId!) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.file(selectedCompanyId!, selectedSkillId!, selectedPath) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.list }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.detail(selectedSkillId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.updateStatus(selectedSkillId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.skills.file(selectedSkillId!, selectedPath) }),
       ]);
       navigate(skillRoute(skill.id, selectedPath));
       pushToast({
@@ -986,10 +981,6 @@ export function CompanySkills() {
       });
     },
   });
-
-  if (!selectedCompanyId) {
-    return <EmptyState icon={Boxes} message="Select a company to manage skills." />;
-  }
 
   function handleAddSkillSource() {
     const trimmedSource = source.trim();

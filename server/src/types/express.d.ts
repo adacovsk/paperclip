@@ -7,8 +7,8 @@ declare global {
         type: "operator" | "agent" | "none";
         userId?: string;
         agentId?: string;
-        companyId?: string;
-        companyIds?: string[];
+        /** Operator holds an active `memberships` row. */
+        isMember?: boolean;
         isInstanceAdmin?: boolean;
         keyId?: string;
         runId?: string;

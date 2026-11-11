@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { useParams, useNavigate, useLocation, Navigate } from "@/lib/router";
+import { useParams, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PROJECT_COLORS, isUuidLike, type BudgetPolicySummary } from "@paperclipai/shared";
+import { PROJECT_COLORS, type BudgetPolicySummary } from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
 import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
@@ -9,7 +9,6 @@ import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
 import { assetsApi } from "../api/assets";
 import { usePanel } from "../context/PanelContext";
-import { useCompany } from "../context/CompanyContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -147,19 +146,17 @@ function ColorPicker({
 
 /* ── List (issues) tab content ── */
 
-function ProjectIssuesList({ projectId, companyId }: { projectId: string; companyId: string }) {
+function ProjectIssuesList({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(companyId),
-    queryFn: () => agentsApi.list(companyId),
-    enabled: !!companyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
 
   const { data: liveRuns } = useQuery({
-    queryKey: queryKeys.liveRuns(companyId),
-    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId),
-    enabled: !!companyId,
+    queryKey: queryKeys.liveRuns,
+    queryFn: () => heartbeatsApi.liveRuns(),
     refetchInterval: 5000,
   });
 
@@ -172,17 +169,16 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
   }, [liveRuns]);
 
   const { data: issues, isLoading, error } = useQuery({
-    queryKey: queryKeys.issues.listByProject(companyId, projectId),
-    queryFn: () => issuesApi.list(companyId, { projectId }),
-    enabled: !!companyId,
+    queryKey: queryKeys.issues.listByProject(projectId),
+    queryFn: () => issuesApi.list({ projectId }),
   });
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
       issuesApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, projectId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list });
     },
   });
 
@@ -203,12 +199,10 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
 /* ── Main project page ── */
 
 export function ProjectDetail() {
-  const { companyPrefix, projectId, filter } = useParams<{
-    companyPrefix?: string;
+  const { projectId, filter } = useParams<{
     projectId: string;
     filter?: string;
   }>();
-  const { companies, selectedCompanyId, setSelectedCompanyId } = useCompany();
   const { closePanel } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
@@ -219,13 +213,7 @@ export function ProjectDetail() {
   const fieldSaveRequestIds = useRef<Partial<Record<ProjectConfigFieldKey, number>>>({});
   const fieldSaveTimers = useRef<Partial<Record<ProjectConfigFieldKey, ReturnType<typeof setTimeout>>>>({});
   const routeProjectRef = projectId ?? "";
-  const routeCompanyId = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix)?.id ?? null;
-  }, [companies, companyPrefix]);
-  const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
-  const canFetchProject = routeProjectRef.length > 0 && (isUuidLike(routeProjectRef) || Boolean(lookupCompanyId));
+  const canFetchProject = routeProjectRef.length > 0;
   const activeRouteTab = routeProjectRef ? resolveProjectTab(location.pathname, routeProjectRef) : null;
   const pluginTabFromSearch = useMemo(() => {
     const tab = new URLSearchParams(location.search).get("tab");
@@ -234,21 +222,18 @@ export function ProjectDetail() {
   const activeTab = activeRouteTab ?? pluginTabFromSearch;
 
   const { data: project, isLoading, error } = useQuery({
-    queryKey: [...queryKeys.projects.detail(routeProjectRef), lookupCompanyId ?? null],
-    queryFn: () => projectsApi.get(routeProjectRef, lookupCompanyId),
+    queryKey: queryKeys.projects.detail(routeProjectRef),
+    queryFn: () => projectsApi.get(routeProjectRef),
     enabled: canFetchProject,
   });
   const canonicalProjectRef = project ? projectRouteRef(project) : routeProjectRef;
   const projectLookupRef = project?.id ?? routeProjectRef;
-  const resolvedCompanyId = project?.companyId ?? selectedCompanyId;
   const {
     slots: pluginDetailSlots,
     isLoading: pluginDetailSlotsLoading,
   } = usePluginSlots({
     slotTypes: ["detailTab"],
     entityType: "project",
-    companyId: resolvedCompanyId,
-    enabled: !!resolvedCompanyId,
   });
   const pluginTabItems = useMemo(
     () => pluginDetailSlots.map((slot) => ({
@@ -260,22 +245,15 @@ export function ProjectDetail() {
   );
   const activePluginTab = pluginTabItems.find((item) => item.value === activeTab) ?? null;
 
-  useEffect(() => {
-    if (!project?.companyId || project.companyId === selectedCompanyId) return;
-    setSelectedCompanyId(project.companyId, { source: "route_sync" });
-  }, [project?.companyId, selectedCompanyId, setSelectedCompanyId]);
-
   const invalidateProject = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(routeProjectRef) });
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectLookupRef) });
-    if (resolvedCompanyId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(resolvedCompanyId) });
-    }
+    queryClient.invalidateQueries({ queryKey: queryKeys.projects.list });
   };
 
   const updateProject = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
-      projectsApi.update(projectLookupRef, data, resolvedCompanyId ?? lookupCompanyId),
+      projectsApi.update(projectLookupRef, data),
     onSuccess: invalidateProject,
   });
 
@@ -284,7 +262,6 @@ export function ProjectDetail() {
       projectsApi.update(
         projectLookupRef,
         { archivedAt: archived ? new Date().toISOString() : null },
-        resolvedCompanyId ?? lookupCompanyId,
       ),
     onSuccess: (updatedProject, archived) => {
       invalidateProject();
@@ -306,15 +283,13 @@ export function ProjectDetail() {
 
   const uploadImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!resolvedCompanyId) throw new Error("No company selected");
-      return assetsApi.uploadImage(resolvedCompanyId, file, `projects/${projectLookupRef || "draft"}`);
+      return assetsApi.uploadImage(file, `projects/${projectLookupRef || "draft"}`);
     },
   });
 
   const { data: budgetOverview } = useQuery({
-    queryKey: queryKeys.budgets.overview(resolvedCompanyId ?? "__none__"),
-    queryFn: () => budgetsApi.overview(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId,
+    queryKey: queryKeys.budgets.overview,
+    queryFn: () => budgetsApi.overview(),
     refetchInterval: 30_000,
     staleTime: 5_000,
   });
@@ -391,7 +366,7 @@ export function ProjectDetail() {
     fieldSaveRequestIds.current[field] = requestId;
     setFieldState(field, "saving");
     try {
-      await projectsApi.update(projectLookupRef, data, resolvedCompanyId ?? lookupCompanyId);
+      await projectsApi.update(projectLookupRef, data);
       invalidateProject();
       if (fieldSaveRequestIds.current[field] !== requestId) return;
       setFieldState(field, "saved");
@@ -402,7 +377,7 @@ export function ProjectDetail() {
       scheduleFieldReset(field, 3000);
       throw error;
     }
-  }, [invalidateProject, lookupCompanyId, projectLookupRef, resolvedCompanyId, scheduleFieldReset, setFieldState]);
+  }, [invalidateProject, projectLookupRef, scheduleFieldReset, setFieldState]);
 
   const projectBudgetSummary = useMemo(() => {
     const matched = budgetOverview?.policies.find(
@@ -411,7 +386,6 @@ export function ProjectDetail() {
     if (matched) return matched;
     return {
       policyId: "",
-      companyId: resolvedCompanyId ?? "",
       scopeType: "project",
       scopeId: project?.id ?? routeProjectRef,
       scopeName: project?.name ?? "Project",
@@ -431,23 +405,22 @@ export function ProjectDetail() {
       windowStart: new Date(),
       windowEnd: new Date(),
     } satisfies BudgetPolicySummary;
-  }, [budgetOverview?.policies, project, resolvedCompanyId, routeProjectRef]);
+  }, [budgetOverview?.policies, project, routeProjectRef]);
 
   const budgetMutation = useMutation({
     mutationFn: (amount: number) =>
-      budgetsApi.upsertPolicy(resolvedCompanyId!, {
+      budgetsApi.upsertPolicy({
         scopeType: "project",
         scopeId: project?.id ?? routeProjectRef,
         amount,
         windowKind: "lifetime",
       }),
     onSuccess: () => {
-      if (!resolvedCompanyId) return;
-      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(resolvedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(routeProjectRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectLookupRef) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(resolvedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(resolvedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     },
   });
 
@@ -529,8 +502,6 @@ export function ProjectDetail() {
         slotTypes={["toolbarButton", "contextMenuItem"]}
         entityType="project"
         context={{
-          companyId: resolvedCompanyId ?? null,
-          companyPrefix: companyPrefix ?? null,
           projectId: project.id,
           projectRef: canonicalProjectRef,
           entityId: project.id,
@@ -545,8 +516,6 @@ export function ProjectDetail() {
         placementZones={["toolbarButton"]}
         entityType="project"
         context={{
-          companyId: resolvedCompanyId ?? null,
-          companyPrefix: companyPrefix ?? null,
           projectId: project.id,
           projectRef: canonicalProjectRef,
           entityId: project.id,
@@ -585,8 +554,8 @@ export function ProjectDetail() {
         />
       )}
 
-      {activeTab === "list" && project?.id && resolvedCompanyId && (
-        <ProjectIssuesList projectId={project.id} companyId={resolvedCompanyId} />
+      {activeTab === "list" && project?.id && (
+        <ProjectIssuesList projectId={project.id} />
       )}
 
       {activeTab === "configuration" && (
@@ -602,7 +571,7 @@ export function ProjectDetail() {
         </div>
       )}
 
-      {activeTab === "budget" && resolvedCompanyId ? (
+      {activeTab === "budget" ? (
         <div className="max-w-3xl">
           <BudgetPolicyCard
             summary={projectBudgetSummary}
@@ -617,8 +586,6 @@ export function ProjectDetail() {
         <PluginSlotMount
           slot={activePluginTab.slot}
           context={{
-            companyId: resolvedCompanyId,
-            companyPrefix: companyPrefix ?? null,
             projectId: project.id,
             projectRef: canonicalProjectRef,
             entityId: project.id,

@@ -17,7 +17,6 @@ describe("resolveCommandContext", () => {
     process.env = { ...ORIGINAL_ENV };
     delete process.env.PAPERCLIP_API_URL;
     delete process.env.PAPERCLIP_API_KEY;
-    delete process.env.PAPERCLIP_COMPANY_ID;
   });
 
   afterEach(() => {
@@ -34,7 +33,6 @@ describe("resolveCommandContext", () => {
         profiles: {
           ops: {
             apiBase: "http://127.0.0.1:9999",
-            companyId: "company-profile",
             apiKeyEnvVarName: "AGENT_KEY",
           },
         },
@@ -43,9 +41,8 @@ describe("resolveCommandContext", () => {
     );
     process.env.AGENT_KEY = "key-from-env";
 
-    const resolved = resolveCommandContext({ context: contextPath }, { requireCompany: true });
+    const resolved = resolveCommandContext({ context: contextPath });
     expect(resolved.api.apiBase).toBe("http://127.0.0.1:9999");
-    expect(resolved.companyId).toBe("company-profile");
     expect(resolved.api.apiKey).toBe("key-from-env");
   });
 
@@ -58,7 +55,6 @@ describe("resolveCommandContext", () => {
         profiles: {
           default: {
             apiBase: "http://profile:3100",
-            companyId: "company-profile",
           },
         },
       },
@@ -70,29 +66,11 @@ describe("resolveCommandContext", () => {
         context: contextPath,
         apiBase: "http://override:3200",
         apiKey: "direct-token",
-        companyId: "company-override",
       },
-      { requireCompany: true },
     );
 
     expect(resolved.api.apiBase).toBe("http://override:3200");
-    expect(resolved.companyId).toBe("company-override");
     expect(resolved.api.apiKey).toBe("direct-token");
   });
 
-  it("throws when company is required but unresolved", () => {
-    const contextPath = createTempPath("context.json");
-    writeContext(
-      {
-        version: 1,
-        currentProfile: "default",
-        profiles: { default: {} },
-      },
-      contextPath,
-    );
-
-    expect(() =>
-      resolveCommandContext({ context: contextPath, apiBase: "http://localhost:3100" }, { requireCompany: true }),
-    ).toThrow(/Company ID is required/);
-  });
 });

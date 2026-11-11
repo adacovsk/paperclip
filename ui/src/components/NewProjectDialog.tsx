@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDialog } from "../context/DialogContext";
-import { useCompany } from "../context/CompanyContext";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { useInstanceProfile } from "../hooks/useInstanceProfile";
 import {
   Dialog,
   DialogContent,
@@ -47,7 +47,7 @@ const projectStatuses = [
 
 export function NewProjectDialog() {
   const { newProjectOpen, closeNewProject } = useDialog();
-  const { selectedCompanyId, selectedCompany } = useCompany();
+  const { profile } = useInstanceProfile();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -64,15 +64,15 @@ export function NewProjectDialog() {
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
 
   const { data: goals } = useQuery({
-    queryKey: queryKeys.goals.list(selectedCompanyId!),
-    queryFn: () => goalsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && newProjectOpen,
+    queryKey: queryKeys.goals.list,
+    queryFn: () => goalsApi.list(),
+    enabled: newProjectOpen,
   });
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && newProjectOpen,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
+    enabled: newProjectOpen,
   });
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
@@ -94,13 +94,12 @@ export function NewProjectDialog() {
 
   const createProject = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
-      projectsApi.create(selectedCompanyId!, data),
+      projectsApi.create(data),
   });
 
   const uploadDescriptionImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!selectedCompanyId) throw new Error("No company selected");
-      return assetsApi.uploadImage(selectedCompanyId, file, "projects/drafts");
+      return assetsApi.uploadImage(file, "projects/drafts");
     },
   });
 
@@ -148,7 +147,7 @@ export function NewProjectDialog() {
   };
 
   async function handleSubmit() {
-    if (!selectedCompanyId || !name.trim()) return;
+    if (!name.trim()) return;
     const localPath = workspaceLocalPath.trim();
     const repoUrl = workspaceRepoUrl.trim();
 
@@ -184,7 +183,7 @@ export function NewProjectDialog() {
         await projectsApi.createWorkspace(created.id, workspacePayload);
       }
 
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(selectedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(created.id) });
       reset();
       closeNewProject();
@@ -221,9 +220,9 @@ export function NewProjectDialog() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            {selectedCompany && (
+            {profile && (
               <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-medium">
-                {selectedCompany.name.slice(0, 3).toUpperCase()}
+                {profile.name.slice(0, 3).toUpperCase()}
               </span>
             )}
             <span className="text-muted-foreground/60">&rsaquo;</span>

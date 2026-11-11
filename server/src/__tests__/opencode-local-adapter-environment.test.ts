@@ -15,7 +15,6 @@ describe("opencode_local environment diagnostics", () => {
     await fs.rm(path.dirname(cwd), { recursive: true, force: true });
 
     const result = await testEnvironment({
-      companyId: "company-1",
       adapterType: "opencode_local",
       config: {
         command: process.execPath,
@@ -35,7 +34,6 @@ describe("opencode_local environment diagnostics", () => {
 
     try {
       const result = await testEnvironment({
-        companyId: "company-1",
         adapterType: "opencode_local",
         config: {
           command: process.execPath,
@@ -76,7 +74,6 @@ describe("opencode_local environment diagnostics", () => {
       await fs.chmod(fakeOpencode, 0o755);
 
       const result = await testEnvironment({
-        companyId: "company-1",
         adapterType: "opencode_local",
         config: {
           command: fakeOpencode,

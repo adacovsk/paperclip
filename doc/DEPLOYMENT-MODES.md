@@ -84,7 +84,7 @@ Required integration points:
 
 - real user row in `authUsers` for Operator identity
 - `instance_user_roles` entry for Operator admin authority
-- `company_memberships` integration for user-level task assignment and access
+- `memberships` integration for user-level task assignment and access
 
 This is required because user assignment paths validate active membership for `assigneeUserId`.
 
@@ -97,7 +97,7 @@ When running `authenticated` mode, if the only instance admin is `local-operator
 - claim action:
   - promotes current signed-in user to `instance_admin`
   - demotes `local-operator` admin role
-  - ensures active owner membership for the claiming user across existing companies
+  - ensures an active owner membership for the claiming user
 
 This prevents lockout when a user migrates from long-running local trusted usage to authenticated mode.
 
@@ -106,7 +106,7 @@ This prevents lockout when a user migrates from long-running local trusted usage
 - runtime values are `local_trusted | authenticated`
 - `authenticated` uses Better Auth sessions and bootstrap invite flow
 - `local_trusted` ensures a real local Operator user principal in `authUsers` with `instance_user_roles` admin access
-- company creation ensures creator membership in `company_memberships` so user assignment/access flows remain consistent
+- instance setup ensures the creator's membership in `memberships` so user assignment/access flows remain consistent
 
 ## 9. Naming and Compatibility Policy
 
