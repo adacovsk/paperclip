@@ -22,7 +22,6 @@ function lazyPage<M, K extends keyof M>(factory: () => Promise<M>, name: K) {
 }
 
 const Dashboard = lazyPage(() => import("./pages/Dashboard"), "Dashboard");
-const Companies = lazyPage(() => import("./pages/Companies"), "Companies");
 const Agents = lazyPage(() => import("./pages/Agents"), "Agents");
 const AgentDetail = lazyPage(() => import("./pages/AgentDetail"), "AgentDetail");
 const Projects = lazyPage(() => import("./pages/Projects"), "Projects");
@@ -147,7 +146,6 @@ function operatorRoutes() {
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
-      <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="skills/*" element={<CompanySkills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
@@ -215,20 +213,17 @@ function OnboardingRoutePage() {
   const { companies } = useCompany();
   const { openOnboarding } = useDialog();
   const { companyPrefix } = useParams<{ companyPrefix?: string }>();
-  const matchedCompany = companyPrefix
-    ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase()) ?? null
-    : null;
+  const matchedCompany =
+    (companyPrefix
+      ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase())
+      : undefined) ?? companies[0] ?? null;
 
   const title = matchedCompany
     ? `Add another agent to ${matchedCompany.name}`
-    : companies.length > 0
-      ? "Create another company"
-      : "Create your first company";
+    : "Create your company";
   const description = matchedCompany
-    ? "Run onboarding again to add an agent and a starter task for this company."
-    : companies.length > 0
-      ? "Run onboarding again to create another company and seed its first agent."
-      : "Get started by creating a company and your first agent.";
+    ? "Run onboarding again to add an agent and a starter task."
+    : "Get started by creating a company and your first agent.";
 
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -310,12 +305,12 @@ function NoCompaniesStartPage() {
   return (
     <div className="mx-auto max-w-xl py-10">
       <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">Create your first company</h1>
+        <h1 className="text-xl font-semibold">Create your company</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Get started by creating a company.
         </p>
         <div className="mt-4">
-          <Button onClick={() => openOnboarding()}>New Company</Button>
+          <Button onClick={() => openOnboarding()}>Create Company</Button>
         </div>
       </div>
     </div>
@@ -350,7 +345,6 @@ export function App() {
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
-          <Route path="companies" element={<UnprefixedOperatorRedirect />} />
           <Route path="issues" element={<UnprefixedOperatorRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedOperatorRedirect />} />
           <Route path="routines" element={<UnprefixedOperatorRedirect />} />

@@ -166,9 +166,14 @@ export function OnboardingWizard() {
   // Sync step and company when onboarding opens with options.
   // Keep this independent from company-list refreshes so Step 1 completion
   // doesn't get reset after creating a company.
+  // Once step 1 creates the company, the route options resolve to it as well;
+  // that is the same company, not a new onboarding, so it must not reset state.
+  const createdCompanyIdRef = useRef<string | null>(null);
+  createdCompanyIdRef.current = createdCompanyId;
   useEffect(() => {
     if (!effectiveOnboardingOpen) return;
     const cId = effectiveOnboardingOptions.companyId ?? null;
+    if (cId && cId === createdCompanyIdRef.current) return;
     setStep(effectiveOnboardingOptions.initialStep ?? 1);
     setCreatedCompanyId(cId);
     setCreatedCompanyPrefix(null);
