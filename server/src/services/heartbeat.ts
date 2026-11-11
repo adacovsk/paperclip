@@ -88,6 +88,9 @@ const DETACHED_INVOCATION_SOURCE = "detached_external";
 // every clustered `process_lost` observed so far is us: a restart (a `tsx watch`
 // reload on any edited server file, or an operator restart) killing live runs.
 const SHUTDOWN_INTERRUPT_ERROR_CODE = "process_lost_shutdown";
+// Retries a run may consume when each loss was a server restart. Bounded so a
+// run that somehow takes the server down with it cannot be re-queued forever.
+const PROCESS_LOSS_RESTART_RETRY_MAX = 4;
 // Hard ceiling on `adapter.execute` so a hung adapter (child process never exits, never emits close)
 // can't wedge the awaiting promise indefinitely. The watchdog rejects the awaited promise; the
 // adapter's child process is terminated separately by the reaper. Tunable via env.
@@ -2075,9 +2078,17 @@ export function heartbeatService(db: Db) {
     return claimed;
   }
 
+  /**
+   * `processLost`: the run failed because its child process is gone, not because
+   * of anything the agent did. That is a server restart or a killed child, and
+   * it leaves the agent `idle`. Marking it `error` showed a healthy agent as
+   * broken until its next successful run, which for an agent with nothing queued
+   * could be hours.
+   */
   async function finalizeAgentStatus(
     agentId: string,
     outcome: "succeeded" | "failed" | "cancelled" | "timed_out",
+    opts?: { processLost?: boolean },
   ) {
     const existing = await getAgent(agentId);
     if (!existing) return;
@@ -2090,7 +2101,7 @@ export function heartbeatService(db: Db) {
     const nextStatus =
       runningCount > 0
         ? "running"
-        : outcome === "succeeded" || outcome === "cancelled"
+        : outcome === "succeeded" || outcome === "cancelled" || opts?.processLost
           ? "idle"
           : "error";
 
@@ -2157,7 +2168,15 @@ export function heartbeatService(db: Db) {
     return runIds.length;
   }
 
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
+  /**
+   * `serverJustStarted`: this is the reap at boot. Every run still `running`
+   * then belonged to the previous server process, so a dead child was killed by
+   * the restart, by construction. That is inferred here rather than read from
+   * the shutdown stamp, because the stamp is usually not written: the signal
+   * that stops the server reaches the embedded database in the same instant,
+   * and the stamping query fails on a reset connection.
+   */
+  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; serverJustStarted?: boolean }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = new Date();
 
@@ -2237,10 +2256,20 @@ export function heartbeatService(db: Db) {
         continue;
       }
 
-      const shouldRetry = tracksLocalChild && !!run.processPid && (run.processLossRetryCount ?? 0) < 1;
-      const interruptedByShutdown = run.errorCode === SHUTDOWN_INTERRUPT_ERROR_CODE;
+      const interruptedByShutdown =
+        opts?.serverJustStarted === true || run.errorCode === SHUTDOWN_INTERRUPT_ERROR_CODE;
+      // A child that died on its own gets one retry: a second death is likely
+      // the same cause. A restart is not a property of the run, so a run a
+      // restart killed is retried even when it was itself a retry. One retry
+      // was not enough for that case: three restarts inside twelve minutes
+      // killed a run and then its retry, and the task was left with no run.
+      const retriesSoFar = run.processLossRetryCount ?? 0;
+      const shouldRetry =
+        tracksLocalChild &&
+        !!run.processPid &&
+        retriesSoFar < (interruptedByShutdown ? PROCESS_LOSS_RESTART_RETRY_MAX : 1);
       const baseMessage = interruptedByShutdown
-        ? `Process lost -- the server shut down while this run was in flight and killed child pid ${run.processPid ?? "?"} (${run.error ?? "shutdown"})`
+        ? `Process lost -- the server shut down while this run was in flight and killed child pid ${run.processPid ?? "?"}${run.errorCode === SHUTDOWN_INTERRUPT_ERROR_CODE && run.error ? ` (${run.error})` : ""}`
         : run.processPid
           ? `Process lost -- child pid ${run.processPid} is no longer running`
           : "Process lost -- server may have restarted";
@@ -2280,7 +2309,7 @@ export function heartbeatService(db: Db) {
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "failed");
+      await finalizeAgentStatus(run.agentId, "failed", { processLost: true });
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
       // Unblock any awaiter inside `executeRun` that was racing this child. If the adapter
@@ -2295,6 +2324,50 @@ export function heartbeatService(db: Db) {
       logger.warn({ reapedCount: reaped.length, runIds: reaped }, "reaped orphaned heartbeat runs");
     }
     return { reaped: reaped.length, runIds: reaped };
+  }
+
+  /**
+   * Clear `error` from agents whose latest finished run only lost its process.
+   *
+   * `finalizeAgentStatus` no longer sets it for that case, but an agent marked
+   * before that change keeps the status until its next run, and one with an
+   * empty queue has no next run to clear it. Run once at boot.
+   */
+  async function clearProcessLostAgentErrors() {
+    const stuck = await db.select({ id: agents.id }).from(agents).where(eq(agents.status, "error"));
+    const cleared: string[] = [];
+    for (const agent of stuck) {
+      if ((await countRunningRunsForAgent(agent.id)) > 0) continue;
+      const latest = await db
+        .select({ errorCode: heartbeatRuns.errorCode })
+        .from(heartbeatRuns)
+        .where(and(eq(heartbeatRuns.agentId, agent.id), sql`${heartbeatRuns.finishedAt} is not null`))
+        .orderBy(desc(heartbeatRuns.finishedAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (latest?.errorCode !== "process_lost") continue;
+      const updated = await db
+        .update(agents)
+        .set({ status: "idle", updatedAt: new Date() })
+        .where(and(eq(agents.id, agent.id), eq(agents.status, "error")))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      if (!updated) continue;
+      cleared.push(updated.id);
+      publishLiveEvent({
+        type: "agent.status",
+        payload: {
+          agentId: updated.id,
+          status: updated.status,
+          lastHeartbeatAt: updated.lastHeartbeatAt ? new Date(updated.lastHeartbeatAt).toISOString() : null,
+          outcome: "failed",
+        },
+      });
+    }
+    if (cleared.length > 0) {
+      logger.info({ agentIds: cleared }, "cleared error status left by lost processes");
+    }
+    return cleared.length;
   }
 
   async function resumeQueuedRuns() {
@@ -5198,6 +5271,7 @@ export function heartbeatService(db: Db) {
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
+    clearProcessLostAgentErrors,
 
     markRunsInterruptedByShutdown,
 
