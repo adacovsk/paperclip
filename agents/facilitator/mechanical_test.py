@@ -157,6 +157,46 @@ class FakeApi:
         self.calls.append(("STATUS", issue["identifier"], body, comment))
 
 
+class ReadApi(FakeApi):
+    def __init__(self, issues):
+        super().__init__()
+        self.issues_by_id = issues
+
+    def get(self, path):
+        return self.issues_by_id.get(path.rsplit("/", 1)[-1])
+
+
+class FinishToggles(unittest.TestCase):
+    ENTRY = {"agent": "architect", "identifier": "X-1"}
+
+    def finish(self, issue):
+        api, pending = ReadApi({"i1": issue}), {"i1": dict(self.ENTRY)}
+        return m.finish_toggles(api, pending), api.calls, pending
+
+    def test_a_task_left_unassigned_is_given_back_to_its_agent(self):
+        finished, calls, pending = self.finish({"status": "in_review", "assigneeAgentId": None})
+        self.assertEqual((finished, pending), (["X-1"], {}))
+        self.assertEqual(calls[0][:2], ("PATCH", "/issues/i1"))
+        self.assertEqual(calls[0][2]["assigneeAgentId"], "architect")
+
+    def test_a_task_someone_already_reassigned_is_left_as_it_is(self):
+        self.assertEqual(self.finish({"status": "in_review", "assigneeAgentId": "worker"}), ([], [], {}))
+        self.assertEqual(self.finish({"status": "todo", "assigneeAgentId": None, "assigneeUserId": "u"}), ([], [], {}))
+
+    def test_a_closed_or_missing_task_is_dropped_from_the_journal(self):
+        self.assertEqual(self.finish({"status": "cancelled", "assigneeAgentId": None}), ([], [], {}))
+        self.assertEqual(self.finish(None), ([], [], {}))
+
+    def test_a_failed_read_keeps_the_entry_for_the_next_sweep(self):
+        class Down(FakeApi):
+            def get(self, path):
+                raise OSError("unreachable")
+        pending = {"i1": dict(self.ENTRY)}
+        with self.assertRaises(OSError):
+            m.finish_toggles(Down(), pending)
+        self.assertEqual(pending, {"i1": self.ENTRY})
+
+
 class FileWedges(unittest.TestCase):
     W = {"agentName": "Worker", "queued": 3, "oldest": "2026-10-18T11:00:00Z"}
 
@@ -190,9 +230,16 @@ def firing(ident, routine="r1", status="todo", hours_ago=3, created_hours_ago=No
                 createdAt=iso(hours_ago if created_hours_ago is None else created_hours_ago), **extra)
 
 
-def routines(issues, runs=(), paused=(), skip=None):
-    refire, superseded = m.missed_routines(issues, list(runs), set(paused), skip, NOW)
-    return [i["identifier"] for i in refire], [(old["identifier"], new["identifier"]) for old, new in superseded]
+def routines(issues, runs=(), paused=(), skip=None, fired=None):
+    refire, superseded = m.missed_routines(issues, list(runs), set(paused), skip, NOW, fired)
+    return [i["identifier"] for i in refire], [(old["identifier"], by) for old, by in superseded]
+
+
+LATER = "a later firing that has since closed"
+
+
+def fired(hours_ago, issue_id="other", routine="r1"):
+    return {routine: {"at": NOW - hours_ago * HOUR, "issueId": issue_id}}
 
 
 class MissedRoutines(unittest.TestCase):
@@ -221,17 +268,54 @@ class MissedRoutines(unittest.TestCase):
         got = routines([firing("A", routine="r1"), firing("B", routine="r2", hours_ago=4)])
         self.assertEqual(got, (["B", "A"], []))
 
-    def test_ordinary_tasks_and_finished_firings_are_not_firings(self):
+    def test_ordinary_tasks_and_closed_firings_are_not_firings(self):
         plain = task("P", status="todo")
-        self.assertEqual(routines([plain, firing("A", status="in_review"), firing("B", status="blocked")]), ([], []))
+        self.assertEqual(routines([plain, firing("A", status="done"), firing("B", status="cancelled")]), ([], []))
 
-    def test_the_sweeping_agent_and_paused_agents_are_skipped(self):
-        self.assertEqual(routines([firing("A", agent="dispatcher"), firing("B", routine="r2", agent="off")],
-                                  paused={"off"}, skip="dispatcher"), ([], []))
+    def test_paused_agents_are_skipped(self):
+        self.assertEqual(routines([firing("old", agent="off", hours_ago=30), firing("new", agent="off")],
+                                  paused={"off"}), ([], []))
+
+    def test_the_sweeping_agents_own_firing_is_never_refired(self):
+        self.assertEqual(routines([firing("A", agent="dispatcher")], skip="dispatcher"), ([], []))
+
+    def test_the_sweeping_agents_abandoned_firings_are_superseded(self):
+        got = routines([firing("old", agent="dispatcher", hours_ago=30), firing("new", agent="dispatcher", hours_ago=1)],
+                       runs=[{"id": "r", "issueId": "new", "status": "running"}], skip="dispatcher")
+        self.assertEqual(got, ([], [("old", "new")]))
+
+    def test_an_unrun_firing_is_superseded_by_a_later_one_that_already_closed(self):
+        self.assertEqual(routines([firing("A", hours_ago=30)], fired=fired(2)), ([], [("A", LATER)]))
+
+    def test_a_run_that_filed_no_task_of_its_own_replaces_nothing(self):
+        self.assertEqual(routines([firing("A", hours_ago=30)], fired=fired(2, issue_id=None)), (["A"], []))
+        self.assertEqual(routines([firing("A", hours_ago=30)], fired=fired(2, issue_id="A")), (["A"], []))
+
+    def test_the_routines_own_run_for_this_firing_replaces_nothing(self):
+        self.assertEqual(routines([firing("A", hours_ago=30)], fired=fired(31)), (["A"], []))
+
+    def test_a_parked_firing_is_never_refired(self):
+        self.assertEqual(routines([firing("A", status="in_review", hours_ago=100),
+                                   firing("B", routine="r2", status="blocked", hours_ago=100)]), ([], []))
+
+    def test_a_long_parked_firing_is_superseded_once_the_routine_fires_again(self):
+        got = routines([firing("A", status="in_review", hours_ago=100),
+                        firing("B", routine="r2", status="blocked", hours_ago=100)],
+                       fired={**fired(2), **fired(2, routine="r2")})
+        self.assertEqual(got, ([], [("A", LATER), ("B", LATER)]))
+
+    def test_a_recently_parked_firing_is_left_to_whoever_parked_it(self):
+        self.assertEqual(routines([firing("A", status="blocked", hours_ago=30)], fired=fired(2)), ([], []))
+        self.assertEqual(routines([firing("A", status="blocked", hours_ago=30), firing("B", hours_ago=1)]), ([], []))
+
+    def test_last_fired_is_read_from_the_routine_list(self):
+        got = m.routine_last_fired([{"id": "r1", "lastRun": {"triggeredAt": iso(2), "linkedIssueId": "X"}},
+                                    {"id": "r2", "lastRun": None}])
+        self.assertEqual(got, {"r1": {"at": NOW - 2 * HOUR, "issueId": "X"}})
 
     def test_superseding_cancels_with_the_replacement_named(self):
         api = FakeApi()
-        m.supersede(api, firing("old"), firing("new"))
+        m.supersede(api, firing("old"), "new")
         kind, ident, body, comment = api.calls[0]
         self.assertEqual((kind, ident, body), ("STATUS", "old", {"status": "cancelled"}))
         self.assertIn("Superseded by new", comment)

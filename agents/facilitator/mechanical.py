@@ -35,6 +35,7 @@ from pathlib import Path
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 REPORT_FILE = STATE_DIR / "facilitator.json"
 TOGGLES_FILE = STATE_DIR / "facilitator-toggles.json"
+PENDING_FILE = STATE_DIR / "facilitator-pending-toggles.json"
 
 #: An assigned task this long without a run has missed its wake.
 STALL_SECONDS = float(os.environ.get("FACILITATOR_STALL_SECONDS", 2 * 3600))
@@ -64,6 +65,11 @@ REAP_PID = STATE_DIR / "reap.pid"
 #: The issue list leaves these out unless asked, so every scan built on it is blind to
 #: a routine's own task.
 ROUTINE_ORIGIN = "routine_execution"
+UNRUN_STATUSES = ("todo", "in_progress")
+PARKED_STATUSES = ("in_review", "blocked")
+#: A parked firing with no run for this long is replaced by a later firing. Two days,
+#: so a daily routine's held firing outlives the next one and is still there to answer.
+PARKED_SECONDS = float(os.environ.get("FACILITATOR_PARKED_SECONDS", 48 * 3600))
 #: How far back `run_digest` counts, and the most rows it reads to get there.
 DIGEST_SECONDS = float(os.environ.get("FACILITATOR_DIGEST_SECONDS", 24 * 3600))
 DIGEST_ROWS = int(os.environ.get("FACILITATOR_DIGEST_ROWS", 1000))
@@ -180,6 +186,34 @@ def toggle(api, issue: dict) -> None:
               f"wake    {issue['identifier']}: reassign")
 
 
+def finish_toggles(api, pending: dict) -> list[str]:
+    """Reassign every task a toggle unassigned and never gave back.
+
+    A toggle is two writes, and the sweep can die between them: it runs under a time
+    budget on a box that is sometimes saturated, and a write that times out is never
+    retried. The task is then open with no assignee, which no scan here or anywhere
+    else reads as owed anything. Two were left that way in one evening, a Verify and a
+    routine's own firing. So the agent is journalled before the unassign, and whatever
+    the journal still holds at the next sweep is given back first.
+
+    An entry is dropped once the task has an assignee again, or is closed, whoever did
+    that. A read or write that fails leaves the journal alone for the next sweep.
+    """
+    finished = []
+    for issue_id, entry in list(pending.items()):
+        issue = api.get(f"/issues/{issue_id}") or {}
+        open_ = issue.get("status") not in (None, "done", "cancelled")
+        if open_ and not issue.get("assigneeAgentId") and not issue.get("assigneeUserId"):
+            api.write("PATCH", f"/issues/{issue_id}",
+                      {"assigneeAgentId": entry["agent"],
+                       "comment": "Reassigned: a missed-wake toggle unassigned this task and the sweep ended "
+                                  "before giving it back."},
+                      f"wake    {entry['identifier']}: finish an interrupted toggle")
+            finished.append(entry["identifier"])
+        del pending[issue_id]
+    return finished
+
+
 def stall_hours(issue: dict) -> float:
     return (time.time() - ts(issue["updatedAt"])) / 3600
 
@@ -188,8 +222,8 @@ def stall_hours(issue: dict) -> float:
 
 
 def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str], skip_agent: str | None,
-                    now: float) -> tuple[list[dict], list[tuple[dict, dict]]]:
-    """(firings owed a wake, [(firing that never ran, the later firing replacing it)]).
+                    now: float, last_fired: dict[str, dict] | None = None) -> tuple[list[dict], list[tuple[dict, str]]]:
+    """(firings owed a wake, [(firing a later one replaces, what replaces it)]).
 
     `issues` are a company's open routine firings. A routine files one task per firing
     and wakes its agent once; when that wake dies (the usage limit was out), the task
@@ -200,43 +234,80 @@ def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str],
     Only a routine's newest firing is worth a run: an older one asks for the same sweep
     over a staler tree. So the newest is re-fired if it has stalled, and every stalled
     firing behind it is superseded, whether or not the newest is itself running.
+
+    "Behind it" is read two ways, because a later firing that finished is no longer in
+    `issues`. A newer open firing of the same routine is one. The other is
+    `last_fired[routine]`, the routine's last run as `{"at", "issueId"}`: a run that
+    filed a different task after this one was created. A run with no task of its own
+    (skipped, or coalesced into this firing) replaces nothing, so the firing it left
+    alone is still the newest and is still re-fired.
+
+    A firing parked `in_review` or `blocked` is never re-fired, since someone put it
+    there, and it gets PARKED_SECONDS rather than STALL_SECONDS before a later firing
+    replaces it. One sat `in_review` for a month and another `blocked` for three weeks,
+    each with twenty later firings of its routine completed after it.
+
+    `skip_agent` is the agent running this sweep. Its own firings are never re-fired
+    (this run is the newest one), but the ones a killed or timed-out sweep left
+    behind are superseded like anyone's.
     """
     live_ids = {r["id"] for r in live_runs}
     live_issues = {r.get("issueId") for r in live_runs if r.get("issueId")}
 
-    def stalled(issue: dict) -> bool:
+    def idle(issue: dict) -> float | None:
+        """Seconds since the firing last moved, or None while a run is on it."""
         if issue.get("activeRun") or issue["id"] in live_issues:
-            return False
+            return None
         if issue.get("executionRunId") and issue["executionRunId"] in live_ids:
-            return False
-        return now - ts(issue["updatedAt"]) >= STALL_SECONDS
+            return None
+        return now - ts(issue["updatedAt"])
 
     by_routine: dict[str, list[dict]] = {}
     for issue in issues:
         agent = issue.get("assigneeAgentId")
         if issue.get("originKind") != ROUTINE_ORIGIN or not issue.get("originId"):
             continue
-        if not agent or agent == skip_agent or agent in paused:
+        if not agent or agent in paused:
             continue
-        if issue["status"] not in ("todo", "in_progress"):
+        if issue["status"] not in UNRUN_STATUSES + PARKED_STATUSES:
             continue
         by_routine.setdefault(issue["originId"], []).append(issue)
 
     refire, superseded = [], []
-    for firings in by_routine.values():
+    for routine, firings in by_routine.items():
         firings.sort(key=lambda i: i["createdAt"])
         newest = firings[-1]
-        if stalled(newest):
-            refire.append(newest)
-        superseded += [(old, newest) for old in firings[:-1] if stalled(old)]
+        fired = (last_fired or {}).get(routine) or {}
+        for issue in firings:
+            parked = issue["status"] in PARKED_STATUSES
+            quiet = idle(issue)
+            if quiet is None or quiet < (PARKED_SECONDS if parked else STALL_SECONDS):
+                continue
+            if issue is not newest:
+                superseded.append((issue, newest["identifier"]))
+            elif (fired.get("issueId") and fired["issueId"] != issue["id"]
+                  and fired.get("at", 0) > ts(issue["createdAt"])):
+                superseded.append((issue, "a later firing that has since closed"))
+            elif not parked and issue["assigneeAgentId"] != skip_agent:
+                refire.append(issue)
     return sorted(refire, key=lambda i: i["updatedAt"]), superseded
 
 
-def supersede(api, old: dict, newest: dict) -> None:
+def routine_last_fired(routines: list[dict]) -> dict[str, dict]:
+    """`last_fired` for missed_routines, from the company's routine list."""
+    out = {}
+    for routine in routines:
+        run = routine.get("lastRun") or {}
+        if run.get("triggeredAt"):
+            out[routine["id"]] = {"at": ts(run["triggeredAt"]), "issueId": run.get("linkedIssueId")}
+    return out
+
+
+def supersede(api, old: dict, by: str) -> None:
     api.set_status(old, {"status": "cancelled"},
-                   f"Superseded by {newest['identifier']}: this firing never got a run, and the routine has "
-                   "fired again since. Only the newest firing is re-fired.",
-                   f"routine {old['identifier']}: superseded by {newest['identifier']}")
+                   f"Superseded by {by}: this firing has had no run for {stall_hours(old):.0f}h and the routine "
+                   "has fired again since. Only a routine's newest firing is worth a run.",
+                   f"routine {old['identifier']}: superseded by {by}")
 
 
 # --------------------------------------------------------------------------- §3 run digest
@@ -538,21 +609,30 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
     live_runs = api.get(f"/companies/{api.company}/live-runs") or []
 
+    pending = load(PENDING_FILE)
+    finished = finish_toggles(api, pending)
+    save(PENDING_FILE, pending, api.dry_run)
+
     open_issues = api.issues(status="in_review,in_progress")
     # By name: the roster is the only place the Architect's id lives.
     parent_owed = frozenset(a["id"] for a in roster if a.get("name") == "Architect")
     stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
                            closed_parent_check(api, open_issues), parent_owed)
-    routine_firings = api.issues(status="todo,in_progress", includeRoutineExecutions="true")
-    refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now)
-    for old, newest in superseded:
-        supersede(api, old, newest)
+    routine_firings = api.issues(status=",".join(UNRUN_STATUSES + PARKED_STATUSES), includeRoutineExecutions="true")
+    last_fired = routine_last_fired(api.get(f"/companies/{api.company}/routines") or [])
+    refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now, last_fired)
+    for old, by in superseded:
+        supersede(api, old, by)
     # Routine firings go first: there are a handful at most, and TOGGLE_CAP would
     # otherwise leave a day-old health sweep behind twenty older stages.
     stalled = refire + stalled
     due, failing, history = plan_toggles(stalled, load(TOGGLES_FILE), now)
     for issue in due:
+        pending[issue["id"]] = {"agent": issue["assigneeAgentId"], "identifier": issue["identifier"]}
+        save(PENDING_FILE, pending, api.dry_run)
         toggle(api, issue)
+        del pending[issue["id"]]
+    save(PENDING_FILE, pending, api.dry_run)
     save(TOGGLES_FILE, history, api.dry_run)
 
     found = wedged(live_runs, now)
@@ -584,12 +664,12 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     report = {
         "at": now,
         "toggled": [i["identifier"] for i in due],
+        "togglesFinished": finished,
         "stalledWaiting": [i["identifier"] for i in stalled if i not in due],
         "toggleNotTaking": [{"identifier": i["identifier"], "toggles": history[i["id"]]["count"],
                              "assigneeAgentId": i["assigneeAgentId"]} for i in failing],
         "routinesRefired": [i["identifier"] for i in due if i in refire],
-        "routinesSuperseded": [{"identifier": old["identifier"], "by": newest["identifier"]}
-                               for old, newest in superseded],
+        "routinesSuperseded": [{"identifier": old["identifier"], "by": by} for old, by in superseded],
         "runDigest": digest,
         "nightly": main_nightly,
         "wedged": found,
