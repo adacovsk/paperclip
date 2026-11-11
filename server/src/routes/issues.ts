@@ -13,6 +13,7 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
+  reportIssueBuildSchema,
   formatHoldLine,
   holdSurvivesStatus,
   isHoldLine,
@@ -45,6 +46,7 @@ import {
   summarizeOpenChildren,
 } from "../services/subtask-wake-target.js";
 import { holdPlacement, issueHoldService } from "../services/issue-holds.js";
+import { issueBuildService } from "../services/issue-builds.js";
 import { stageDispatcherIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
@@ -62,6 +64,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
   const holds = issueHoldService(db);
+  const builds = issueBuildService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const agentsSvc = agentService(db);
@@ -788,6 +791,50 @@ export function issueRoutes(db: Db, storage: StorageService) {
       details: { userId: req.actor.userId },
     });
     res.json(removed ?? { ok: true });
+  });
+
+  router.get("/issues/:id/builds", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertInstanceAccess(req);
+    res.json(await builds.listForIssue(id));
+  });
+
+  router.post("/issues/:id/builds", validate(reportIssueBuildSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertInstanceAccess(req);
+    if (req.body.stageIssueId && !(await svc.getById(req.body.stageIssueId))) {
+      throw unprocessable("stageIssueId names a task that does not exist");
+    }
+    const actor = getActorInfo(req);
+    const build = await builds.report(id, req.body, actor.agentId ?? null);
+    await logActivity(db, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.build_reported",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        identifier: issue.identifier,
+        buildId: build.id,
+        exitCode: build.exitCode,
+        outcome: build.outcome,
+        lane: build.lane,
+        action: build.action,
+      },
+    });
+    res.status(201).json(build);
   });
 
   router.get("/issues/:id/approvals", async (req, res) => {

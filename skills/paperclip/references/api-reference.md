@@ -521,6 +521,23 @@ PATCH /api/issues/AA-120
 - Moving the task to any other status clears the hold. `"hold": null` clears it without moving the task.
 - `hold.reheld` is true when the same condition on the same blockers was held and cleared before.
 
+### Build results
+
+A build result is recorded on the task whose branch was built:
+
+```
+POST /api/issues/AA-120/builds
+{ "exitCode": 0, "lane": "cloud", "finishedAt": "2026-11-11T10:00:00Z",
+  "stageIssueId": "<the Verify stage>", "headSha": "<commit>", "baseSha": "<main it was built on>",
+  "host": "<machine>", "action": "land", "note": "<why>" }
+
+GET /api/issues/AA-120/builds     -> newest first
+```
+
+- `exitCode`, `lane` (`local` or `cloud`) and `finishedAt` are required. The task and `finishedAt` identify the result, so sending the same one again updates it rather than adding a row.
+- Each record comes back with `outcome` (`green`, `red`, `superseded`, `fault`) and a `label` for its exit code.
+- The Dispatcher records every result it routes. Agents read results here; they do not write them.
+
 ---
 
 ## Error Handling

@@ -10,6 +10,7 @@ import tempfile
 import time
 import sys
 import unittest
+import urllib.error
 from unittest import mock
 from pathlib import Path
 
@@ -960,6 +961,82 @@ class SentinelSweep(unittest.TestCase):
         self.assertEqual([m for _, m in self.relaunched], ["retry", "retry"])
 
 
+class BuildRecords(unittest.TestCase):
+    """Each result the sweep routes is recorded on the task whose branch was built."""
+
+    VERIFY = {"id": "v1", "identifier": "V-1", "parentId": "p1"}
+    PARENT = {"id": "p1", "identifier": "T-1"}
+    BASE = "b" * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = dispatch.VERIFY_DIR
+        dispatch.VERIFY_DIR = Path(self.tmp.name)
+
+    def tearDown(self):
+        dispatch.VERIFY_DIR = self.saved
+        self.tmp.cleanup()
+
+    def report(self, api, state, code="1", mtime=1_800_000_000.0, cloud=False, action="wake", parent=PARENT):
+        dispatch.report_build(api, state, self.VERIFY, parent, "T-1", code, mtime, cloud, self.BASE, action, "why")
+
+    def test_a_result_is_recorded_on_the_parent_with_the_stage_named(self):
+        (dispatch.VERIFY_DIR / "T-1.head").write_text("c" * 40 + "\n")
+        api, state = SweepApi(), {}
+        self.report(api, state)
+        (task, build), = api.builds
+        self.assertEqual(task, "p1")
+        self.assertEqual(
+            {k: build[k] for k in ("exitCode", "lane", "finishedAt", "stageIssueId", "headSha", "baseSha", "action")},
+            {"exitCode": 1, "lane": "local", "finishedAt": "2027-01-15T08:00:00Z", "stageIssueId": "v1",
+             "headSha": "c" * 40, "baseSha": self.BASE, "action": "wake"},
+        )
+
+    def test_a_cloud_result_reads_the_head_the_cloud_lane_launched(self):
+        (dispatch.VERIFY_DIR / "T-1.head").write_text("c" * 40 + "\n")
+        (dispatch.VERIFY_DIR / "T-1.cloud.launched-head").write_text("d" * 40 + "\n")
+        api = SweepApi()
+        self.report(api, {}, cloud=True)
+        self.assertEqual((api.builds[0][1]["lane"], api.builds[0][1]["headSha"]), ("cloud", "d" * 40))
+
+    def test_the_same_result_and_decision_is_sent_once(self):
+        api, state = SweepApi(), {}
+        self.report(api, state)
+        self.report(api, state)
+        self.assertEqual(len(api.builds), 1)
+
+    def test_a_new_decision_on_the_same_result_is_sent_again(self):
+        api, state = SweepApi(), {}
+        self.report(api, state, action="retry")
+        self.report(api, state, action="wake")
+        self.assertEqual([b["action"] for _, b in api.builds], ["retry", "wake"])
+        self.assertEqual(api.builds[0][1]["finishedAt"], api.builds[1][1]["finishedAt"])
+
+    def test_a_main_repair_is_recorded_on_itself_with_no_stage(self):
+        api = SweepApi()
+        self.report(api, {}, parent=None)
+        task, build = api.builds[0]
+        self.assertEqual(task, "v1")
+        self.assertNotIn("stageIssueId", build)
+
+    def test_a_result_file_that_holds_no_code_is_not_recorded(self):
+        api = SweepApi()
+        self.report(api, {}, code="")
+        self.assertFalse(getattr(api, "builds", []))
+
+    def test_a_record_the_server_refuses_is_retried_on_the_next_sweep(self):
+        class Refusing(SweepApi):
+            def record_build(self, task_id, build, what):
+                raise urllib.error.URLError("down")
+
+        state = {}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.report(Refusing(), state)
+        api = SweepApi()
+        self.report(api, state)
+        self.assertEqual(len(api.builds), 1)
+
+
 class SentinelLiveness(unittest.TestCase):
     """route_sentinels: a result is recorded only once something acts on it."""
 
@@ -1256,6 +1333,9 @@ class SweepApi:
 
     def set_status(self, issue, body, comment, what):
         self.writes.append(("PATCH", issue["id"], body))
+
+    def record_build(self, task_id, build, what):
+        self.builds = [*getattr(self, "builds", []), (task_id, build)]
 
 
 class TrainHeads(unittest.TestCase):

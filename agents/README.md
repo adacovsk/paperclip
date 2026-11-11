@@ -144,6 +144,12 @@ parent task id. In `{parent}.exit`:
 
 Each code has a rationale file under `architect/rationale/`.
 
+The Dispatcher also records every result it routes on the task itself
+(`GET /api/issues/<id>/builds`): the code and what it means, the lane, the commit
+and base, the machine, and what the Dispatcher did with it. The sentinel file is
+still what the pipeline routes on; the record is the same facts readable from the
+task page and from another machine.
+
 **The Dispatcher acts on these without a model:**
 
 - it relaunches a first `99` or `75`

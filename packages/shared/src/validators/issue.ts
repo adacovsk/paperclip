@@ -2,6 +2,7 @@ import { z } from "zod";
 import { patchSchema } from "./patch.js";
 import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 import { ISSUE_HOLD_BLOCKER_KINDS, ISSUE_HOLD_KINDS } from "../issue-hold.js";
+import { ISSUE_BUILD_LANES } from "../issue-build.js";
 
 const executionWorkspaceStrategySchema = z
   .object({
@@ -102,6 +103,21 @@ export const issueHoldInputSchema = z
   });
 
 export type IssueHoldInput = z.infer<typeof issueHoldInputSchema>;
+
+/** A build result as a reporter writes it. `finishedAt` identifies the result. */
+export const reportIssueBuildSchema = z.object({
+  exitCode: z.number().int().min(0).max(255),
+  lane: z.enum(ISSUE_BUILD_LANES),
+  finishedAt: z.string().datetime(),
+  stageIssueId: z.string().uuid().optional().nullable(),
+  headSha: z.string().trim().regex(/^[0-9a-f]{7,40}$/, "headSha is a git commit id").optional().nullable(),
+  baseSha: z.string().trim().regex(/^[0-9a-f]{7,40}$/, "baseSha is a git commit id").optional().nullable(),
+  host: z.string().trim().min(1).max(200).optional().nullable(),
+  action: z.string().trim().min(1).max(40).optional().nullable(),
+  note: z.string().trim().max(1000).optional().nullable(),
+});
+
+export type ReportIssueBuild = z.infer<typeof reportIssueBuildSchema>;
 
 export const updateIssueSchema = patchSchema(createIssueSchema).extend({
   comment: z.string().min(1).optional(),

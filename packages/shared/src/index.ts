@@ -291,6 +291,7 @@ export {
   createIssueLabelSchema,
   updateIssueSchema,
   issueHoldInputSchema,
+  reportIssueBuildSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
   addIssueCommentSchema,
@@ -310,6 +311,7 @@ export {
   type CreateIssueLabel,
   type UpdateIssue,
   type IssueHoldInput,
+  type ReportIssueBuild,
   type CheckoutIssue,
   type AddIssueComment,
   type LinkIssueApproval,
@@ -436,6 +438,16 @@ export {
   type IssueHoldKind,
   type ParsedHoldLine,
 } from "./issue-hold.js";
+
+export {
+  ISSUE_BUILD_LANES,
+  ISSUE_BUILD_OUTCOMES,
+  ISSUE_BUILD_EXIT_CODES,
+  describeBuildExit,
+  type IssueBuild,
+  type IssueBuildLane,
+  type IssueBuildOutcome,
+} from "./issue-build.js";
 
 export {
   paperclipConfigSchema,
