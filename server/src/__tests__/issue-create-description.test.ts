@@ -15,10 +15,10 @@ const mockIssueService = vi.hoisted(() => ({
 
 vi.mock("../services/index.js", () => ({
   accessService: () => ({ canUser: vi.fn(async () => true), hasPermission: vi.fn(async () => true) }),
-  agentService: () => ({ getById: vi.fn(async () => ({ id: "agent-1", companyId: "company-1", role: "ceo", permissions: {} })) }),
+  agentService: () => ({ getById: vi.fn(async () => ({ id: "agent-1", role: "ceo", permissions: {} })) }),
   documentService: () => ({ getIssueDocumentPayload: vi.fn(async () => ({})) }),
   executionWorkspaceService: () => ({ getById: vi.fn() }),
-  goalService: () => ({ getById: vi.fn(), getDefaultCompanyGoal: vi.fn() }),
+  goalService: () => ({ getById: vi.fn(), getDefaultInstanceGoal: vi.fn() }),
   heartbeatService: () => ({ wakeup: vi.fn(async () => undefined), reportRunActivity: vi.fn(async () => undefined) }),
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
@@ -40,13 +40,13 @@ function createApp(actor: Record<string, unknown>) {
   return app;
 }
 
-const AGENT = { type: "agent", agentId: "agent-1", runId: "run-1", companyId: "company-1" };
+const AGENT = { type: "agent", agentId: "agent-1", runId: "run-1" };
 const OPERATOR = {
   type: "operator",
   userId: "user-1",
   source: "session",
   isInstanceAdmin: true,
-  companyIds: ["company-1"],
+  isMember: true,
 };
 
 const BODY = "What: the loader drops the trait. Why: silently wrong at runtime. Done-when: a test covers it.";
@@ -62,7 +62,7 @@ describe("agent-filed issues must carry their own description", () => {
     // What/Why/Where/Done-when sat in a comment on the task they were reviewing,
     // leaving Coordinator to rebuild the body by hand from a different issue.
     const res = await request(createApp(AGENT))
-      .post("/api/companies/company-1/issues")
+      .post("/api/issues")
       .send({ title: "Loader drops the trait" });
 
     expect(res.status).toBe(422);
@@ -72,7 +72,7 @@ describe("agent-filed issues must carry their own description", () => {
 
   it("rejects a filing whose description is only whitespace", async () => {
     const res = await request(createApp(AGENT))
-      .post("/api/companies/company-1/issues")
+      .post("/api/issues")
       .send({ title: "Loader drops the trait", description: "   \n  " });
 
     expect(res.status).toBe(422);
@@ -81,19 +81,18 @@ describe("agent-filed issues must carry their own description", () => {
 
   it("accepts an agent filing that carries a real body", async () => {
     const res = await request(createApp(AGENT))
-      .post("/api/companies/company-1/issues")
+      .post("/api/issues")
       .send({ title: "Loader drops the trait", description: BODY });
 
     expect(res.status).toBe(201);
     expect(mockIssueService.create).toHaveBeenCalledWith(
-      "company-1",
       expect.objectContaining({ description: BODY, createdByAgentId: "agent-1" }),
     );
   });
 
   it("does not gate the operator — the UI legitimately creates title-only tasks", async () => {
     const res = await request(createApp(OPERATOR))
-      .post("/api/companies/company-1/issues")
+      .post("/api/issues")
       .send({ title: "Quick note to self" });
 
     expect(res.status).toBe(201);

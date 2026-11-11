@@ -10,7 +10,6 @@ import {
 } from "./common.js";
 
 interface ActivityListOptions extends BaseClientOptions {
-  companyId?: string;
   agentId?: string;
   entityType?: string;
   entityId?: string;
@@ -22,21 +21,20 @@ export function registerActivityCommands(program: Command): void {
   addCommonClientOptions(
     activity
       .command("list")
-      .description("List company activity log entries")
-      .requiredOption("-C, --company-id <id>", "Company ID")
+      .description("List activity log entries")
       .option("--agent-id <id>", "Filter by agent ID")
       .option("--entity-type <type>", "Filter by entity type")
       .option("--entity-id <id>", "Filter by entity ID")
       .action(async (opts: ActivityListOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const ctx = resolveCommandContext(opts);
           const params = new URLSearchParams();
           if (opts.agentId) params.set("agentId", opts.agentId);
           if (opts.entityType) params.set("entityType", opts.entityType);
           if (opts.entityId) params.set("entityId", opts.entityId);
 
           const query = params.toString();
-          const path = `/api/companies/${ctx.companyId}/activity${query ? `?${query}` : ""}`;
+          const path = `/api/activity${query ? `?${query}` : ""}`;
           const rows = (await ctx.api.get<ActivityEvent[]>(path)) ?? [];
 
           if (ctx.json) {
@@ -66,6 +64,5 @@ export function registerActivityCommands(program: Command): void {
           handleCommandError(err);
         }
       }),
-    { includeCompany: false },
   );
 }

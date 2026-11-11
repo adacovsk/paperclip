@@ -28,7 +28,6 @@ require_cmd shasum
 PAPERCLIP_API_URL="${PAPERCLIP_API_URL:-http://127.0.0.1:3100}"
 API_BASE="${PAPERCLIP_API_URL%/}/api"
 
-COMPANY_SELECTOR="${COMPANY_SELECTOR:-CLA}"
 OPENCLAW_AGENT_NAME="${OPENCLAW_AGENT_NAME:-OpenClaw Gateway Smoke Agent}"
 OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
 OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
@@ -68,7 +67,6 @@ fi
 
 RESPONSE_CODE=""
 RESPONSE_BODY=""
-COMPANY_ID=""
 AGENT_ID=""
 AGENT_API_KEY=""
 JOIN_REQUEST_ID=""
@@ -177,10 +175,10 @@ require_operator_auth() {
   if [[ ${#AUTH_HEADERS[@]} -eq 0 ]]; then
     fail "operator auth required. Set PAPERCLIP_COOKIE or PAPERCLIP_AUTH_HEADER."
   fi
-  api_request "GET" "/companies"
+  api_request "GET" "/instance/profile"
   if [[ "$RESPONSE_CODE" != "200" ]]; then
     echo "$RESPONSE_BODY" >&2
-    fail "operator auth invalid for /api/companies (HTTP ${RESPONSE_CODE})"
+    fail "operator auth invalid for /api/instance/profile (HTTP ${RESPONSE_CODE})"
   fi
 }
 
@@ -313,34 +311,8 @@ ws.on("error", (err) => {
 NODE
 }
 
-resolve_company_id() {
-  api_request "GET" "/companies"
-  assert_status "200"
-
-  local selector
-  selector="$(printf "%s" "$COMPANY_SELECTOR" | tr '[:lower:]' '[:upper:]')"
-
-  COMPANY_ID="$(jq -r --arg sel "$selector" '
-    map(select(
-      ((.id // "") | ascii_upcase) == $sel or
-      ((.name // "") | ascii_upcase) == $sel or
-      ((.issuePrefix // "") | ascii_upcase) == $sel
-    ))
-    | .[0].id // empty
-  ' <<<"$RESPONSE_BODY")"
-
-  if [[ -z "$COMPANY_ID" ]]; then
-    local available
-    available="$(jq -r '.[] | "- id=\(.id) issuePrefix=\(.issuePrefix // "") name=\(.name // "")"' <<<"$RESPONSE_BODY")"
-    echo "$available" >&2
-    fail "could not find company for selector '${COMPANY_SELECTOR}'"
-  fi
-
-  log "resolved company ${COMPANY_ID} from selector ${COMPANY_SELECTOR}"
-}
-
 cleanup_openclaw_agents() {
-  api_request "GET" "/companies/${COMPANY_ID}/agents"
+  api_request "GET" "/agents"
   assert_status "200"
 
   local ids
@@ -366,7 +338,7 @@ cleanup_openclaw_agents() {
 }
 
 cleanup_pending_join_requests() {
-  api_request "GET" "/companies/${COMPANY_ID}/join-requests?status=pending_approval"
+  api_request "GET" "/join-requests?status=pending_approval"
   if [[ "$RESPONSE_CODE" != "200" ]]; then
     warn "join-request cleanup skipped (HTTP ${RESPONSE_CODE})"
     return
@@ -381,7 +353,7 @@ cleanup_pending_join_requests() {
   while IFS= read -r request_id; do
     [[ -n "$request_id" ]] || continue
     log "rejecting stale pending join request ${request_id}"
-    api_request "POST" "/companies/${COMPANY_ID}/join-requests/${request_id}/reject" "{}"
+    api_request "POST" "/join-requests/${request_id}/reject" "{}"
     if [[ "$RESPONSE_CODE" != "200" && "$RESPONSE_CODE" != "404" && "$RESPONSE_CODE" != "409" ]]; then
       warn "reject ${request_id} returned HTTP ${RESPONSE_CODE}"
     fi
@@ -393,7 +365,7 @@ create_and_approve_gateway_join() {
 
   local invite_payload
   invite_payload="$(jq -nc '{allowedJoinTypes:"agent"}')"
-  api_request "POST" "/companies/${COMPANY_ID}/invites" "$invite_payload"
+  api_request "POST" "/invites" "$invite_payload"
   assert_status "201"
 
   local invite_token
@@ -438,7 +410,7 @@ create_and_approve_gateway_join() {
   [[ -n "$JOIN_REQUEST_ID" && -n "$claim_secret" && -n "$claim_path" ]] || fail "join accept missing claim metadata"
 
   log "approving join request ${JOIN_REQUEST_ID}"
-  api_request "POST" "/companies/${COMPANY_ID}/join-requests/${JOIN_REQUEST_ID}/approve" "{}"
+  api_request "POST" "/join-requests/${JOIN_REQUEST_ID}/approve" "{}"
   assert_status "200"
 
   AGENT_ID="$(jq -r '.createdAgentId // empty' <<<"$RESPONSE_BODY")"
@@ -616,7 +588,7 @@ trigger_wakeup() {
 
 get_run_status() {
   local run_id="$1"
-  api_request "GET" "/companies/${COMPANY_ID}/heartbeat-runs?agentId=${AGENT_ID}&limit=200"
+  api_request "GET" "/heartbeat-runs?agentId=${AGENT_ID}&limit=200"
   if [[ "$RESPONSE_CODE" != "200" ]]; then
     echo ""
     return 0
@@ -710,7 +682,7 @@ create_issue_for_case() {
     --arg priority "$priority" \
     '{title:$title,description:$description,status:"todo",priority:$priority,assigneeAgentId:$assignee}')"
 
-  api_request "POST" "/companies/${COMPANY_ID}/issues" "$payload"
+  api_request "POST" "/issues" "$payload"
   assert_status "201"
 
   local issue_id issue_identifier
@@ -735,7 +707,7 @@ find_issue_by_query() {
   local query="$1"
   local encoded_query
   encoded_query="$(jq -rn --arg q "$query" '$q|@uri')"
-  api_request "GET" "/companies/${COMPANY_ID}/issues?q=${encoded_query}"
+  api_request "GET" "/issues?q=${encoded_query}"
   if [[ "$RESPONSE_CODE" != "200" ]]; then
     echo ""
     return 0
@@ -833,7 +805,7 @@ run_case_c() {
   local ack_marker="OPENCLAW_CASE_C_ACK_$(date +%s)"
   local original_issue_reference="the original case issue you are currently reading"
   local description
-  description="Case C validation.\n\nTreat this run as a fresh/new session.\nCreate a NEW Paperclip issue in this same company with title exactly:\n${marker}\nUse description: 'created by case C smoke'.\n\nThen post a comment on ${original_issue_reference} containing exactly: ${ack_marker}\nDo NOT post the ACK comment on the newly created issue.\nThen mark the original case issue done."
+  description="Case C validation.\n\nTreat this run as a fresh/new session.\nCreate a NEW Paperclip issue in this same instance with title exactly:\n${marker}\nUse description: 'created by case C smoke'.\n\nThen post a comment on ${original_issue_reference} containing exactly: ${ack_marker}\nDo NOT post the ACK comment on the newly created issue.\nThen mark the original case issue done."
 
   local created
   created="$(create_issue_for_case "[OpenClaw Gateway Smoke] Case C" "$description")"
@@ -890,7 +862,6 @@ main() {
   log "paperclip health deploymentMode=$(jq -r '.deploymentMode // "unknown"' <<<"$RESPONSE_BODY") exposure=$(jq -r '.deploymentExposure // "unknown"' <<<"$RESPONSE_BODY")"
 
   require_operator_auth
-  resolve_company_id
   cleanup_openclaw_agents
   cleanup_pending_join_requests
 
@@ -940,7 +911,6 @@ main() {
   run_case_c
 
   log "success"
-  log "companyId=${COMPANY_ID}"
   log "agentId=${AGENT_ID}"
   log "inviteId=${INVITE_ID}"
   log "joinRequestId=${JOIN_REQUEST_ID}"

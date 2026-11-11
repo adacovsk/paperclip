@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "@/lib/router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { approvalsApi } from "../api/approvals";
 import { agentsApi } from "../api/agents";
-import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "../components/StatusBadge";
@@ -18,7 +17,6 @@ import { MarkdownBody } from "../components/MarkdownBody";
 
 export function ApprovalDetail() {
   const { approvalId } = useParams<{ approvalId: string }>();
-  const { selectedCompanyId, setSelectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -32,7 +30,6 @@ export function ApprovalDetail() {
     queryFn: () => approvalsApi.get(approvalId!),
     enabled: !!approvalId,
   });
-  const resolvedCompanyId = approval?.companyId ?? selectedCompanyId;
 
   const { data: comments } = useQuery({
     queryKey: queryKeys.approvals.comments(approvalId!),
@@ -47,15 +44,9 @@ export function ApprovalDetail() {
   });
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(resolvedCompanyId ?? ""),
-    queryFn: () => agentsApi.list(resolvedCompanyId ?? ""),
-    enabled: !!resolvedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
-
-  useEffect(() => {
-    if (!approval?.companyId || approval.companyId === selectedCompanyId) return;
-    setSelectedCompanyId(approval.companyId, { source: "route_sync" });
-  }, [approval?.companyId, selectedCompanyId, setSelectedCompanyId]);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -75,13 +66,8 @@ export function ApprovalDetail() {
     queryClient.invalidateQueries({ queryKey: queryKeys.approvals.detail(approvalId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.approvals.comments(approvalId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.approvals.issues(approvalId) });
-    if (approval?.companyId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(approval.companyId) });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.approvals.list(approval.companyId, "pending"),
-      });
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(approval.companyId) });
-    }
+    queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list });
   };
 
   const approveMutation = useMutation({

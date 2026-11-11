@@ -7,7 +7,7 @@ Primary issue: `PAP-448`
 
 ## Summary
 
-Add first-class **documents** to Paperclip as editable, revisioned, company-scoped text artifacts that can be linked to issues.
+Add first-class **documents** to Paperclip as editable, revisioned, instance-wide text artifacts that can be linked to issues.
 
 The first required convention is a document with key `plan`.
 
@@ -39,7 +39,7 @@ This keeps `PAP-448` focused while still fitting the larger artifact direction.
 ## Goals
 
 1. Give issues first-class keyed documents, starting with `plan`.
-2. Make documents editable by operator users and same-company agents with issue access.
+2. Make documents editable by operator users and agents with issue access.
 3. Preserve change history with append-only revisions.
 4. Make the `plan` document automatically available in the normal issue fetch used by agents/heartbeats.
 5. Replace the current `<plan>`-in-description convention in skills/docs.
@@ -137,7 +137,7 @@ Recommendation:
 
 Recommendation: make documents first-class, but keep issue linkage explicit via a join table.
 
-This preserves foreign keys today and gives a clean path to future `project_documents` or `company_documents` tables later.
+This preserves foreign keys today and gives a clean path to future `project_documents` or instance-level document tables later.
 
 ## Tables
 
@@ -148,7 +148,6 @@ Canonical text document record.
 Suggested columns:
 
 - `id`
-- `company_id`
 - `title`
 - `format`
 - `latest_body`
@@ -168,7 +167,6 @@ Append-only history.
 Suggested columns:
 
 - `id`
-- `company_id`
 - `document_id`
 - `revision_number`
 - `body`
@@ -188,7 +186,6 @@ Issue relation + workflow key.
 Suggested columns:
 
 - `id`
-- `company_id`
 - `issue_id`
 - `document_id`
 - `key`
@@ -197,7 +194,7 @@ Suggested columns:
 
 Constraints:
 
-- unique `(company_id, issue_id, key)`
+- unique `(issue_id, key)`
 - unique `(document_id)` to keep one issue relation per document in v1
 
 ## Why not use `assets` for this?
@@ -230,7 +227,6 @@ type DocumentFormat = "markdown" | "plain_text" | "json" | "html";
 
 interface IssueDocument {
   id: string;
-  companyId: string;
   issueId: string;
   key: string;
   title: string | null;
@@ -310,10 +306,8 @@ Behavior:
 
 ## Authorization and invariants
 
-- all document records are company-scoped
-- issue relation must belong to same company
 - operator access follows existing issue access rules
-- agent access follows existing same-company issue access rules
+- agent access follows existing issue access rules
 - every mutation writes activity log entries
 
 Recommended delete rule for v1:
@@ -446,11 +440,11 @@ Behavior:
 - list/get/upsert/delete documents
 - revision listing
 - `GET /issues/:id` returns `planDocument` + `documentSummaries`
-- company boundary checks match issue routes
+- access checks match issue routes
 
 Acceptance:
 
-- agents and operator can fetch/update same-company issue documents
+- agents and operator can fetch/update issue documents
 - stale edits return `409`
 - activity timeline shows document changes
 
@@ -500,7 +494,7 @@ Behavior:
 Follow-up, not required for first merge:
 
 - deliverables/artifact read-model
-- project/company documents
+- project-level documents
 - comment-linked documents
 - diff view between revisions
 
@@ -511,7 +505,7 @@ Follow-up, not required for first merge:
 - document create/read/update/delete lifecycle
 - revision numbering
 - `baseRevisionId` conflict handling
-- company boundary enforcement
+- instance access enforcement
 - agent vs operator authorization
 - issue fetch includes `planDocument` and document summaries
 - legacy `<plan>` fallback behavior

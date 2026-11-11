@@ -15,10 +15,8 @@
  * import { usePluginData, usePluginAction } from "@paperclipai/plugin-sdk/ui";
  * import type { PluginWidgetProps } from "@paperclipai/plugin-sdk/ui";
  *
- * export function DashboardWidget({ context }: PluginWidgetProps) {
- *   const { data, loading, error } = usePluginData("sync-health", {
- *     companyId: context.companyId,
- *   });
+ * export function DashboardWidget(_props: PluginWidgetProps) {
+ *   const { data, loading, error } = usePluginData("sync-health");
  *   const resync = usePluginAction("resync");
  *
  *   if (loading) return <div>Loading…</div>;
@@ -28,7 +26,7 @@
  *     <div style={{ display: "grid", gap: 8 }}>
  *       <strong>Synced Issues</strong>
  *       <div>{data!.syncedCount}</div>
- *       <button onClick={() => resync({ companyId: context.companyId })}>
+ *       <button onClick={() => resync()}>
  *         Resync Now
  *       </button>
  *     </div>
@@ -42,7 +40,7 @@
  *
  * - `usePluginData(key, params)` — fetch data from the worker's `getData` handler
  * - `usePluginAction(key)` — get a callable that invokes the worker's `performAction` handler
- * - `useHostContext()` — read the current active company, project, entity, and user IDs
+ * - `useHostContext()` — read the current active project, entity, and user IDs
  * - `usePluginStream(channel)` — subscribe to real-time SSE events from the worker
  */
 export {

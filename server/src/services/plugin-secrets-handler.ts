@@ -15,7 +15,7 @@
  * ## Secret Reference Format
  *
  * A `secretRef` is a **secret UUID** — the primary key (`id`) of a row in
- * the `company_secrets` table. Operators place these UUIDs into plugin
+ * the `secrets` table. Operators place these UUIDs into plugin
  * config values; plugin workers resolve them at execution time via
  * `ctx.secrets.resolve(secretId)`.
  *
@@ -35,7 +35,7 @@
 
 import { eq, and, desc } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companySecrets, companySecretVersions, pluginConfig } from "@paperclipai/db";
+import { pluginConfig, secrets, secretVersions } from "@paperclipai/db";
 import type { SecretProvider } from "@paperclipai/shared";
 import { getSecretProvider } from "../secrets/provider-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
@@ -313,8 +313,8 @@ export function createPluginSecretsHandler(
       // ---------------------------------------------------------------
       const secret = await db
         .select()
-        .from(companySecrets)
-        .where(eq(companySecrets.id, trimmedRef))
+        .from(secrets)
+        .where(eq(secrets.id, trimmedRef))
         .then((rows) => rows[0] ?? null);
 
       if (!secret) {
@@ -326,11 +326,11 @@ export function createPluginSecretsHandler(
       // ---------------------------------------------------------------
       const versionRow = await db
         .select()
-        .from(companySecretVersions)
+        .from(secretVersions)
         .where(
           and(
-            eq(companySecretVersions.secretId, secret.id),
-            eq(companySecretVersions.version, secret.latestVersion),
+            eq(secretVersions.secretId, secret.id),
+            eq(secretVersions.version, secret.latestVersion),
           ),
         )
         .then((rows) => rows[0] ?? null);

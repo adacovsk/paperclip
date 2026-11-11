@@ -8,15 +8,15 @@ look when a feature ships or changes.
 | Plugins / Extensions | Features table, Roadmap | Extensions, Agent Model | Core Concepts |
 | Adapters (new runtimes) | "Works with" table, FAQ | Agent Model, Agent Configuration | Employees & Agents, Agent Execution |
 | Governance / Approvals | Features table, "Why special" | Board Governance, Board Approval Gates | Principles |
-| Budget / Cost Control | Features table, "Why special" | Budget Delegation | Company (revenue & expenses) |
+| Budget / Cost Control | Features table, "Why special" | Budget Delegation | Instance (revenue & expenses) |
 | Task Management | Features table | Task Model | Task Management |
 | Org Chart / Hierarchy | Features table | Agent Model (reporting) | Employees & Agents |
-| Multi-Company | Features table, FAQ | Company Model | Company |
+| Instance Model | Features table, FAQ | Instance Model | Instance |
 | Heartbeats | Features table, FAQ | Agent Execution | Agent Execution |
 | CLI Commands | Development section | — | — |
 | Onboarding / Quickstart | Quickstart, FAQ | — | User Flow |
 | Skills / Skill Injection | "Why special" | — | — |
-| Company Templates | "Why special", Roadmap (ClipMart) | — | — |
+| Instance Templates | "Why special", Roadmap (ClipMart) | — | — |
 | Mobile / UI | Features table | — | — |
 | Project Archiving | — | — | — |
 | OpenClaw Integration | "Works with" table, FAQ | Agent Model | Agent Execution |

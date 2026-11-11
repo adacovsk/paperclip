@@ -51,7 +51,7 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "local_implicit",
       isInstanceAdmin: false,
     };
@@ -65,7 +65,6 @@ function createApp() {
 function makeIssue(status: "todo" | "done") {
   return {
     id: "11111111-1111-4111-8111-111111111111",
-    companyId: "company-1",
     status,
     assigneeAgentId: "22222222-2222-4222-8222-222222222222",
     assigneeUserId: null,
@@ -81,7 +80,6 @@ describe("issue comment reopen routes", () => {
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
-      companyId: "company-1",
       body: "hello",
       createdAt: new Date(),
       updatedAt: new Date(),

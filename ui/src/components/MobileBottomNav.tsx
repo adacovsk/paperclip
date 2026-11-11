@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { NavLink, useLocation } from "@/lib/router";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   House,
   CircleDot,
@@ -7,7 +7,6 @@ import {
   Users,
   Inbox,
 } from "lucide-react";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { cn } from "../lib/utils";
 import { useInboxBadge } from "../hooks/useInboxBadge";
@@ -35,9 +34,8 @@ type MobileNavItem = MobileNavLinkItem | MobileNavActionItem;
 
 export function MobileBottomNav({ visible }: MobileBottomNavProps) {
   const location = useLocation();
-  const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialog();
-  const inboxBadge = useInboxBadge(selectedCompanyId);
+  const inboxBadge = useInboxBadge();
 
   const items = useMemo<MobileNavItem[]>(
     () => [

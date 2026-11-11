@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { goalsApi } from "../api/goals";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -12,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Target, Plus } from "lucide-react";
 
 export function Goals() {
-  const { selectedCompanyId } = useCompany();
   const { openNewGoal } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
 
@@ -21,14 +19,10 @@ export function Goals() {
   }, [setBreadcrumbs]);
 
   const { data: goals, isLoading, error } = useQuery({
-    queryKey: queryKeys.goals.list(selectedCompanyId!),
-    queryFn: () => goalsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.goals.list,
+    queryFn: () => goalsApi.list(),
   });
 
-  if (!selectedCompanyId) {
-    return <EmptyState icon={Target} message="Select a company to view goals." />;
-  }
 
   if (isLoading) {
     return <PageSkeleton variant="list" />;

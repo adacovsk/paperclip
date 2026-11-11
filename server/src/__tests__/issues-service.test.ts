@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
-  companies,
+  instanceSettings,
   createDb,
   issueComments,
   issueInboxArchives,
@@ -43,7 +43,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     await db.delete(activityLog);
     await db.delete(issues);
     await db.delete(agents);
-    await db.delete(companies);
+    await db.delete(instanceSettings);
   });
 
   afterAll(async () => {
@@ -51,21 +51,12 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   });
 
   it("returns issues an agent participated in across the supported signals", async () => {
-    const companyId = randomUUID();
     const agentId = randomUUID();
     const otherAgentId = randomUUID();
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
 
     await db.insert(agents).values([
       {
         id: agentId,
-        companyId,
         name: "CodexCoder",
         role: "engineer",
         status: "active",
@@ -76,7 +67,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: otherAgentId,
-        companyId,
         name: "OtherAgent",
         role: "engineer",
         status: "active",
@@ -96,7 +86,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     await db.insert(issues).values([
       {
         id: assignedIssueId,
-        companyId,
         title: "Assigned issue",
         status: "todo",
         priority: "medium",
@@ -105,7 +94,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: createdIssueId,
-        companyId,
         title: "Created issue",
         status: "todo",
         priority: "medium",
@@ -113,7 +101,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: commentedIssueId,
-        companyId,
         title: "Commented issue",
         status: "todo",
         priority: "medium",
@@ -121,7 +108,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: activityIssueId,
-        companyId,
         title: "Activity issue",
         status: "todo",
         priority: "medium",
@@ -129,7 +115,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: excludedIssueId,
-        companyId,
         title: "Excluded issue",
         status: "todo",
         priority: "medium",
@@ -139,14 +124,12 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     ]);
 
     await db.insert(issueComments).values({
-      companyId,
       issueId: commentedIssueId,
       authorAgentId: agentId,
       body: "Investigating this issue.",
     });
 
     await db.insert(activityLog).values({
-      companyId,
       actorType: "agent",
       actorId: agentId,
       action: "issue.updated",
@@ -156,7 +139,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       details: { changed: true },
     });
 
-    const result = await svc.list(companyId, { participantAgentId: agentId });
+    const result = await svc.list({ participantAgentId: agentId });
     const resultIds = new Set(result.map((issue) => issue.id));
 
     expect(resultIds).toEqual(new Set([
@@ -169,19 +152,10 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   });
 
   it("combines participation filtering with search", async () => {
-    const companyId = randomUUID();
     const agentId = randomUUID();
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
 
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "CodexCoder",
       role: "engineer",
       status: "active",
@@ -197,7 +171,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     await db.insert(issues).values([
       {
         id: matchedIssueId,
-        companyId,
         title: "Invoice reconciliation",
         status: "todo",
         priority: "medium",
@@ -205,7 +178,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: otherIssueId,
-        companyId,
         title: "Weekly planning",
         status: "todo",
         priority: "medium",
@@ -213,7 +185,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
     ]);
 
-    const result = await svc.list(companyId, {
+    const result = await svc.list({
       participantAgentId: agentId,
       q: "invoice",
     });
@@ -222,16 +194,8 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   });
 
   it("hides archived inbox issues until new external activity arrives", async () => {
-    const companyId = randomUUID();
     const userId = "user-1";
     const otherUserId = "user-2";
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
 
     const visibleIssueId = randomUUID();
     const archivedIssueId = randomUUID();
@@ -240,7 +204,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     await db.insert(issues).values([
       {
         id: visibleIssueId,
-        companyId,
         title: "Visible issue",
         status: "todo",
         priority: "medium",
@@ -250,7 +213,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: archivedIssueId,
-        companyId,
         title: "Archived issue",
         status: "todo",
         priority: "medium",
@@ -260,7 +222,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       },
       {
         id: resurfacedIssueId,
-        companyId,
         title: "Resurfaced issue",
         status: "todo",
         priority: "medium",
@@ -271,20 +232,17 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     ]);
 
     await svc.archiveInbox(
-      companyId,
       archivedIssueId,
       userId,
       new Date("2026-03-26T12:30:00.000Z"),
     );
     await svc.archiveInbox(
-      companyId,
       resurfacedIssueId,
       userId,
       new Date("2026-03-26T13:00:00.000Z"),
     );
 
     await db.insert(issueComments).values({
-      companyId,
       issueId: resurfacedIssueId,
       authorUserId: otherUserId,
       body: "This should bring the issue back into Mine.",
@@ -292,7 +250,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       updatedAt: new Date("2026-03-26T13:30:00.000Z"),
     });
 
-    const archivedFiltered = await svc.list(companyId, {
+    const archivedFiltered = await svc.list({
       touchedByUserId: userId,
       inboxArchivedByUserId: userId,
     });
@@ -302,9 +260,9 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       visibleIssueId,
     ]);
 
-    await svc.unarchiveInbox(companyId, archivedIssueId, userId);
+    await svc.unarchiveInbox(archivedIssueId, userId);
 
-    const afterUnarchive = await svc.list(companyId, {
+    const afterUnarchive = await svc.list({
       touchedByUserId: userId,
       inboxArchivedByUserId: userId,
     });
@@ -320,20 +278,22 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   // NULL is indistinguishable from a genuinely empty body, so list rows must also
   // say that the column was withheld and how long the real one is — otherwise
   // "description is null" gets read as "this ticket has no body".
+  it("numbers issues from the instance issue prefix and counter", async () => {
+    const first = await svc.create({ title: "First" } as any);
+    const second = await svc.create({ title: "Second" } as any);
+    const [instance] = await db.select().from(instanceSettings);
+
+    expect(first.identifier).toBe(`${instance!.issuePrefix}-${first.issueNumber}`);
+    expect(second.issueNumber).toBe(first.issueNumber! + 1);
+    expect(instance!.issueCounter).toBe(second.issueNumber);
+  });
+
   it("marks the withheld description on list rows instead of returning a bare null", async () => {
-    const companyId = randomUUID();
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireOperatorApprovalForNewAgents: false,
-    });
-
     const body = "Full task body that no list view renders.";
-    const withBody = await svc.create(companyId, { title: "Has a body", description: body } as any);
-    const withoutBody = await svc.create(companyId, { title: "Has no body" } as any);
+    const withBody = await svc.create({ title: "Has a body", description: body } as any);
+    const withoutBody = await svc.create({ title: "Has no body" } as any);
 
-    const rows = await svc.list(companyId, {});
+    const rows = await svc.list({});
     const bodyRow = rows.find((row) => row.id === withBody.id)! as any;
     const emptyRow = rows.find((row) => row.id === withoutBody.id)! as any;
 

@@ -14,7 +14,6 @@ Detailed reference for the Paperclip control plane API. For the core heartbeat p
   "name": "BackendEngineer",
   "role": "engineer",
   "title": "Senior Backend Engineer",
-  "companyId": "company-1",
   "reportsTo": "mgr-1",
   "capabilities": "Node.js, PostgreSQL, API design",
   "status": "running",
@@ -41,7 +40,7 @@ Use `chainOfCommand` to know who to escalate to. Use `budgetMonthlyCents` and `s
 
 `adapterConfig` and `runtimeConfig` are returned in full for your own agent record, and
 are **redacted to `{}`** on another agent's record unless you hold `agents:create` or the
-read-only `agents:read_config` permission for the company. The redaction is a `200`, so an
+read-only `agents:read_config` permission. The redaction is a `200`, so an
 empty object means "not permitted to read", not "no configuration set" — do not report a
 config audit as clean off a `{}`. Grant the permission with:
 
@@ -55,7 +54,7 @@ state is reported on the agent record as `access.canReadConfigurations` /
 `access.configReadSource`.
 
 `agents:read_config` grants **reads only**, and one route in this area is deliberately not a
-read: `POST /api/companies/{companyId}/adapters/{type}/test-environment` resolves the
+read: `POST /api/adapters/{type}/test-environment` resolves the
 adapterConfig you send it through the secrets service and reports what an adapter makes of
 the result, so it still requires `agents:create`.
 
@@ -117,7 +116,7 @@ Includes the issue's `project` and `goal` (with descriptions), plus each ancesto
         "id": "goal-1",
         "title": "Launch MVP",
         "description": "Ship minimum viable product by Q1",
-        "level": "company",
+        "level": "instance",
         "status": "active"
       }
     },
@@ -146,10 +145,10 @@ A concrete example of what a single heartbeat looks like for an individual contr
 ```
 # 1. Identity (skip if already in context)
 GET /api/agents/me
--> { id: "agent-42", companyId: "company-1", ... }
+-> { id: "agent-42", ... }
 
 # 2. Check inbox
-GET /api/companies/company-1/issues?assigneeAgentId=agent-42&status=todo,in_progress,blocked
+GET /api/issues?assigneeAgentId=agent-42&status=todo,in_progress,blocked
 -> [
     { id: "issue-101", title: "Fix rate limiter bug", status: "in_progress", priority: "high" },
     { id: "issue-99", title: "Implement login API", status: "todo", priority: "medium" }
@@ -187,13 +186,13 @@ PATCH /api/issues/issue-99
 ```
 # 1. Identity (skip if already in context)
 GET /api/agents/me
--> { id: "mgr-1", role: "manager", companyId: "company-1", ... }
+-> { id: "mgr-1", role: "manager", ... }
 
 # 2. Check team status
-GET /api/companies/company-1/agents
+GET /api/agents
 -> [ { id: "agent-42", name: "BackendEngineer", reportsTo: "mgr-1", status: "idle" }, ... ]
 
-GET /api/companies/company-1/issues?assigneeAgentId=agent-42&status=in_progress,blocked
+GET /api/issues?assigneeAgentId=agent-42&status=in_progress,blocked
 -> [ { id: "issue-55", status: "blocked", title: "Needs DB migration reviewed" } ]
 
 # 3. Agent-42 is blocked. Read comments.
@@ -205,24 +204,24 @@ PATCH /api/issues/issue-55
 { "assigneeAgentId": "dba-agent-1", "comment": "@DBAAgent Please review the migration in PR #38." }
 
 # 5. Check own assignments.
-GET /api/companies/company-1/issues?assigneeAgentId=mgr-1&status=todo,in_progress
+GET /api/issues?assigneeAgentId=mgr-1&status=todo,in_progress
 -> [ { id: "issue-30", title: "Break down Q2 roadmap into tasks", status: "todo" } ]
 
 POST /api/issues/issue-30/checkout
 { "agentId": "mgr-1", "expectedStatuses": ["todo"] }
 
 # 6. Create subtasks and delegate.
-POST /api/companies/company-1/issues
+POST /api/issues
 { "title": "Implement caching layer", "assigneeAgentId": "agent-42", "parentId": "issue-30", "status": "todo", "priority": "high", "goalId": "goal-1" }
 
-POST /api/companies/company-1/issues
+POST /api/issues
 { "title": "Write load test suite", "assigneeAgentId": "agent-55", "parentId": "issue-30", "status": "todo", "priority": "medium", "goalId": "goal-1" }
 
 PATCH /api/issues/issue-30
 { "status": "done", "comment": "Broke down into subtasks for caching layer and load testing." }
 
 # 7. Dashboard for health check.
-GET /api/companies/company-1/dashboard
+GET /api/dashboard
 ```
 
 ---
@@ -236,12 +235,12 @@ Use markdown formatting and include links to related entities when they exist:
 ```md
 ## Update
 
-- Approval: [APPROVAL_ID](/<prefix>/approvals/<approval-id>)
-- Pending agent: [AGENT_NAME](/<prefix>/agents/<agent-url-key-or-id>)
-- Source issue: [ISSUE_ID](/<prefix>/issues/<issue-identifier-or-id>)
+- Approval: [APPROVAL_ID](/approvals/<approval-id>)
+- Pending agent: [AGENT_NAME](/agents/<agent-url-key-or-id>)
+- Source issue: [ISSUE_ID](/issues/<issue-identifier-or-id>)
 ```
 
-Where `<prefix>` is the company prefix derived from the issue identifier (e.g., `PAP-123` → prefix is `PAP`).
+Links are relative to the instance root; there is no prefix segment in UI paths.
 
 **@-mentions:** Mention another agent by name using `@AgentName` to automatically wake them:
 
@@ -288,44 +287,45 @@ If you're stuck or blocked:
 
 ---
 
-## Company Context
+## Instance Context
 
 ```
-GET /api/companies/{companyId}          — company name, description, budget
-GET /api/companies/{companyId}/goals    — goal hierarchy (company > team > agent > task)
-GET /api/companies/{companyId}/projects — projects (group issues toward a deliverable)
+GET /api/instance/profile — instance name, description, budget
+GET /api/goals    — goal hierarchy (instance > team > agent > task)
+GET /api/projects — projects (group issues toward a deliverable)
 GET /api/projects/{projectId}           — single project details
-GET /api/companies/{companyId}/dashboard — health summary: agent/task counts, spend, stale tasks
+GET /api/dashboard — health summary: agent/task counts, spend, stale tasks
 ```
 
 Use the dashboard for situational awareness, especially if you're a manager or CEO.
 
-## Company Branding (CEO / Operator)
+## Instance Branding (CEO / Operator)
 
-CEO agents can update branding fields on their own company. Operator users can update all fields.
+CEO agents can update branding fields on the instance profile. Operator users can update all fields.
 
 ```
-GET  /api/companies/{companyId}          — read company (CEO agents + operator)
-PATCH /api/companies/{companyId}         — update company fields
-POST /api/companies/{companyId}/logo     — upload logo (multipart, field: "file")
+GET   /api/instance/profile          — read the instance profile
+PATCH /api/instance/profile          — update profile fields (agents: branding fields only)
+PATCH /api/instance/profile/branding — update branding fields only
+POST  /api/instance/logo             — upload logo (multipart, field: "file")
 ```
 
 **CEO-allowed fields:** `name`, `description`, `brandColor` (hex e.g. `#FF5733` or null), `logoAssetId` (UUID or null).
 
 **Operator-only fields:** `status`, `budgetMonthlyCents`, `spentMonthlyCents`, `requireOperatorApprovalForNewAgents`.
 
-**Not updateable:** `issuePrefix` (used as company slug/identifier — protected from changes).
+**Not updateable:** `issuePrefix` (the prefix of every issue identifier — protected from changes).
 
 **Logo workflow:**
-1. `POST /api/companies/{companyId}/logo` with file upload → returns `{ assetId }`.
-2. `PATCH /api/companies/{companyId}` with `{ "logoAssetId": "<assetId>" }`.
+1. `POST /api/instance/logo` with file upload → returns `{ assetId }`.
+2. `PATCH /api/instance/profile/branding` with `{ "logoAssetId": "<assetId>" }`.
 
 ## OpenClaw Invite Prompt (CEO)
 
 Use this endpoint to generate a short-lived OpenClaw onboarding invite prompt:
 
 ```
-POST /api/companies/{companyId}/openclaw/invite-prompt
+POST /api/openclaw/invite-prompt
 {
   "agentMessage": "optional note for the joining OpenClaw agent"
 }
@@ -379,7 +379,7 @@ When a CEO/manager task asks you to "set up a new project" and wire local + GitH
 ### Option A: One-call create with workspace
 
 ```
-POST /api/companies/{companyId}/projects
+POST /api/projects
 {
   "name": "Paperclip Mobile App",
   "description": "Ship iOS + Android client",
@@ -398,7 +398,7 @@ POST /api/companies/{companyId}/projects
 ### Option B: Two calls (project first, then workspace)
 
 ```
-POST /api/companies/{companyId}/projects
+POST /api/projects
 {
   "name": "Paperclip Mobile App",
   "description": "Ship iOS + Android client",
@@ -431,7 +431,7 @@ Some actions require operator approval. You cannot bypass these gates.
 ### Requesting a hire (management only)
 
 ```
-POST /api/companies/{companyId}/agent-hires
+POST /api/agent-hires
 {
   "name": "Marketing Analyst",
   "role": "researcher",
@@ -441,7 +441,7 @@ POST /api/companies/{companyId}/agent-hires
 }
 ```
 
-If company policy requires approval, the new agent is created as `pending_approval` and a linked `hire_agent` approval is created automatically.
+If the instance requires operator approval for new agents, the new agent is created as `pending_approval` and a linked `hire_agent` approval is created automatically.
 
 **Do NOT** request hires unless you are a manager or CEO. IC agents should ask their manager.
 
@@ -452,14 +452,14 @@ Use `paperclip-create-agent` for the full hiring workflow (reflection + config c
 If you are the CEO, your first strategic plan must be approved before you can move tasks to `in_progress`:
 
 ```
-POST /api/companies/{companyId}/approvals
+POST /api/approvals
 { "type": "approve_ceo_strategy", "requestedByAgentId": "{your-agent-id}", "payload": { "plan": "..." } }
 ```
 
 ### Checking approval status
 
 ```
-GET /api/companies/{companyId}/approvals?status=pending
+GET /api/approvals?status=pending
 ```
 
 ### Approval follow-up (requesting agent)
@@ -506,7 +506,7 @@ Terminal states: `done`, `cancelled`
 | 400  | Validation error   | Check your request body against expected fields                      |
 | 401  | Unauthenticated    | API key missing or invalid                                           |
 | 403  | Unauthorized       | You don't have permission for this action                            |
-| 404  | Not found          | Entity doesn't exist or isn't in your company                        |
+| 404  | Not found          | Entity doesn't exist                                                 |
 | 409  | Conflict           | Another agent owns the task. Pick a different one. **Do not retry.** |
 | 422  | Semantic violation | Invalid state transition (e.g. `backlog` -> `done`)                  |
 | 500  | Server error       | Transient failure. Comment on the task and move on.                  |
@@ -521,8 +521,8 @@ Terminal states: `done`, `cancelled`
 | ------ | ---------------------------------- | ------------------------------------ |
 | GET    | `/api/agents/me`                   | Your agent record + chain of command |
 | GET    | `/api/agents/:agentId`             | Agent details + chain of command     |
-| GET    | `/api/companies/:companyId/agents` | List all agents in company           |
-| GET    | `/api/companies/:companyId/org`    | Org chart tree                       |
+| GET    | `/api/agents` | List all agents                      |
+| GET    | `/api/org`    | Org chart tree                       |
 | PATCH  | `/api/agents/:agentId/instructions-path` | Set/clear instructions path (`AGENTS.md`) |
 | GET    | `/api/agents/:agentId/config-revisions` | List config revisions            |
 | POST   | `/api/agents/:agentId/config-revisions/:revisionId/rollback` | Roll back config |
@@ -531,9 +531,9 @@ Terminal states: `done`, `cancelled`
 
 | Method | Path                               | Description                                                                              |
 | ------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
-| GET    | `/api/companies/:companyId/issues` | List issues, sorted by priority. Filters: `?status=`, `?assigneeAgentId=`, `?assigneeUserId=`, `?projectId=`, `?labelId=`, `?q=` (full-text search across title, identifier, description, comments) |
+| GET    | `/api/issues` | List issues, sorted by priority. Filters: `?status=`, `?assigneeAgentId=`, `?assigneeUserId=`, `?projectId=`, `?labelId=`, `?q=` (full-text search across title, identifier, description, comments) |
 | GET    | `/api/issues/:issueId`             | Issue details + ancestors                                                                |
-| POST   | `/api/companies/:companyId/issues` | Create issue                                                                             |
+| POST   | `/api/issues` | Create issue                                                                             |
 | PATCH  | `/api/issues/:issueId`             | Update issue (optional `comment` field adds a comment in same call)                      |
 | POST   | `/api/issues/:issueId/checkout`    | Atomic checkout (claim + start). Idempotent if you already own it.                       |
 | POST   | `/api/issues/:issueId/release`     | Release task ownership                                                                   |
@@ -544,53 +544,53 @@ Terminal states: `done`, `cancelled`
 | POST   | `/api/issues/:issueId/approvals`   | Link approval to issue                                                                    |
 | DELETE | `/api/issues/:issueId/approvals/:approvalId` | Unlink approval from issue                                                     |
 
-### Companies, Projects, Goals
+### Instance, Projects, Goals
 
 | Method | Path                                 | Description        |
 | ------ | ------------------------------------ | ------------------ |
-| GET    | `/api/companies`                     | List all companies |
-| GET    | `/api/companies/:companyId`          | Company details    |
-| GET    | `/api/companies/:companyId/projects` | List projects      |
+| GET    | `/api/instance/profile`              | Instance profile   |
+| PATCH  | `/api/instance/profile`              | Update instance profile |
+| GET    | `/api/projects` | List projects      |
 | GET    | `/api/projects/:projectId`           | Project details    |
-| POST   | `/api/companies/:companyId/projects` | Create project (optional inline `workspace`) |
+| POST   | `/api/projects` | Create project (optional inline `workspace`) |
 | PATCH  | `/api/projects/:projectId`           | Update project     |
 | GET    | `/api/projects/:projectId/workspaces` | List project workspaces |
 | POST   | `/api/projects/:projectId/workspaces` | Create project workspace |
 | PATCH  | `/api/projects/:projectId/workspaces/:workspaceId` | Update project workspace |
 | DELETE | `/api/projects/:projectId/workspaces/:workspaceId` | Delete project workspace |
-| GET    | `/api/companies/:companyId/goals`    | List goals         |
+| GET    | `/api/goals`    | List goals         |
 | GET    | `/api/goals/:goalId`                 | Goal details       |
-| POST   | `/api/companies/:companyId/goals`    | Create goal        |
+| POST   | `/api/goals`    | Create goal        |
 | PATCH  | `/api/goals/:goalId`                 | Update goal        |
-| POST   | `/api/companies/:companyId/openclaw/invite-prompt` | Generate OpenClaw invite prompt (CEO/operator only) |
+| POST   | `/api/openclaw/invite-prompt` | Generate OpenClaw invite prompt (CEO/operator only) |
 
 ### Approvals, Costs, Activity, Dashboard
 
 | Method | Path                                         | Description                        |
 | ------ | -------------------------------------------- | ---------------------------------- |
-| GET    | `/api/companies/:companyId/approvals`        | List approvals (`?status=pending`) |
-| POST   | `/api/companies/:companyId/approvals`        | Create approval request            |
-| POST   | `/api/companies/:companyId/agent-hires`      | Create hire request/agent draft    |
+| GET    | `/api/approvals`        | List approvals (`?status=pending`) |
+| POST   | `/api/approvals`        | Create approval request            |
+| POST   | `/api/agent-hires`      | Create hire request/agent draft    |
 | GET    | `/api/approvals/:approvalId`                 | Approval details                   |
 | GET    | `/api/approvals/:approvalId/issues`          | Issues linked to approval          |
 | GET    | `/api/approvals/:approvalId/comments`        | Approval comments                  |
 | POST   | `/api/approvals/:approvalId/comments`        | Add approval comment               |
 | POST   | `/api/approvals/:approvalId/request-revision`| Operator asks for revision            |
 | POST   | `/api/approvals/:approvalId/resubmit`        | Resubmit revised approval          |
-| GET    | `/api/companies/:companyId/costs/summary`    | Company cost summary               |
-| GET    | `/api/companies/:companyId/costs/by-agent`   | Costs by agent                     |
-| GET    | `/api/companies/:companyId/costs/by-project` | Costs by project                   |
-| GET    | `/api/companies/:companyId/activity`         | Activity log                       |
-| GET    | `/api/companies/:companyId/dashboard`        | Company health summary             |
+| GET    | `/api/costs/summary`    | Instance cost summary              |
+| GET    | `/api/costs/by-agent`   | Costs by agent                     |
+| GET    | `/api/costs/by-project` | Costs by project                   |
+| GET    | `/api/activity`         | Activity log                       |
+| GET    | `/api/dashboard`        | Instance health summary            |
 
 ### Heartbeat Runs
 
-Run history. Listing is **company-scoped** — there is no `/api/agents/:agentId/heartbeat-runs`.
+Run history. Listing is instance-wide (filter with `?agentId=`) — there is no `/api/agents/:agentId/heartbeat-runs`.
 
 | Method | Path                                                    | Description                              |
 | ------ | ------------------------------------------------------- | ---------------------------------------- |
-| GET    | `/api/companies/:companyId/heartbeat-runs`               | List runs, newest first (`?limit=`)      |
-| GET    | `/api/companies/:companyId/heartbeat-runs/latest-by-agent` | Most recent run per agent              |
+| GET    | `/api/heartbeat-runs`               | List runs, newest first (`?limit=`)      |
+| GET    | `/api/heartbeat-runs/latest-by-agent` | Most recent run per agent              |
 | GET    | `/api/heartbeat-runs/:runId`                             | Single run                               |
 | GET    | `/api/heartbeat-runs/:runId/events`                      | Run events                               |
 | GET    | `/api/heartbeat-runs/:runId/log`                         | Run log                                  |

@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   agentWakeupRequests,
-  companies,
   createDb,
   heartbeatRunEvents,
   heartbeatRuns,
@@ -53,7 +52,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(agents);
-    await db.delete(companies);
   });
 
   afterAll(async () => {
@@ -75,24 +73,15 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     runError?: string | null;
     invocationSource?: string;
   }) {
-    const companyId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
     const wakeupRequestId = randomUUID();
     const issueId = randomUUID();
     const now = new Date("2026-03-19T00:00:00.000Z");
-    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix,
-      requireOperatorApprovalForNewAgents: false,
-    });
+    const issuePrefix = `T${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "CodexCoder",
       role: "engineer",
       status: "paused",
@@ -104,7 +93,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     await db.insert(agentWakeupRequests).values({
       id: wakeupRequestId,
-      companyId,
       agentId,
       source: "assignment",
       triggerDetail: "system",
@@ -117,7 +105,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     await db.insert(heartbeatRuns).values({
       id: runId,
-      companyId,
       agentId,
       invocationSource: input?.invocationSource ?? "assignment",
       triggerDetail: "system",
@@ -135,7 +122,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     if (input?.includeIssue !== false) {
       await db.insert(issues).values({
         id: issueId,
-        companyId,
         title: "Recover local adapter after lost process",
         status: "in_progress",
         priority: "medium",
@@ -147,7 +133,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       });
     }
 
-    return { companyId, agentId, runId, wakeupRequestId, issueId };
+    return { agentId, runId, wakeupRequestId, issueId };
   }
 
   it("keeps a local run active when the recorded pid is still alive", async () => {

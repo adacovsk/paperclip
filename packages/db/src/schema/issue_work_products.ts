@@ -7,7 +7,6 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { issues } from "./issues.js";
@@ -18,7 +17,6 @@ export const issueWorkProducts = pgTable(
   "issue_work_products",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     issueId: uuid("issue_id").notNull().references(() => issues.id, { onDelete: "cascade" }),
     executionWorkspaceId: uuid("execution_workspace_id")
@@ -41,23 +39,19 @@ export const issueWorkProducts = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyIssueTypeIdx: index("issue_work_products_company_issue_type_idx").on(
-      table.companyId,
+    issueTypeIdx: index("issue_work_products_issue_type_idx").on(
       table.issueId,
       table.type,
     ),
-    companyExecutionWorkspaceTypeIdx: index("issue_work_products_company_execution_workspace_type_idx").on(
-      table.companyId,
+    executionWorkspaceTypeIdx: index("issue_work_products_execution_workspace_type_idx").on(
       table.executionWorkspaceId,
       table.type,
     ),
-    companyProviderExternalIdIdx: index("issue_work_products_company_provider_external_id_idx").on(
-      table.companyId,
+    providerExternalIdIdx: index("issue_work_products_provider_external_id_idx").on(
       table.provider,
       table.externalId,
     ),
-    companyUpdatedIdx: index("issue_work_products_company_updated_idx").on(
-      table.companyId,
+    updatedIdx: index("issue_work_products_updated_idx").on(
       table.updatedAt,
     ),
   }),

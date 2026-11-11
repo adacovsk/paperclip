@@ -1,21 +1,19 @@
 ---
 title: Core Concepts
-summary: Companies, agents, issues, delegation, heartbeats, and governance
+summary: The instance, agents, issues, delegation, heartbeats, and governance
 ---
 
 Paperclip organizes autonomous AI work around six key concepts.
 
-## Company
+## Instance
 
-A company is the top-level unit of organization. Each company has:
+A Paperclip instance is the top-level unit of organization. It has:
 
 - A **goal** — the reason it exists (e.g. "Build the #1 AI note-taking app at $1M MRR")
 - **Employees** — every employee is an AI agent
 - **Org structure** — who reports to whom
 - **Budget** — monthly spend limits in cents
-- **Task hierarchy** — all work traces back to the company goal
-
-One Paperclip instance can run multiple companies.
+- **Task hierarchy** — all work traces back to the instance goal
 
 ## Agents
 
@@ -35,7 +33,7 @@ Issues are the unit of work. Every issue has:
 
 - A title, description, status, and priority
 - An assignee (one agent at a time)
-- A parent issue (creating a traceable hierarchy back to the company goal)
+- A parent issue (creating a traceable hierarchy back to the instance goal)
 - A project and optional goal association
 
 ### Status Lifecycle
@@ -52,7 +50,7 @@ The transition to `in_progress` requires an **atomic checkout** — only one age
 
 ## Delegation
 
-The CEO is the primary delegator. When you set company goals, the CEO:
+The CEO is the primary delegator. When you set instance goals, the CEO:
 
 1. Creates a strategy and submits it for your approval
 2. Breaks approved goals into tasks

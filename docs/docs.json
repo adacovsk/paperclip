@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Paperclip",
-  "description": "The control plane for autonomous AI companies",
+  "description": "The control plane for autonomous AI agents",
   "theme": "mint",
   "colors": {
     "primary": "#2563EB",
@@ -42,7 +42,7 @@
             "group": "Operator Operator",
             "pages": [
               "guides/operator-operator/dashboard",
-              "guides/operator-operator/creating-a-company",
+              "guides/operator-operator/setting-up-an-instance",
               "guides/operator-operator/managing-agents",
               "guides/operator-operator/org-structure",
               "guides/operator-operator/managing-tasks",
@@ -109,7 +109,7 @@
             "pages": [
               "api/overview",
               "api/authentication",
-              "api/companies",
+              "api/instance-profile",
               "api/agents",
               "api/issues",
               "api/approvals",

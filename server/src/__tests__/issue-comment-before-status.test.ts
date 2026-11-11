@@ -48,7 +48,7 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "local_implicit",
       isInstanceAdmin: false,
     };
@@ -62,7 +62,6 @@ function createApp() {
 function makeIssue() {
   return {
     id: ISSUE_ID,
-    companyId: "company-1",
     status: "in_review" as const,
     assigneeAgentId: null,
     assigneeUserId: null,
@@ -92,7 +91,6 @@ describe("PATCH /issues/:id writes the comment before the status", () => {
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: ISSUE_ID,
-      companyId: "company-1",
       body: "why this moved",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -108,7 +106,6 @@ describe("PATCH /issues/:id writes the comment before the status", () => {
       return {
         id: "comment-1",
         issueId: ISSUE_ID,
-        companyId: "company-1",
         body: "why this moved",
         createdAt: new Date(),
         updatedAt: new Date(),

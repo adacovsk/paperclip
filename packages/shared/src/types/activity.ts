@@ -1,6 +1,5 @@
 export interface ActivityEvent {
   id: string;
-  companyId: string;
   actorType: "agent" | "user" | "system";
   actorId: string;
   action: string;

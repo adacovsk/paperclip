@@ -20,7 +20,7 @@ auth=()
 [ -n "${PAPERCLIP_API_KEY:-}" ] && auth=(-H "Authorization: Bearer $PAPERCLIP_API_KEY")
 
 dispatcher="$(curl -fsS --max-time 10 "${auth[@]}" \
-  "$PAPERCLIP_API_URL/api/companies/${PAPERCLIP_COMPANY_ID:-}/agents" 2>/dev/null \
+  "$PAPERCLIP_API_URL/api/agents" 2>/dev/null \
   | python3 -c 'import json,sys
 for a in json.load(sys.stdin):
     if a.get("name") == "Dispatcher":

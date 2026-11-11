@@ -7,7 +7,6 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { companies } from "./companies.js";
 import { issues } from "./issues.js";
 import { projectWorkspaces } from "./project_workspaces.js";
 import { projects } from "./projects.js";
@@ -16,7 +15,6 @@ export const executionWorkspaces = pgTable(
   "execution_workspaces",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull().references(() => companies.id),
     projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
     projectWorkspaceId: uuid("project_workspace_id").references(() => projectWorkspaces.id, { onDelete: "set null" }),
     sourceIssueId: uuid("source_issue_id").references((): AnyPgColumn => issues.id, { onDelete: "set null" }),
@@ -42,26 +40,21 @@ export const executionWorkspaces = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyProjectStatusIdx: index("execution_workspaces_company_project_status_idx").on(
-      table.companyId,
+    projectStatusIdx: index("execution_workspaces_project_status_idx").on(
       table.projectId,
       table.status,
     ),
-    companyProjectWorkspaceStatusIdx: index("execution_workspaces_company_project_workspace_status_idx").on(
-      table.companyId,
+    projectWorkspaceStatusIdx: index("execution_workspaces_project_workspace_status_idx").on(
       table.projectWorkspaceId,
       table.status,
     ),
-    companySourceIssueIdx: index("execution_workspaces_company_source_issue_idx").on(
-      table.companyId,
+    sourceIssueIdx: index("execution_workspaces_source_issue_idx").on(
       table.sourceIssueId,
     ),
-    companyLastUsedIdx: index("execution_workspaces_company_last_used_idx").on(
-      table.companyId,
+    lastUsedIdx: index("execution_workspaces_last_used_idx").on(
       table.lastUsedAt,
     ),
-    companyBranchIdx: index("execution_workspaces_company_branch_idx").on(
-      table.companyId,
+    branchIdx: index("execution_workspaces_branch_idx").on(
       table.branchName,
     ),
   }),

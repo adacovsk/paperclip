@@ -9,7 +9,7 @@ as it found it.
 
 That last clause is what makes this a livelock rather than a one-off waste. The task is still
 `backlog`, still un-allocated, still assigned — so it is still a dispatch candidate, and the next
-sweep fires the identical run. Four of these were measured in the last 50 company heartbeat-runs
+sweep fires the identical run. Four of these were measured in the last 50 instance heartbeat-runs
 of one fire (~$1.70), and one run's own result text records that it was the second identical
 dispatch of that task.
 

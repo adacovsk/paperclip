@@ -76,20 +76,19 @@ export function useReadInboxItems() {
   return { readItems, markRead };
 }
 
-export function useInboxBadge(companyId: string | null | undefined) {
+export function useInboxBadge() {
   const { dismissed } = useDismissedInboxItems();
 
   const { data: approvals = [] } = useQuery({
-    queryKey: queryKeys.approvals.list(companyId!),
-    queryFn: () => approvalsApi.list(companyId!),
-    enabled: !!companyId,
+    queryKey: queryKeys.approvals.list(),
+    queryFn: () => approvalsApi.list(),
   });
 
   const { data: joinRequests = [] } = useQuery({
-    queryKey: queryKeys.access.joinRequests(companyId!),
+    queryKey: queryKeys.access.joinRequests(),
     queryFn: async () => {
       try {
-        return await accessApi.listJoinRequests(companyId!, "pending_approval");
+        return await accessApi.listJoinRequests("pending_approval");
       } catch (err) {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           return [];
@@ -97,36 +96,31 @@ export function useInboxBadge(companyId: string | null | undefined) {
         throw err;
       }
     },
-    enabled: !!companyId,
     retry: false,
   });
 
   const { data: dashboard } = useQuery({
-    queryKey: queryKeys.dashboard(companyId!),
-    queryFn: () => dashboardApi.summary(companyId!),
-    enabled: !!companyId,
+    queryKey: queryKeys.dashboard,
+    queryFn: () => dashboardApi.summary(),
   });
 
   const { data: mineIssuesRaw = [] } = useQuery({
-    queryKey: queryKeys.issues.listMineByMe(companyId!),
+    queryKey: queryKeys.issues.listMineByMe,
     queryFn: () =>
-      issuesApi.list(companyId!, {
+      issuesApi.list({
         touchedByUserId: "me",
         inboxArchivedByUserId: "me",
         status: INBOX_ISSUE_STATUSES,
       }),
-    enabled: !!companyId,
   });
 
   const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
 
   // The badge only needs each agent's most recent run. This hook renders in the
-  // Sidebar on every route, so fetching the full run list here made every page load
-  // carry the company's entire run history.
+  // Sidebar on every route, so it must not fetch the instance's full run history.
   const { data: heartbeatRuns = [] } = useQuery({
-    queryKey: queryKeys.heartbeatsLatestByAgent(companyId!),
-    queryFn: () => heartbeatsApi.latestByAgent(companyId!),
-    enabled: !!companyId,
+    queryKey: queryKeys.heartbeatsLatestByAgent,
+    queryFn: () => heartbeatsApi.latestByAgent(),
   });
 
   return useMemo(

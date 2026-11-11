@@ -32,7 +32,6 @@ export function registerClientAuthCommands(auth: Command): void {
           const login = await loginOperatorCli({
             apiBase: ctx.api.apiBase,
             requestedAccess: opts.instanceAdmin ? "instance_admin_required" : "operator",
-            requestedCompanyId: ctx.companyId ?? null,
             command: "paperclipai auth login",
           });
           printOutput(
@@ -48,7 +47,6 @@ export function registerClientAuthCommands(auth: Command): void {
           handleCommandError(err);
         }
       }),
-    { includeCompany: true },
   );
 
   addCommonClientOptions(
@@ -100,7 +98,6 @@ export function registerClientAuthCommands(auth: Command): void {
             user: { id: string; name: string; email: string } | null;
             userId: string;
             isInstanceAdmin: boolean;
-            companyIds: string[];
             source: string;
             keyId: string | null;
           }>("/api/cli-auth/me");

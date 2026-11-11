@@ -1,5 +1,5 @@
 import { CheckCircle2, XCircle, Clock } from "lucide-react";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Identity } from "./Identity";
 import { approvalLabel, typeIcon, defaultTypeIcon, ApprovalPayloadRenderer } from "./ApprovalPayload";

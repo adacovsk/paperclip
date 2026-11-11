@@ -8,7 +8,7 @@ When this agent runs is stated once, in the project's `CLAUDE.md` ("Agent Pipeli
 
 ## Sweep
 
-Every `GET /issues?…` below is shorthand for `GET /api/companies/{companyId}/issues?…`; the bare `/api/issues?…` returns 400 `Missing companyId in path`.
+Every `GET /issues?…` below is shorthand for `GET /api/issues?…`.
 
 ### 1. Queue depth
 
@@ -64,13 +64,13 @@ Detection is mechanical (the same script and report). An agent with `queued` > 0
 
 - **Do not toggle the assignee.** That mints another queued run behind the same blockage. The state that proves the wedge is in the database: a backend `idle in transaction` on the per-agent advisory lock. Clearing it takes a server restart, and **you do not restart the server**, since a restart kills every live run, this one included.
 - **Say how long it has lasted.** Two guards should keep this short: `AGENT_START_LOCK_MAX_HOLD_MS` (5 min default) and `PAPERCLIP_IDLE_IN_TRANSACTION_TIMEOUT_MS` (2 min default). A wedge lasting materially longer than either means one of them is disabled or ineffective; say so on the filed issue.
-- **If the wedged agent is the Dispatcher, the script cannot see it.** It runs inside the Dispatcher's sweep. A stale report `at` is how this shows up, so check `GET /api/companies/{companyId}/live-runs` by hand in that case.
+- **If the wedged agent is the Dispatcher, the script cannot see it.** It runs inside the Dispatcher's sweep. A stale report `at` is how this shows up, so check `GET /api/live-runs` by hand in that case.
 
 ### 3. Run productivity
 
 **Start from `runDigest` in the report**: the last 24h of runs counted per agent by outcome (`succeeded`, `failed:<errorCode>`, …). The 50-row read below is a sample, and during a flood of failed wakes it is a two-minute sample of one agent. `quotaOut` names the agents whose newest finished run died on the usage limit; for those, every `failed:claude_usage_limit` in the window is one cause. Report it as one line with the count and do not file it per agent or per run: those runs cost nothing, and they are also what restarts the pipeline the moment the limit lifts. `coveredHours` under 24 means the rows ran out before the window did, so say what the counts cover.
 
-`GET /api/companies/{companyId}/heartbeat-runs?limit=50` — the run history for the whole company, newest first. The route is **company-scoped**; there is no per-agent spelling (`/api/agents/{id}/heartbeat-runs` 404s, which is what previously led this step to be wrongly descoped as "no such route"). Companion routes: `/api/heartbeat-runs/{runId}` (single run), `…/{runId}/log`, `…/{runId}/events`, `…/{runId}/issues`.
+`GET /api/heartbeat-runs?limit=50` — the run history for the whole instance, newest first. There is no per-agent spelling (`/api/agents/{id}/heartbeat-runs` 404s, which is what previously led this step to be wrongly descoped as "no such route"). Companion routes: `/api/heartbeat-runs/{runId}` (single run), `…/{runId}/log`, `…/{runId}/events`, `…/{runId}/issues`.
 
 Each row carries `agentId`, `status` (`running`/`succeeded`/`failed`/`cancelled`), `startedAt`/`finishedAt`, `error`/`errorCode`, `exitCode`/`signal`, `usageJson`/`resultJson`, `sessionIdBefore`/`sessionIdAfter`, `processLossRetryCount`/`retryOfRunId`, and a `contextSnapshot` naming the issue the run woke for. Flag:
 
@@ -132,7 +132,7 @@ an agent onto work that cannot proceed and then costs a run to detect and revert
 
 Only agents with `adapterType: claude_local` are in scope; skip any other adapter (the Dispatcher is a `process` agent with no instructions, prompt or `sessionCompaction`). Check that `adapterConfig.instructionsFilePath` points to `$PAPERCLIP_REPO/agents/{agent}/INSTRUCTIONS.md`, and compare the live `adapterConfig.promptTemplate` against what that INSTRUCTIONS.md expects to be handed. Divergence → file a followup to the Planner (don't auto-sync; divergence can be intentional).
 
-**A `{}` is not a clean read.** Another agent's `adapterConfig`/`runtimeConfig` is redacted to `{}` unless you hold `agents:read_config` (or `agents:create`) for the company, and the redaction is a `200` — indistinguishable from genuinely-empty config. Check `access.canReadConfigurations` on your own record (`GET /api/agents/me`) before trusting this step: if it is `false`, report step 5 as **not evaluated** and escalate for the grant, never as clean.
+**A `{}` is not a clean read.** Another agent's `adapterConfig`/`runtimeConfig` is redacted to `{}` unless you hold `agents:read_config` (or `agents:create`), and the redaction is a `200` — indistinguishable from genuinely-empty config. Check `access.canReadConfigurations` on your own record (`GET /api/agents/me`) before trusting this step: if it is `false`, report step 5 as **not evaluated** and escalate for the grant, never as clean.
 
 `runtimeConfig.heartbeat.sessionCompaction` is deliberately **per-agent and non-uniform** — each agent's thresholds are tuned to its own observed run distribution, not to a house default. `claude_local`'s adapter default zeroes every threshold, so an agent with no override never rotates at all; an agent whose values differ from its neighbours is not drift. Flag only a *missing* `sessionCompaction` block, or `enabled: false`.
 

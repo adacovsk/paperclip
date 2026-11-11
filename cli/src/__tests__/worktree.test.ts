@@ -209,8 +209,7 @@ describe("worktree helpers", () => {
             getObject: vi.fn().mockResolvedValue(expected),
           },
         ],
-        "company-1",
-        "company-1/issues/issue-1/missing.png",
+        "issues/issue-1/missing.png",
       ),
     ).resolves.toEqual(expected);
   });
@@ -227,8 +226,7 @@ describe("worktree helpers", () => {
             getObject: vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { status: 404 })),
           },
         ],
-        "company-1",
-        "company-1/issues/issue-1/missing.png",
+        "issues/issue-1/missing.png",
       ),
     ).resolves.toBeNull();
   });

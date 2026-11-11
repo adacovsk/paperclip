@@ -3,7 +3,7 @@ import type {
   PaperclipPluginManifestV1,
   PluginCapability,
   PluginEventType,
-  Company,
+  InstanceProfile,
   Project,
   Issue,
   IssueComment,
@@ -44,9 +44,9 @@ export interface TestHarnessLogEntry {
 export interface TestHarness {
   /** Fully-typed in-memory plugin context passed to `plugin.setup(ctx)`. */
   ctx: PluginContext;
-  /** Seed host entities for `ctx.companies/projects/issues/agents/goals` reads. */
+  /** Seed host entities for `ctx.instance/projects/issues/agents/goals` reads. */
   seed(input: {
-    companies?: Company[];
+    instance?: InstanceProfile;
     projects?: Project[];
     issues?: Issue[];
     issueComments?: IssueComment[];
@@ -95,7 +95,6 @@ function stateMapKey(input: ScopeKey): string {
 
 function allowsEvent(filter: EventFilter | undefined, event: PluginEvent): boolean {
   if (!filter) return true;
-  if (filter.companyId && filter.companyId !== String((event.payload as Record<string, unknown> | undefined)?.companyId ?? "")) return false;
   if (filter.projectId && filter.projectId !== String((event.payload as Record<string, unknown> | undefined)?.projectId ?? "")) return false;
   if (filter.agentId && filter.agentId !== String((event.payload as Record<string, unknown> | undefined)?.agentId ?? "")) return false;
   return true;
@@ -106,16 +105,26 @@ function requireCapability(manifest: PaperclipPluginManifestV1, allowed: Set<Plu
   throw new Error(`Plugin '${manifest.id}' is missing required capability '${capability}' in test harness`);
 }
 
-function requireCompanyId(companyId?: string): string {
-  if (!companyId) throw new Error("companyId is required for this operation");
-  return companyId;
-}
-
-function isInCompany<T extends { companyId: string | null | undefined }>(
-  record: T | null | undefined,
-  companyId: string,
-): record is T {
-  return Boolean(record && record.companyId === companyId);
+function defaultInstanceProfile(): InstanceProfile {
+  const now = new Date();
+  return {
+    id: "instance-test",
+    name: "Test Instance",
+    description: null,
+    status: "active",
+    pauseReason: null,
+    pausedAt: null,
+    issuePrefix: "TST",
+    issueCounter: 0,
+    budgetMonthlyCents: 0,
+    spentMonthlyCents: 0,
+    requireOperatorApprovalForNewAgents: false,
+    brandColor: null,
+    logoAssetId: null,
+    logoUrl: null,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 /**
@@ -136,7 +145,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const state = new Map<string, unknown>();
   const entities = new Map<string, PluginEntityRecord>();
   const entityExternalIndex = new Map<string, string>();
-  const companies = new Map<string, Company>();
+  let instanceProfile = defaultInstanceProfile();
   const projects = new Map<string, Project>();
   const issues = new Map<string, Issue>();
   const issueComments = new Map<string, IssueComment[]>();
@@ -177,9 +186,9 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           if (idx !== -1) events.splice(idx, 1);
         };
       },
-      async emit(name, companyId, payload) {
+      async emit(name, payload) {
         requireCapability(manifest, capabilitySet, "events.emit");
-        await harness.emit(`plugin.${manifest.id}.${name}`, payload, { companyId });
+        await harness.emit(`plugin.${manifest.id}.${name}`, payload);
       },
     },
     jobs: {
@@ -281,59 +290,48 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     projects: {
       async list(input) {
         requireCapability(manifest, capabilitySet, "projects.read");
-        const companyId = requireCompanyId(input?.companyId);
         let out = [...projects.values()];
-        out = out.filter((project) => project.companyId === companyId);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
         return out;
       },
-      async get(projectId, companyId) {
+      async get(projectId) {
         requireCapability(manifest, capabilitySet, "projects.read");
         const project = projects.get(projectId);
-        return isInCompany(project, companyId) ? project : null;
+        return project ?? null;
       },
-      async listWorkspaces(projectId, companyId) {
+      async listWorkspaces(projectId) {
         requireCapability(manifest, capabilitySet, "project.workspaces.read");
-        if (!isInCompany(projects.get(projectId), companyId)) return [];
+        if (!projects.get(projectId)) return [];
         return projectWorkspaces.get(projectId) ?? [];
       },
-      async getPrimaryWorkspace(projectId, companyId) {
+      async getPrimaryWorkspace(projectId) {
         requireCapability(manifest, capabilitySet, "project.workspaces.read");
-        if (!isInCompany(projects.get(projectId), companyId)) return null;
+        if (!projects.get(projectId)) return null;
         const workspaces = projectWorkspaces.get(projectId) ?? [];
         return workspaces.find((workspace) => workspace.isPrimary) ?? null;
       },
-      async getWorkspaceForIssue(issueId, companyId) {
+      async getWorkspaceForIssue(issueId) {
         requireCapability(manifest, capabilitySet, "project.workspaces.read");
         const issue = issues.get(issueId);
-        if (!isInCompany(issue, companyId)) return null;
+        if (!issue) return null;
         const projectId = (issue as unknown as Record<string, unknown>)?.projectId as string | undefined;
         if (!projectId) return null;
-        if (!isInCompany(projects.get(projectId), companyId)) return null;
+        if (!projects.get(projectId)) return null;
         const workspaces = projectWorkspaces.get(projectId) ?? [];
         return workspaces.find((workspace) => workspace.isPrimary) ?? null;
       },
     },
-    companies: {
-      async list(input) {
-        requireCapability(manifest, capabilitySet, "companies.read");
-        let out = [...companies.values()];
-        if (input?.offset) out = out.slice(input.offset);
-        if (input?.limit) out = out.slice(0, input.limit);
-        return out;
-      },
-      async get(companyId) {
-        requireCapability(manifest, capabilitySet, "companies.read");
-        return companies.get(companyId) ?? null;
+    instance: {
+      async get() {
+        requireCapability(manifest, capabilitySet, "instance.read");
+        return instanceProfile;
       },
     },
     issues: {
       async list(input) {
         requireCapability(manifest, capabilitySet, "issues.read");
-        const companyId = requireCompanyId(input?.companyId);
         let out = [...issues.values()];
-        out = out.filter((issue) => issue.companyId === companyId);
         if (input?.projectId) out = out.filter((issue) => issue.projectId === input.projectId);
         if (input?.assigneeAgentId) out = out.filter((issue) => issue.assigneeAgentId === input.assigneeAgentId);
         if (input?.status) out = out.filter((issue) => issue.status === input.status);
@@ -341,17 +339,16 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (input?.limit) out = out.slice(0, input.limit);
         return out;
       },
-      async get(issueId, companyId) {
+      async get(issueId) {
         requireCapability(manifest, capabilitySet, "issues.read");
         const issue = issues.get(issueId);
-        return isInCompany(issue, companyId) ? issue : null;
+        return issue ?? null;
       },
       async create(input) {
         requireCapability(manifest, capabilitySet, "issues.create");
         const now = new Date();
         const record: Issue = {
           id: randomUUID(),
-          companyId: input.companyId,
           projectId: input.projectId ?? null,
           projectWorkspaceId: null,
           goalId: input.goalId ?? null,
@@ -386,10 +383,10 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         issues.set(record.id, record);
         return record;
       },
-      async update(issueId, patch, companyId) {
+      async update(issueId, patch) {
         requireCapability(manifest, capabilitySet, "issues.update");
         const record = issues.get(issueId);
-        if (!isInCompany(record, companyId)) throw new Error(`Issue not found: ${issueId}`);
+        if (!record) throw new Error(`Issue not found: ${issueId}`);
         const updated: Issue = {
           ...record,
           ...patch,
@@ -398,21 +395,20 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         issues.set(issueId, updated);
         return updated;
       },
-      async listComments(issueId, companyId) {
+      async listComments(issueId) {
         requireCapability(manifest, capabilitySet, "issue.comments.read");
-        if (!isInCompany(issues.get(issueId), companyId)) return [];
+        if (!issues.get(issueId)) return [];
         return issueComments.get(issueId) ?? [];
       },
-      async createComment(issueId, body, companyId) {
+      async createComment(issueId, body) {
         requireCapability(manifest, capabilitySet, "issue.comments.create");
         const parentIssue = issues.get(issueId);
-        if (!isInCompany(parentIssue, companyId)) {
+        if (!parentIssue) {
           throw new Error(`Issue not found: ${issueId}`);
         }
         const now = new Date();
         const comment: IssueComment = {
           id: randomUUID(),
-          companyId: parentIssue.companyId,
           issueId,
           authorAgentId: null,
           authorUserId: null,
@@ -426,28 +422,28 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         return comment;
       },
       documents: {
-        async list(issueId, companyId) {
+        async list(issueId) {
           requireCapability(manifest, capabilitySet, "issue.documents.read");
-          if (!isInCompany(issues.get(issueId), companyId)) return [];
+          if (!issues.get(issueId)) return [];
           return [];
         },
-        async get(issueId, _key, companyId) {
+        async get(issueId, _key) {
           requireCapability(manifest, capabilitySet, "issue.documents.read");
-          if (!isInCompany(issues.get(issueId), companyId)) return null;
+          if (!issues.get(issueId)) return null;
           return null;
         },
         async upsert(input) {
           requireCapability(manifest, capabilitySet, "issue.documents.write");
           const parentIssue = issues.get(input.issueId);
-          if (!isInCompany(parentIssue, input.companyId)) {
+          if (!parentIssue) {
             throw new Error(`Issue not found: ${input.issueId}`);
           }
           throw new Error("documents.upsert is not implemented in test context");
         },
-        async delete(issueId, _key, companyId) {
+        async delete(issueId, _key) {
           requireCapability(manifest, capabilitySet, "issue.documents.write");
           const parentIssue = issues.get(issueId);
-          if (!isInCompany(parentIssue, companyId)) {
+          if (!parentIssue) {
             throw new Error(`Issue not found: ${issueId}`);
           }
         },
@@ -456,45 +452,40 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     agents: {
       async list(input) {
         requireCapability(manifest, capabilitySet, "agents.read");
-        const companyId = requireCompanyId(input?.companyId);
         let out = [...agents.values()];
-        out = out.filter((agent) => agent.companyId === companyId);
         if (input?.status) out = out.filter((agent) => agent.status === input.status);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
         return out;
       },
-      async get(agentId, companyId) {
+      async get(agentId) {
         requireCapability(manifest, capabilitySet, "agents.read");
         const agent = agents.get(agentId);
-        return isInCompany(agent, companyId) ? agent : null;
+        return agent ?? null;
       },
-      async pause(agentId, companyId) {
+      async pause(agentId) {
         requireCapability(manifest, capabilitySet, "agents.pause");
-        const cid = requireCompanyId(companyId);
         const agent = agents.get(agentId);
-        if (!isInCompany(agent, cid)) throw new Error(`Agent not found: ${agentId}`);
+        if (!agent) throw new Error(`Agent not found: ${agentId}`);
         if (agent!.status === "terminated") throw new Error("Cannot pause terminated agent");
         const updated: Agent = { ...agent!, status: "paused", updatedAt: new Date() };
         agents.set(agentId, updated);
         return updated;
       },
-      async resume(agentId, companyId) {
+      async resume(agentId) {
         requireCapability(manifest, capabilitySet, "agents.resume");
-        const cid = requireCompanyId(companyId);
         const agent = agents.get(agentId);
-        if (!isInCompany(agent, cid)) throw new Error(`Agent not found: ${agentId}`);
+        if (!agent) throw new Error(`Agent not found: ${agentId}`);
         if (agent!.status === "terminated") throw new Error("Cannot resume terminated agent");
         if (agent!.status === "pending_approval") throw new Error("Pending approval agents cannot be resumed");
         const updated: Agent = { ...agent!, status: "idle", updatedAt: new Date() };
         agents.set(agentId, updated);
         return updated;
       },
-      async invoke(agentId, companyId, opts) {
+      async invoke(agentId, opts) {
         requireCapability(manifest, capabilitySet, "agents.invoke");
-        const cid = requireCompanyId(companyId);
         const agent = agents.get(agentId);
-        if (!isInCompany(agent, cid)) throw new Error(`Agent not found: ${agentId}`);
+        if (!agent) throw new Error(`Agent not found: ${agentId}`);
         if (
           agent!.status === "paused" ||
           agent!.status === "terminated" ||
@@ -505,43 +496,38 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         return { runId: randomUUID() };
       },
       sessions: {
-        async create(agentId, companyId, opts) {
+        async create(agentId, opts) {
           requireCapability(manifest, capabilitySet, "agent.sessions.create");
-          const cid = requireCompanyId(companyId);
           const agent = agents.get(agentId);
-          if (!isInCompany(agent, cid)) throw new Error(`Agent not found: ${agentId}`);
+          if (!agent) throw new Error(`Agent not found: ${agentId}`);
           const session: AgentSession = {
             sessionId: randomUUID(),
             agentId,
-            companyId: cid,
             status: "active",
             createdAt: new Date().toISOString(),
           };
           sessions.set(session.sessionId, session);
           return session;
         },
-        async list(agentId, companyId) {
+        async list(agentId) {
           requireCapability(manifest, capabilitySet, "agent.sessions.list");
-          const cid = requireCompanyId(companyId);
           return [...sessions.values()].filter(
-            (s) => s.agentId === agentId && s.companyId === cid && s.status === "active",
+            (s) => s.agentId === agentId && s.status === "active",
           );
         },
-        async sendMessage(sessionId, companyId, opts) {
+        async sendMessage(sessionId, opts) {
           requireCapability(manifest, capabilitySet, "agent.sessions.send");
           const session = sessions.get(sessionId);
           if (!session || session.status !== "active") throw new Error(`Session not found or closed: ${sessionId}`);
-          if (session.companyId !== companyId) throw new Error(`Session not found: ${sessionId}`);
           if (opts.onEvent) {
             sessionEventCallbacks.set(sessionId, opts.onEvent);
           }
           return { runId: randomUUID() };
         },
-        async close(sessionId, companyId) {
+        async close(sessionId) {
           requireCapability(manifest, capabilitySet, "agent.sessions.close");
           const session = sessions.get(sessionId);
           if (!session) throw new Error(`Session not found: ${sessionId}`);
-          if (session.companyId !== companyId) throw new Error(`Session not found: ${sessionId}`);
           session.status = "closed";
           sessionEventCallbacks.delete(sessionId);
         },
@@ -550,26 +536,23 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     goals: {
       async list(input) {
         requireCapability(manifest, capabilitySet, "goals.read");
-        const companyId = requireCompanyId(input?.companyId);
         let out = [...goals.values()];
-        out = out.filter((goal) => goal.companyId === companyId);
         if (input?.level) out = out.filter((goal) => goal.level === input.level);
         if (input?.status) out = out.filter((goal) => goal.status === input.status);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
         return out;
       },
-      async get(goalId, companyId) {
+      async get(goalId) {
         requireCapability(manifest, capabilitySet, "goals.read");
         const goal = goals.get(goalId);
-        return isInCompany(goal, companyId) ? goal : null;
+        return goal ?? null;
       },
       async create(input) {
         requireCapability(manifest, capabilitySet, "goals.create");
         const now = new Date();
         const record: Goal = {
           id: randomUUID(),
-          companyId: input.companyId,
           title: input.title,
           description: input.description ?? null,
           level: input.level ?? "task",
@@ -582,10 +565,10 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         goals.set(record.id, record);
         return record;
       },
-      async update(goalId, patch, companyId) {
+      async update(goalId, patch) {
         requireCapability(manifest, capabilitySet, "goals.update");
         const record = goals.get(goalId);
-        if (!isInCompany(record, companyId)) throw new Error(`Goal not found: ${goalId}`);
+        if (!record) throw new Error(`Goal not found: ${goalId}`);
         const updated: Goal = {
           ...record,
           ...patch,
@@ -605,20 +588,12 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         actionHandlers.set(key, handler);
       },
     },
-    streams: (() => {
-      const channelCompanyMap = new Map<string, string>();
-      return {
-        open(channel: string, companyId: string) {
-          channelCompanyMap.set(channel, companyId);
-        },
-        emit(_channel: string, _event: unknown) {
-          // No-op in test harness — events are not forwarded
-        },
-        close(channel: string) {
-          channelCompanyMap.delete(channel);
-        },
-      };
-    })(),
+    streams: {
+      // No-op in test harness — events are not forwarded
+      open(_channel: string) {},
+      emit(_channel: string, _event: unknown) {},
+      close(_channel: string) {},
+    },
     tools: {
       register(name, _decl, fn) {
         requireCapability(manifest, capabilitySet, "agent.tools.register");
@@ -650,7 +625,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const harness: TestHarness = {
     ctx,
     seed(input) {
-      for (const row of input.companies ?? []) companies.set(row.id, row);
+      if (input.instance) instanceProfile = input.instance;
       for (const row of input.projects ?? []) projects.set(row.id, row);
       for (const row of input.issues ?? []) issues.set(row.id, row);
       for (const row of input.issueComments ?? []) {
@@ -668,7 +643,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       const event: PluginEvent = {
         eventId: base?.eventId ?? randomUUID(),
         eventType,
-        companyId: base?.companyId ?? "test-company",
         occurredAt: base?.occurredAt ?? new Date().toISOString(),
         actorId: base?.actorId,
         actorType: base?.actorType,
@@ -713,7 +687,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       const ctxToPass: ToolRunContext = {
         agentId: runCtx.agentId ?? "agent-test",
         runId: runCtx.runId ?? randomUUID(),
-        companyId: runCtx.companyId ?? "company-test",
         projectId: runCtx.projectId ?? "project-test",
       };
       return await handler(params, ctxToPass) as T;

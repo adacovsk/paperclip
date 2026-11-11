@@ -18,7 +18,7 @@
 
 This is `adacovsk/paperclip`. It began as a fork of
 [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) and is now a
-separate, standalone codebase. Upstream is building a general platform for AI companies, with
+separate, standalone codebase. Upstream is building a general AI-agent platform, with
 runners, sandboxes, MCP connections, apps and catalogs. This fork kept Paperclip's
 control plane and pointed it at one job: running an unattended software pipeline
 against a real repository, around the clock, with one human who reviews and merges.
@@ -36,20 +36,18 @@ Discord, npm package and roadmap all describe upstream's build.
 ## What Paperclip is
 
 Paperclip is a Node.js server and React UI that orchestrates a team of AI agents.
-Agents belong to a company. They have roles, a reporting line and a budget, and they
+Agents belong to the instance. They have roles, a reporting line and a budget, and they
 work on tickets. A ticket is checked out atomically to one assignee, every comment
 and status change is logged, and agents wake on a schedule (a *routine*), on
 assignment, or when another agent's stage completes. The operator sees everything
 from one dashboard and can pause, reassign or override any of it.
 
-All of upstream's core model is still here and still works:
+Most of upstream's core model is still here and still works:
 
-- multiple companies with isolated data
 - org charts
 - per-agent budgets and cost tracking
 - approvals and governance
 - routines and triggers
-- company import/export
 - the plugin system
 - the mobile layout
 - the adapters: Claude Code, Codex, Cursor, Gemini, OpenCode, Pi, Hermes, OpenClaw gateway, plus plain process and HTTP agents
@@ -121,10 +119,11 @@ Each of these is a failure the pipeline hit and this fork then closed:
 - The dashboard shows queue depth.
 - `/sessions/summary` reports per-agent session reuse and token use.
 - "Board" is renamed "operator" throughout the code, API, UI and database.
+- There is no tenant layer: one instance is one organization. API routes are flat (`/api/issues`, `/api/agents`), the instance record is `/api/instance/profile`, and UI paths carry no prefix segment.
 
 ### Security
 
-- Agent-facing routes are company-scoped end to end: import, approvals, activity and heartbeat.
+- Agent-facing routes check instance access end to end: import, approvals, activity and heartbeat.
 - Bearer tokens are redacted from logs.
 - The hardcoded JWT secret fallback is removed.
 - `agents:read_config` adds a read-only view of agent configuration.

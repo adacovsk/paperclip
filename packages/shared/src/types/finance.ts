@@ -2,7 +2,6 @@ import type { AgentAdapterType, FinanceDirection, FinanceEventKind, FinanceUnit 
 
 export interface FinanceEvent {
   id: string;
-  companyId: string;
   agentId: string | null;
   issueId: string | null;
   projectId: string | null;
@@ -31,7 +30,6 @@ export interface FinanceEvent {
 }
 
 export interface FinanceSummary {
-  companyId: string;
   debitCents: number;
   creditCents: number;
   netCents: number;

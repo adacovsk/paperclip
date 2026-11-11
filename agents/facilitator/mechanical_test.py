@@ -144,7 +144,6 @@ class Wedged(unittest.TestCase):
 
 
 class FakeApi:
-    company = "c"
 
     def __init__(self):
         self.calls = []

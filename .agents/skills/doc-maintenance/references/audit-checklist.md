@@ -48,7 +48,7 @@ against the change summary from git history.
 
 ## doc/SPEC.md
 
-### Company Model
+### Instance Model
 - [ ] Fields match current schema
 - [ ] Governance model description is accurate
 
@@ -72,7 +72,7 @@ against the change summary from git history.
 ## doc/PRODUCT.md
 
 ### Core Concepts
-- [ ] Company, Employees, Task Management descriptions accurate
+- [ ] Instance, Employees, Task Management descriptions accurate
 - [ ] Agent Execution modes described correctly
 - [ ] No missing major concepts
 

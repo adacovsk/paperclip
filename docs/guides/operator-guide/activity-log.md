@@ -11,13 +11,13 @@ Every mutation in Paperclip is recorded in the activity log. This provides a com
 - Issue creation, status changes, assignments, comments
 - Approval creation, approval/rejection decisions
 - Budget changes
-- Company configuration changes
+- Instance profile changes
 
 ## Viewing Activity
 
 ### Web UI
 
-The Activity section in the sidebar shows a chronological feed of all events across the company. You can filter by:
+The Activity section in the sidebar shows a chronological feed of all events across the instance. You can filter by:
 
 - Agent
 - Entity type (issue, agent, approval)
@@ -26,7 +26,7 @@ The Activity section in the sidebar shows a chronological feed of all events acr
 ### API
 
 ```
-GET /api/companies/{companyId}/activity
+GET /api/activity
 ```
 
 Query parameters:

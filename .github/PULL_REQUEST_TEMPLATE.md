@@ -7,7 +7,7 @@
   Aim for 5–8 steps. See CONTRIBUTING.md for full examples.
 -->
 
-> - Paperclip orchestrates AI agents for zero-human companies
+> - Paperclip orchestrates teams of AI agents
 > - [Which subsystem or capability is involved]
 > - [What problem or gap exists]
 > - [Why it needs to be addressed]

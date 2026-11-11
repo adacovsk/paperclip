@@ -11,7 +11,6 @@ const LOG_READ_LIMIT_BYTES = 256_000;
 
 interface UseLiveRunTranscriptsOptions {
   runs: LiveRunForIssue[];
-  companyId?: string | null;
   maxChunksPerRun?: number;
 }
 
@@ -61,7 +60,6 @@ function parsePersistedLogContent(
 
 export function useLiveRunTranscripts({
   runs,
-  companyId,
   maxChunksPerRun = 200,
 }: UseLiveRunTranscriptsOptions) {
   const [chunksByRun, setChunksByRun] = useState<Map<string, RunLogChunk[]>>(new Map());
@@ -172,7 +170,7 @@ export function useLiveRunTranscripts({
   }, [runIdsKey, runs]);
 
   useEffect(() => {
-    if (!companyId || activeRunIds.size === 0) return;
+    if (activeRunIds.size === 0) return;
 
     let closed = false;
     let reconnectTimer: number | null = null;
@@ -186,7 +184,7 @@ export function useLiveRunTranscripts({
     const connect = () => {
       if (closed) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/api/companies/${encodeURIComponent(companyId)}/events/ws`;
+      const url = `${protocol}://${window.location.host}/api/events/ws`;
       socket = new WebSocket(url);
 
       socket.onmessage = (message) => {
@@ -200,7 +198,6 @@ export function useLiveRunTranscripts({
           return;
         }
 
-        if (event.companyId !== companyId) return;
         const payload = event.payload ?? {};
         const runId = readString(payload["runId"]);
         if (!runId || !activeRunIds.has(runId)) return;
@@ -270,7 +267,7 @@ export function useLiveRunTranscripts({
         socket.close(1000, "live_run_transcripts_unmount");
       }
     };
-  }, [activeRunIds, companyId, runById]);
+  }, [activeRunIds, runById]);
 
   const transcriptByRun = useMemo(() => {
     const next = new Map<string, TranscriptEntry[]>();

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { sql } from "drizzle-orm";
-import { assertCompanyAccess } from "./authz.js";
+import { assertInstanceAccess } from "./authz.js";
 import { badRequest } from "../errors.js";
 
 /**
@@ -30,9 +30,8 @@ export function sessionRoutes(db: Db) {
     return days;
   }
 
-  router.get("/companies/:companyId/sessions/summary", async (req, res) => {
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+  router.get("/sessions/summary", async (req, res) => {
+    assertInstanceAccess(req);
     const windowDays = parseWindowDays(req.query);
 
     const rows = await db.execute(sql`
@@ -52,8 +51,7 @@ export function sessionRoutes(db: Db) {
           hr.started_at
         FROM heartbeat_runs hr
         JOIN agents a ON a.id = hr.agent_id
-        WHERE a.company_id = ${companyId}
-          AND hr.started_at >= NOW() - (${windowDays} || ' days')::interval
+        WHERE hr.started_at >= NOW() - (${windowDays} || ' days')::interval
           AND hr.usage_json IS NOT NULL
           AND hr.status IN ('succeeded', 'failed')
       ),
@@ -98,8 +96,7 @@ export function sessionRoutes(db: Db) {
         COALESCE(p.output_tokens, 0)::bigint AS output_tokens
       FROM agents a
       LEFT JOIN per_agent p ON p.agent_id = a.id
-      WHERE a.company_id = ${companyId}
-        AND a.status != 'terminated'
+      WHERE a.status != 'terminated'
       ORDER BY COALESCE(p.run_count, 0) DESC, a.name ASC
     `);
 

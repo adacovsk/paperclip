@@ -16,7 +16,7 @@ OPENCLAW_RESET_STATE=1 OPENCLAW_BUILD=1 ./scripts/smoke/openclaw-docker-ui.sh
 ```
 Open the printed `Dashboard URL` (includes `#token=...`) in your browser.
 
-3. In Paperclip UI, go to `http://127.0.0.1:3100/CLA/company/settings`.
+3. In Paperclip UI, go to the instance settings page (`http://127.0.0.1:3100/instance/settings`).
 
 4. Use the OpenClaw invite prompt flow.
 - In the Invites section, click `Generate OpenClaw Invite Prompt`.
@@ -26,11 +26,11 @@ Open the printed `Dashboard URL` (includes `#token=...`) in your browser.
 
 Security/control note:
 - The OpenClaw invite prompt is created from a controlled endpoint:
-  - `POST /api/companies/{companyId}/openclaw/invite-prompt`
+  - `POST /api/openclaw/invite-prompt`
   - operator users with invite permission can call it
-  - agent callers are limited to the company CEO agent
+  - agent callers are limited to the CEO agent
 
-5. Approve the join request in Paperclip UI, then confirm the OpenClaw agent appears in CLA agents.
+5. Approve the join request in Paperclip UI, then confirm the OpenClaw agent appears in the Agents list.
 
 6. Gateway preflight (required before task tests).
 - Confirm the created agent uses `openclaw_gateway` (not `openclaw`).

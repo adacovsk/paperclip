@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import type { Issue, ExecutionWorkspace } from "@paperclipai/shared";
 import { useQuery } from "@tanstack/react-query";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { instanceSettingsApi } from "../api/instanceSettings";
-import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
@@ -139,8 +138,6 @@ interface IssueWorkspaceCardProps {
 }
 
 export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceCardProps) {
-  const { selectedCompanyId } = useCompany();
-  const companyId = issue.companyId ?? selectedCompanyId;
   const [editing, setEditing] = useState(false);
 
   const { data: experimentalSettings } = useQuery({
@@ -154,18 +151,18 @@ export function IssueWorkspaceCard({ issue, project, onUpdate }: IssueWorkspaceC
   const workspace = issue.currentExecutionWorkspace as ExecutionWorkspace | null | undefined;
 
   const { data: reusableExecutionWorkspaces } = useQuery({
-    queryKey: queryKeys.executionWorkspaces.list(companyId!, {
+    queryKey: queryKeys.executionWorkspaces.list({
       projectId: issue.projectId ?? undefined,
       projectWorkspaceId: issue.projectWorkspaceId ?? undefined,
       reuseEligible: true,
     }),
     queryFn: () =>
-      executionWorkspacesApi.list(companyId!, {
+      executionWorkspacesApi.list({
         projectId: issue.projectId ?? undefined,
         projectWorkspaceId: issue.projectWorkspaceId ?? undefined,
         reuseEligible: true,
       }),
-    enabled: Boolean(companyId) && Boolean(issue.projectId) && editing,
+    enabled: Boolean(issue.projectId) && editing,
   });
 
   const deduplicatedReusableWorkspaces = useMemo(() => {

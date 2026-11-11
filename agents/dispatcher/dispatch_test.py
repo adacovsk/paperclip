@@ -1257,7 +1257,6 @@ class CloudLaneFlag(unittest.TestCase):
 
 class SweepApi:
     dry_run = False
-    company = "c"
 
     def __init__(self, owner="arch", issues=None, parent=None, live=()):
         self.writes = []

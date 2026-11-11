@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agents, companies, createDb, heartbeatRuns, issues } from "@paperclipai/db";
+import { agents, createDb, heartbeatRuns, issues } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -58,22 +58,14 @@ describeEmbeddedPostgres("claimQueuedRun on an unassigned target issue", () => {
   });
 
   it("cancels a comment wake whose issue was unassigned before the run was claimed", async () => {
-    const companyId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
     const issueId = randomUUID();
-    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const issuePrefix = `T${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const now = new Date();
 
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix,
-      requireOperatorApprovalForNewAgents: false,
-    });
     await db.insert(agents).values({
       id: agentId,
-      companyId,
       name: "Architect",
       role: "engineer",
       status: "active",
@@ -84,7 +76,6 @@ describeEmbeddedPostgres("claimQueuedRun on an unassigned target issue", () => {
     });
     await db.insert(heartbeatRuns).values({
       id: runId,
-      companyId,
       agentId,
       invocationSource: "automation",
       triggerDetail: "system",
@@ -96,7 +87,6 @@ describeEmbeddedPostgres("claimQueuedRun on an unassigned target issue", () => {
     });
     await db.insert(issues).values({
       id: issueId,
-      companyId,
       title: "Held and unassigned after the comment wake was queued",
       status: "todo",
       priority: "medium",

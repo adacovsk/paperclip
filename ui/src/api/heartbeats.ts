@@ -27,16 +27,16 @@ export interface LiveRunForIssue {
 }
 
 export const heartbeatsApi = {
-  list: (companyId: string, agentId?: string, limit?: number) => {
+  list: (agentId?: string, limit?: number) => {
     const searchParams = new URLSearchParams();
     if (agentId) searchParams.set("agentId", agentId);
     if (limit) searchParams.set("limit", String(limit));
     const qs = searchParams.toString();
-    return api.get<HeartbeatRun[]>(`/companies/${companyId}/heartbeat-runs${qs ? `?${qs}` : ""}`);
+    return api.get<HeartbeatRun[]>(`/heartbeat-runs${qs ? `?${qs}` : ""}`);
   },
   /** Most recent run per agent — bounded by agent count, not run history. */
-  latestByAgent: (companyId: string) =>
-    api.get<HeartbeatRun[]>(`/companies/${companyId}/heartbeat-runs/latest-by-agent`),
+  latestByAgent: () =>
+    api.get<HeartbeatRun[]>(`/heartbeat-runs/latest-by-agent`),
   get: (runId: string) => api.get<HeartbeatRun>(`/heartbeat-runs/${runId}`),
   events: (runId: string, afterSeq = 0, limit = 200) =>
     api.get<HeartbeatRunEvent[]>(
@@ -57,8 +57,7 @@ export const heartbeatsApi = {
     api.get<LiveRunForIssue[]>(`/issues/${issueId}/live-runs`),
   activeRunForIssue: (issueId: string) =>
     api.get<ActiveRunForIssue | null>(`/issues/${issueId}/active-run`),
-  liveRunsForCompany: (
-    companyId: string,
+  liveRuns: (
     minCount?: number,
     includeRecentErrors?: boolean,
   ) => {
@@ -66,7 +65,7 @@ export const heartbeatsApi = {
     if (minCount) searchParams.set("minCount", String(minCount));
     if (includeRecentErrors) searchParams.set("includeRecentErrors", "1");
     const qs = searchParams.toString();
-    return api.get<LiveRunForIssue[]>(`/companies/${companyId}/live-runs${qs ? `?${qs}` : ""}`);
+    return api.get<LiveRunForIssue[]>(`/live-runs${qs ? `?${qs}` : ""}`);
   },
   listInstanceSchedulerAgents: () =>
     api.get<InstanceSchedulerHeartbeatAgent[]>("/instance/scheduler-heartbeats"),

@@ -19,7 +19,7 @@ const mockProjectService = vi.hoisted(() => ({
 
 const mockGoalService = vi.hoisted(() => ({
   getById: vi.fn(),
-  getDefaultCompanyGoal: vi.fn(),
+  getDefaultInstanceGoal: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -60,7 +60,7 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "local_implicit",
       isInstanceAdmin: false,
     };
@@ -73,7 +73,6 @@ function createApp() {
 
 const legacyProjectLinkedIssue = {
   id: "11111111-1111-4111-8111-111111111111",
-  companyId: "company-1",
   identifier: "PAP-581",
   title: "Legacy onboarding task",
   description: "Seed the first CEO task",
@@ -92,10 +91,9 @@ const legacyProjectLinkedIssue = {
 
 const projectGoal = {
   id: "44444444-4444-4444-8444-444444444444",
-  companyId: "company-1",
-  title: "Launch the company",
+  title: "Launch the product",
   description: null,
-  level: "company",
+  level: "instance",
   status: "active",
   parentId: null,
   ownerAgentId: null,
@@ -117,7 +115,6 @@ describe("issue goal context routes", () => {
     mockIssueService.getComment.mockResolvedValue(null);
     mockProjectService.getById.mockResolvedValue({
       id: legacyProjectLinkedIssue.projectId,
-      companyId: "company-1",
       urlKey: "onboarding",
       goalId: projectGoal.id,
       goalIds: [projectGoal.id],
@@ -138,8 +135,8 @@ describe("issue goal context routes", () => {
         defaultRef: null,
         repoName: null,
         localFolder: null,
-        managedFolder: "/tmp/company-1/project-1",
-        effectiveLocalFolder: "/tmp/company-1/project-1",
+        managedFolder: "/tmp/project-1",
+        effectiveLocalFolder: "/tmp/project-1",
         origin: "managed_checkout",
       },
       workspaces: [],
@@ -152,7 +149,7 @@ describe("issue goal context routes", () => {
     mockGoalService.getById.mockImplementation(async (id: string) =>
       id === projectGoal.id ? projectGoal : null,
     );
-    mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
+    mockGoalService.getDefaultInstanceGoal.mockResolvedValue(null);
   });
 
   it("surfaces the project goal from GET /issues/:id when the issue has no direct goal", async () => {
@@ -166,7 +163,7 @@ describe("issue goal context routes", () => {
         title: projectGoal.title,
       }),
     );
-    expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
+    expect(mockGoalService.getDefaultInstanceGoal).not.toHaveBeenCalled();
   });
 
   it("surfaces the project goal from GET /issues/:id/heartbeat-context", async () => {
@@ -182,6 +179,6 @@ describe("issue goal context routes", () => {
         title: projectGoal.title,
       }),
     );
-    expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
+    expect(mockGoalService.getDefaultInstanceGoal).not.toHaveBeenCalled();
   });
 });

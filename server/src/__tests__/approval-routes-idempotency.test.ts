@@ -46,9 +46,9 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "user-1",
-      companyIds: ["company-1"],
       source: "session",
       isInstanceAdmin: false,
+      isMember: true,
     };
     next();
   });
@@ -64,7 +64,6 @@ describe("approval routes idempotent retries", () => {
     // approval before doing anything else; without this the route 404s.
     mockApprovalService.getById.mockResolvedValue({
       id: "approval-1",
-      companyId: "company-1",
     });
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
@@ -75,7 +74,6 @@ describe("approval routes idempotent retries", () => {
     mockApprovalService.approve.mockResolvedValue({
       approval: {
         id: "approval-1",
-        companyId: "company-1",
         type: "hire_agent",
         status: "approved",
         payload: {},
@@ -98,7 +96,6 @@ describe("approval routes idempotent retries", () => {
     mockApprovalService.reject.mockResolvedValue({
       approval: {
         id: "approval-1",
-        companyId: "company-1",
         type: "hire_agent",
         status: "rejected",
         payload: {},

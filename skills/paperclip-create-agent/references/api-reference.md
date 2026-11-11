@@ -5,13 +5,13 @@
 - `GET /llms/agent-configuration.txt`
 - `GET /llms/agent-configuration/:adapterType.txt`
 - `GET /llms/agent-icons.txt`
-- `GET /api/companies/:companyId/agent-configurations`
-- `GET /api/companies/:companyId/skills`
-- `POST /api/companies/:companyId/skills/import`
+- `GET /api/agent-configurations`
+- `GET /api/skills`
+- `POST /api/skills/import`
 - `GET /api/agents/:agentId/configuration`
 - `POST /api/agents/:agentId/skills/sync`
-- `POST /api/companies/:companyId/agent-hires`
-- `POST /api/companies/:companyId/agents`
+- `POST /api/agent-hires`
+- `POST /api/agents`
 - `GET /api/agents/:agentId/config-revisions`
 - `POST /api/agents/:agentId/config-revisions/:revisionId/rollback`
 - `POST /api/issues/:issueId/approvals`
@@ -26,7 +26,7 @@ Approval collaboration:
 - `POST /api/approvals/:approvalId/comments`
 - `GET /api/approvals/:approvalId/issues`
 
-## `POST /api/companies/:companyId/agent-hires`
+## `POST /api/agent-hires`
 
 Request body matches agent create shape:
 
@@ -77,9 +77,9 @@ Response:
 }
 ```
 
-If company setting disables required approval, `approval` is `null` and the agent is created as `idle`.
+If the instance setting `requireOperatorApprovalForNewAgents` is off, `approval` is `null` and the agent is created as `idle`.
 
-`desiredSkills` accepts company skill ids, canonical keys, or a unique slug. The server resolves and stores canonical company skill keys.
+`desiredSkills` accepts skill ids, canonical keys, or a unique slug. The server resolves and stores canonical skill keys.
 
 ## Approval Lifecycle
 

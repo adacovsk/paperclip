@@ -8,7 +8,7 @@ import {
   updateSecretSchema,
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
-import { assertOperator, assertCompanyAccess } from "./authz.js";
+import { assertInstanceAccess, assertOperator } from "./authz.js";
 import { logActivity, secretService } from "../services/index.js";
 
 export function secretRoutes(db: Db) {
@@ -21,28 +21,24 @@ export function secretRoutes(db: Db) {
       : "local_encrypted"
   ) as SecretProvider;
 
-  router.get("/companies/:companyId/secret-providers", (req, res) => {
+  router.get("/secret-providers", (req, res) => {
     assertOperator(req);
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+    assertInstanceAccess(req);
     res.json(svc.listProviders());
   });
 
-  router.get("/companies/:companyId/secrets", async (req, res) => {
+  router.get("/secrets", async (req, res) => {
     assertOperator(req);
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
-    const secrets = await svc.list(companyId);
+    assertInstanceAccess(req);
+    const secrets = await svc.list();
     res.json(secrets);
   });
 
-  router.post("/companies/:companyId/secrets", validate(createSecretSchema), async (req, res) => {
+  router.post("/secrets", validate(createSecretSchema), async (req, res) => {
     assertOperator(req);
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+    assertInstanceAccess(req);
 
     const created = await svc.create(
-      companyId,
       {
         name: req.body.name,
         provider: req.body.provider ?? defaultProvider,
@@ -54,7 +50,6 @@ export function secretRoutes(db: Db) {
     );
 
     await logActivity(db, {
-      companyId,
       actorType: "user",
       actorId: req.actor.userId ?? "operator",
       action: "secret.created",
@@ -74,7 +69,7 @@ export function secretRoutes(db: Db) {
       res.status(404).json({ error: "Secret not found" });
       return;
     }
-    assertCompanyAccess(req, existing.companyId);
+    assertInstanceAccess(req);
 
     const rotated = await svc.rotate(
       id,
@@ -86,7 +81,6 @@ export function secretRoutes(db: Db) {
     );
 
     await logActivity(db, {
-      companyId: rotated.companyId,
       actorType: "user",
       actorId: req.actor.userId ?? "operator",
       action: "secret.rotated",
@@ -106,7 +100,7 @@ export function secretRoutes(db: Db) {
       res.status(404).json({ error: "Secret not found" });
       return;
     }
-    assertCompanyAccess(req, existing.companyId);
+    assertInstanceAccess(req);
 
     const updated = await svc.update(id, {
       name: req.body.name,
@@ -120,7 +114,6 @@ export function secretRoutes(db: Db) {
     }
 
     await logActivity(db, {
-      companyId: updated.companyId,
       actorType: "user",
       actorId: req.actor.userId ?? "operator",
       action: "secret.updated",
@@ -140,7 +133,7 @@ export function secretRoutes(db: Db) {
       res.status(404).json({ error: "Secret not found" });
       return;
     }
-    assertCompanyAccess(req, existing.companyId);
+    assertInstanceAccess(req);
 
     const removed = await svc.remove(id);
     if (!removed) {
@@ -149,7 +142,6 @@ export function secretRoutes(db: Db) {
     }
 
     await logActivity(db, {
-      companyId: removed.companyId,
       actorType: "user",
       actorId: req.actor.userId ?? "operator",
       action: "secret.deleted",

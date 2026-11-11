@@ -835,7 +835,7 @@ detach() {
   local task="$1"; shift
   if systemd-run --user --scope --collect --quiet true >/dev/null 2>&1; then
     systemd-run --user --scope --collect --quiet --unit="cloudwatch-$task-$(date +%s)" \
-      --setenv=PAPERCLIP_API_URL --setenv=PAPERCLIP_API_KEY --setenv=PAPERCLIP_AGENT_ID --setenv=PAPERCLIP_COMPANY_ID \
+      --setenv=PAPERCLIP_API_URL --setenv=PAPERCLIP_API_KEY --setenv=PAPERCLIP_AGENT_ID \
       setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
   else
     setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &

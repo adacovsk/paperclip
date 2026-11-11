@@ -13,7 +13,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).parent))
 from unreachable import ApiUnreachable, skip_unreachable, transport_failure  # noqa: E402
 
-os.environ.setdefault("PAPERCLIP_COMPANY_ID", "c")
 _spec = importlib.util.spec_from_file_location("dispatch", Path(__file__).with_name("dispatch.py"))
 dispatch = importlib.util.module_from_spec(_spec)
 sys.modules["dispatch"] = dispatch
@@ -35,8 +34,7 @@ class _Resp:
 
 
 def api() -> "dispatch.Api":
-    with mock.patch.dict(os.environ, {"PAPERCLIP_COMPANY_ID": "c"}):
-        return dispatch.Api(dry_run=False)
+    return dispatch.Api(dry_run=False)
 
 
 class TransportFailure(unittest.TestCase):

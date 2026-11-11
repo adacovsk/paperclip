@@ -1,96 +1,27 @@
 import { describe, expect, it } from "vitest";
-import {
-  isOnboardingPath,
-  resolveRouteOnboardingOptions,
-  shouldRedirectCompanylessRouteToOnboarding,
-} from "./onboarding-route";
+import { isOnboardingPath, shouldAutoOpenOnboarding } from "./onboarding-route";
 
 describe("isOnboardingPath", () => {
-  it("matches the global onboarding route", () => {
+  it("matches the onboarding route", () => {
     expect(isOnboardingPath("/onboarding")).toBe(true);
   });
 
-  it("matches a company-prefixed onboarding route", () => {
-    expect(isOnboardingPath("/pap/onboarding")).toBe(true);
-  });
-
   it("ignores non-onboarding routes", () => {
-    expect(isOnboardingPath("/pap/dashboard")).toBe(false);
+    expect(isOnboardingPath("/dashboard")).toBe(false);
+    expect(isOnboardingPath("/pap/onboarding")).toBe(false);
   });
 });
 
-describe("resolveRouteOnboardingOptions", () => {
-  it("opens company creation for the global onboarding route", () => {
-    expect(
-      resolveRouteOnboardingOptions({
-        pathname: "/onboarding",
-        companies: [],
-      }),
-    ).toEqual({ initialStep: 1 });
+describe("shouldAutoOpenOnboarding", () => {
+  it("opens when the instance has no agents", () => {
+    expect(shouldAutoOpenOnboarding({ pathname: "/dashboard", agentCount: 0 })).toBe(true);
   });
 
-  it("opens agent creation when the prefixed company exists", () => {
-    expect(
-      resolveRouteOnboardingOptions({
-        pathname: "/pap/onboarding",
-        companyPrefix: "pap",
-        companies: [{ id: "company-1", issuePrefix: "PAP" }],
-      }),
-    ).toEqual({ initialStep: 2, companyId: "company-1" });
+  it("stays closed once an agent exists", () => {
+    expect(shouldAutoOpenOnboarding({ pathname: "/dashboard", agentCount: 1 })).toBe(false);
   });
 
-  it("falls back to company creation when the prefixed company is missing", () => {
-    expect(
-      resolveRouteOnboardingOptions({
-        pathname: "/pap/onboarding",
-        companyPrefix: "pap",
-        companies: [],
-      }),
-    ).toEqual({ initialStep: 1 });
-  });
-
-  it("adds an agent to the existing company instead of creating another", () => {
-    expect(
-      resolveRouteOnboardingOptions({
-        pathname: "/onboarding",
-        companies: [{ id: "company-1", issuePrefix: "PAP" }],
-      }),
-    ).toEqual({ initialStep: 2, companyId: "company-1" });
-    expect(
-      resolveRouteOnboardingOptions({
-        pathname: "/xyz/onboarding",
-        companyPrefix: "xyz",
-        companies: [{ id: "company-1", issuePrefix: "PAP" }],
-      }),
-    ).toEqual({ initialStep: 2, companyId: "company-1" });
-  });
-});
-
-describe("shouldRedirectCompanylessRouteToOnboarding", () => {
-  it("redirects companyless entry routes into onboarding", () => {
-    expect(
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: "/",
-        hasCompanies: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not redirect when already on onboarding", () => {
-    expect(
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: "/onboarding",
-        hasCompanies: false,
-      }),
-    ).toBe(false);
-  });
-
-  it("does not redirect when companies exist", () => {
-    expect(
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: "/issues",
-        hasCompanies: true,
-      }),
-    ).toBe(false);
+  it("leaves the onboarding route to open the wizard itself", () => {
+    expect(shouldAutoOpenOnboarding({ pathname: "/onboarding", agentCount: 0 })).toBe(false);
   });
 });

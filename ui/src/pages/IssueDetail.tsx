@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
-import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
 import { activityApi } from "../api/activity";
@@ -8,7 +8,6 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
-import { useCompany } from "../context/CompanyContext";
 import { usePanel } from "../context/PanelContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -195,7 +194,6 @@ function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<st
 
 export function IssueDetail() {
   const { issueId } = useParams<{ issueId: string }>();
-  const { selectedCompanyId } = useCompany();
   const { openPanel, closePanel, panelVisible, setPanelVisible } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -218,7 +216,6 @@ export function IssueDetail() {
     queryFn: () => issuesApi.get(issueId!),
     enabled: !!issueId,
   });
-  const resolvedCompanyId = issue?.companyId ?? selectedCompanyId;
 
   const { data: comments } = useQuery({
     queryKey: queryKeys.issues.comments(issueId!),
@@ -281,15 +278,13 @@ export function IssueDetail() {
   }, [linkedRuns, liveRuns, activeRun]);
 
   const { data: allIssues } = useQuery({
-    queryKey: queryKeys.issues.list(selectedCompanyId!),
-    queryFn: () => issuesApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.issues.list,
+    queryFn: () => issuesApi.list(),
   });
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
 
   const { data: session } = useQuery({
@@ -298,21 +293,17 @@ export function IssueDetail() {
   });
 
   const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(selectedCompanyId!),
-    queryFn: () => projectsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.projects.list,
+    queryFn: () => projectsApi.list(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const { orderedProjects } = useProjectOrder({
     projects: projects ?? [],
-    companyId: selectedCompanyId,
     userId: currentUserId,
   });
   const { slots: issuePluginDetailSlots } = usePluginSlots({
     slotTypes: ["detailTab"],
     entityType: "issue",
-    companyId: resolvedCompanyId,
-    enabled: !!resolvedCompanyId,
   });
   const issuePluginTabItems = useMemo(
     () => issuePluginDetailSlots.map((slot) => ({
@@ -457,24 +448,17 @@ export function IssueDetail() {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
-    if (selectedCompanyId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(selectedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(selectedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(selectedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
-    }
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.list });
+    queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges });
   };
 
   const markIssueRead = useMutation({
     mutationFn: (id: string) => issuesApi.markRead(id),
     onSuccess: () => {
-      if (selectedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(selectedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(selectedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(selectedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
-      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges });
     },
   });
 
@@ -518,8 +502,7 @@ export function IssueDetail() {
 
   const uploadAttachment = useMutation({
     mutationFn: async (file: File) => {
-      if (!selectedCompanyId) throw new Error("No company selected");
-      return issuesApi.uploadAttachment(selectedCompanyId, issueId!, file);
+      return issuesApi.uploadAttachment(issueId!, file);
     },
     onSuccess: () => {
       setAttachmentError(null);
@@ -851,7 +834,6 @@ export function IssueDetail() {
         slotTypes={["toolbarButton", "contextMenuItem"]}
         entityType="issue"
         context={{
-          companyId: issue.companyId,
           projectId: issue.projectId ?? null,
           entityId: issue.id,
           entityType: "issue",
@@ -865,7 +847,6 @@ export function IssueDetail() {
         placementZones={["toolbarButton"]}
         entityType="issue"
         context={{
-          companyId: issue.companyId,
           projectId: issue.projectId ?? null,
           entityId: issue.id,
           entityType: "issue",
@@ -878,7 +859,6 @@ export function IssueDetail() {
         slotTypes={["taskDetailView"]}
         entityType="issue"
         context={{
-          companyId: issue.companyId,
           projectId: issue.projectId ?? null,
           entityId: issue.id,
           entityType: "issue",
@@ -1002,7 +982,6 @@ export function IssueDetail() {
           <CommentThread
             comments={commentsWithRunMeta}
             linkedRuns={timelineRuns}
-            companyId={issue.companyId}
             projectId={issue.projectId}
             issueStatus={issue.status}
             agentMap={agentMap}
@@ -1026,7 +1005,7 @@ export function IssueDetail() {
             onAttachImage={async (file) => {
               await uploadAttachment.mutateAsync(file);
             }}
-            liveRunSlot={<LiveRunWidget issueId={issueId!} companyId={issue.companyId} />}
+            liveRunSlot={<LiveRunWidget issueId={issueId!} />}
           />
         </TabsContent>
 
@@ -1107,7 +1086,6 @@ export function IssueDetail() {
             <PluginSlotMount
               slot={activePluginTab.slot}
               context={{
-                companyId: issue.companyId,
                 projectId: issue.projectId ?? null,
                 entityId: issue.id,
                 entityType: "issue",

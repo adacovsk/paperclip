@@ -12,7 +12,6 @@ function renderCandidateQuery(agentId: string) {
     .from(issues)
     .where(
       and(
-        eq(issues.companyId, "company-1"),
         eq(issues.assigneeAgentId, agentId),
         ne(issues.id, "issue-just-processed"),
         inArray(issues.status, ["in_progress", "in_review", "todo"]),

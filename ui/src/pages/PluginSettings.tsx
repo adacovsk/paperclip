@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Puzzle, ArrowLeft, ShieldAlert, ActivitySquare, CheckCircle, XCircle, Loader2, Clock, Cpu, Webhook, CalendarClock, AlertTriangle } from "lucide-react";
-import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { Link, Navigate, useParams } from "@/lib/router";
+import { useInstanceProfile } from "@/hooks/useInstanceProfile";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
@@ -50,7 +50,6 @@ import {
  * - `POST /api/plugins/:pluginId/config/test` — test configuration.
  *
  * URL params:
- * - `companyPrefix` — the company slug (for breadcrumb links).
  * - `pluginId` — UUID of the plugin to display.
  *
  * @see PluginManager — parent list page.
@@ -58,9 +57,9 @@ import {
  * @see doc/plugins/PLUGIN_SPEC.md §19.8 — Plugin Settings UI.
  */
 export function PluginSettings() {
-  const { selectedCompany, selectedCompanyId } = useCompany();
+  const { profile } = useInstanceProfile();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { companyPrefix, pluginId } = useParams<{ companyPrefix?: string; pluginId: string }>();
+  const { pluginId } = useParams<{ pluginId: string }>();
   const [activeTab, setActiveTab] = useState<"configuration" | "status">("configuration");
 
   const { data: plugin, isLoading: pluginLoading } = useQuery({
@@ -102,8 +101,6 @@ export function PluginSettings() {
 
   const { slots } = usePluginSlots({
     slotTypes: ["settingsPage"],
-    companyId: selectedCompanyId,
-    enabled: !!selectedCompanyId,
   });
 
   // Filter slots to only show settings pages for this specific plugin
@@ -114,12 +111,12 @@ export function PluginSettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
+      { label: profile?.name ?? "Instance", href: "/dashboard" },
       { label: "Settings", href: "/instance/settings/heartbeats" },
       { label: "Plugins", href: "/instance/settings/plugins" },
       { label: plugin?.manifestJson?.displayName ?? plugin?.packageName ?? "Plugin Details" },
     ]);
-  }, [selectedCompany?.name, setBreadcrumbs, companyPrefix, plugin]);
+  }, [profile?.name, setBreadcrumbs, plugin]);
 
   useEffect(() => {
     setActiveTab("configuration");
@@ -218,10 +215,7 @@ export function PluginSettings() {
                     <PluginSlotMount
                       key={`${slot.pluginKey}:${slot.id}`}
                       slot={slot}
-                      context={{
-                        companyId: selectedCompanyId,
-                        companyPrefix: companyPrefix ?? null,
-                      }}
+                      context={{}}
                       missingBehavior="placeholder"
                     />
                   ))}

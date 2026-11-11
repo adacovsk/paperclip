@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Issue } from "@paperclipai/shared";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { StatusIcon } from "./StatusIcon";

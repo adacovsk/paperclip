@@ -75,16 +75,12 @@ export interface PluginBridgeError {
 /**
  * Read-only host context passed to every plugin component via `useHostContext()`.
  *
- * Plugin components use this to know which company, project, or entity is
+ * Plugin components use this to know which project or entity is
  * currently active so they can scope their data requests accordingly.
  *
  * @see PLUGIN_SPEC.md §19 — UI Extension Model
  */
 export interface PluginHostContext {
-  /** UUID of the currently active company, if any. */
-  companyId: string | null;
-  /** URL prefix for the current company (e.g. `"my-company"`). */
-  companyPrefix: string | null;
   /** UUID of the currently active project, if any. */
   projectId: string | null;
   /** UUID of the current entity (for detail tab contexts), if any. */
@@ -138,10 +134,9 @@ export interface PluginRenderEnvironmentContext
 /**
  * Props passed to a plugin page component.
  *
- * A page is a full-page extension at `/plugins/:pluginId` or `/:company/plugins/:pluginId`.
+ * A page is a full-page extension at `/plugins/:pluginId`.
  *
  * @see PLUGIN_SPEC.md §19.1 — Global Operator Routes
- * @see PLUGIN_SPEC.md §19.2 — Company-Context Routes
  */
 export interface PluginPageProps {
   /** The current host context. */
@@ -373,7 +368,7 @@ export interface PluginStreamResult<T = unknown> {
  * @example
  * ```tsx
  * const resync = usePluginAction("resync");
- * <button onClick={() => resync({ companyId }).catch(err => console.error(err))}>
+ * <button onClick={() => resync().catch(err => console.error(err))}>
  *   Resync Now
  * </button>
  * ```

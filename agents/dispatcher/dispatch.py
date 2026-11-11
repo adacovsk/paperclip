@@ -728,7 +728,6 @@ GET_RETRY_PAUSE = 5
 class Api:
     def __init__(self, dry_run: bool):
         self.base = os.environ.get("PAPERCLIP_API_URL", "http://127.0.0.1:3100").rstrip("/") + "/api"
-        self.company = os.environ["PAPERCLIP_COMPANY_ID"]
         self.dry_run = dry_run
         self.headers = {"Content-Type": "application/json"}
         if os.environ.get("PAPERCLIP_API_KEY"):
@@ -773,7 +772,7 @@ class Api:
 
     def issues(self, **query) -> list[dict]:
         qs = "&".join(f"{k}={v}" for k, v in query.items())
-        return self.get(f"/companies/{self.company}/issues?{qs}")
+        return self.get(f"/issues?{qs}")
 
     def set_status(self, issue: dict, body: dict, comment: str, what: str):
         """Status and its reason in one call; on error, comment first, then PATCH."""
@@ -979,7 +978,7 @@ def create_review(api: Api, agents: dict, parent: dict, git_st: GitState):
     )
     api.write(
         "POST",
-        f"/companies/{api.company}/issues",
+        "/issues",
         {
             "title": f"Review: {parent['identifier']} {parent['title']}"[:200],
             "description": body,
@@ -1010,7 +1009,7 @@ def create_verify(api: Api, agents: dict, parent: dict, after: dict, git_st: Git
     label_ids = [l["id"] for l in parent.get("labels") or [] if l["name"] == "needs-build"]
     return api.write(
         "POST",
-        f"/companies/{api.company}/issues",
+        "/issues",
         {
             "title": f"Verify: {parent['identifier']} {parent['title']}"[:200],
             "description": body,
@@ -1048,7 +1047,7 @@ def create_rebase(api: Api, agents: dict, parent: dict, stages: list[tuple[str, 
     )
     api.write(
         "POST",
-        f"/companies/{api.company}/issues",
+        "/issues",
         {
             "title": f"Rebase {branch} onto origin/main",
             "description": body,
@@ -1169,7 +1168,7 @@ def cancel_orphan_stages(api: Api) -> list[str]:
 
 
 def sweep(api: Api, project: Path) -> None:
-    roster = api.get(f"/companies/{api.company}/agents")
+    roster = api.get("/agents")
     inherit_cloud_lane(roster)
     agents = {a["name"]: a["id"] for a in roster}
     # First, so no step below dispatches or re-fires a stage whose parent is closed.
@@ -1478,7 +1477,7 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
     markers = base_red_markers()
     by_task = {m.task: m for m in markers}
     owners = [agents["Architect"], *([agents["Dispatcher"]] if agents.get("Dispatcher") else [])]
-    live = api.get(f"/companies/{api.company}/live-runs") or []
+    live = api.get("/live-runs") or []
     # A main-repair has no parent: it verifies its own `main`-rooted branch, so
     # its sentinel is keyed by its own identifier. A `blocked` Verify is read too:
     # a relaunch can leave it parked while the build is out, and nothing else
@@ -2015,10 +2014,10 @@ def file_main_repair(api: Api, agents: dict, project: Path) -> None:
     if existing_main_repair(api.issues(q="main%20is%20red"), short):
         return
     title = f"ci-fix: {short} — main is red ({len(due)} verifies escalated on it)"
-    labels = {l["name"]: l["id"] for l in api.get(f"/companies/{api.company}/labels")}
+    labels = {l["name"]: l["id"] for l in api.get("/labels")}
     created = api.write(
         "POST",
-        f"/companies/{api.company}/issues",
+        "/issues",
         {
             "title": title,
             "description": main_repair_body(due, main_sha, "(allocating)", "(allocating)"),

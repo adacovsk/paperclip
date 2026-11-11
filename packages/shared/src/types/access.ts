@@ -10,9 +10,8 @@ import type {
   PrincipalType,
 } from "../constants.js";
 
-export interface CompanyMembership {
+export interface Membership {
   id: string;
-  companyId: string;
   principalType: PrincipalType;
   principalId: string;
   status: MembershipStatus;
@@ -23,7 +22,6 @@ export interface CompanyMembership {
 
 export interface PrincipalPermissionGrant {
   id: string;
-  companyId: string;
   principalType: PrincipalType;
   principalId: string;
   permissionKey: PermissionKey;
@@ -35,7 +33,6 @@ export interface PrincipalPermissionGrant {
 
 export interface Invite {
   id: string;
-  companyId: string | null;
   inviteType: InviteType;
   tokenHash: string;
   allowedJoinTypes: InviteJoinType;
@@ -51,7 +48,6 @@ export interface Invite {
 export interface JoinRequest {
   id: string;
   inviteId: string;
-  companyId: string;
   requestType: JoinRequestType;
   status: JoinRequestStatus;
   requestIp: string;

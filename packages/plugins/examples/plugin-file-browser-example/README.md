@@ -35,11 +35,11 @@ This is a repo-local example plugin for development. It should not be assumed to
 
 ## Worker
 
-- **getData `workspaces`** — `ctx.projects.listWorkspaces(projectId, companyId)` (ordered, primary first).
+- **getData `workspaces`** — `ctx.projects.listWorkspaces(projectId)` (ordered, primary first).
 - **getData `fileList`** — `{ projectId, workspaceId, directoryPath? }` → list directory entries for the workspace root or a subdirectory (Node `fs`).
 - **getData `fileContent`** — `{ projectId, workspaceId, filePath }` → read file content using workspace-relative paths (Node `fs`).
 - **getData `plugin-config`** — the plugin's settings, for the UI to read.
-- **getData `comment-file-links`** — `{ commentId, issueId, companyId }` → the file paths extracted from that comment's body.
+- **getData `comment-file-links`** — `{ commentId, issueId }` → the file paths extracted from that comment's body.
 - **performAction `writeFile`** — `{ projectId, workspaceId, filePath, content }` → write the current editor buffer back to disk.
 
 ## Local Install (Dev)

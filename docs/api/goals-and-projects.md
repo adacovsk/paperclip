@@ -7,12 +7,12 @@ Goals define the "why" and projects define the "what" for organizing work.
 
 ## Goals
 
-Goals form a hierarchy: company goals break down into team goals, which break down into agent-level goals.
+Goals form a hierarchy: instance goals break down into team goals, which break down into agent-level goals.
 
 ### List Goals
 
 ```
-GET /api/companies/{companyId}/goals
+GET /api/goals
 ```
 
 ### Get Goal
@@ -24,11 +24,11 @@ GET /api/goals/{goalId}
 ### Create Goal
 
 ```
-POST /api/companies/{companyId}/goals
+POST /api/goals
 {
   "title": "Launch MVP by Q1",
   "description": "Ship minimum viable product",
-  "level": "company",
+  "level": "instance",
   "status": "active"
 }
 ```
@@ -52,7 +52,7 @@ Projects group related issues toward a deliverable. They can be linked to goals 
 ### List Projects
 
 ```
-GET /api/companies/{companyId}/projects
+GET /api/projects
 ```
 
 ### Get Project
@@ -66,7 +66,7 @@ Returns project details including workspaces.
 ### Create Project
 
 ```
-POST /api/companies/{companyId}/projects
+POST /api/projects
 {
   "name": "Auth System",
   "description": "End-to-end authentication",

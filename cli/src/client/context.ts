@@ -7,7 +7,6 @@ const DEFAULT_PROFILE = "default";
 
 export interface ClientContextProfile {
   apiBase?: string;
-  companyId?: string;
   apiKeyEnvVarName?: string;
 }
 
@@ -69,7 +68,6 @@ function normalizeProfile(value: unknown): ClientContextProfile {
 
   return {
     apiBase: toStringOrUndefined(profile.apiBase),
-    companyId: toStringOrUndefined(profile.companyId),
     apiKeyEnvVarName: toStringOrUndefined(profile.apiKeyEnvVarName),
   };
 }
@@ -141,9 +139,6 @@ export function upsertProfile(
 
   if (patch.apiBase !== undefined && patch.apiBase.trim().length === 0) {
     delete merged.apiBase;
-  }
-  if (patch.companyId !== undefined && patch.companyId.trim().length === 0) {
-    delete merged.companyId;
   }
   if (patch.apiKeyEnvVarName !== undefined && patch.apiKeyEnvVarName.trim().length === 0) {
     delete merged.apiKeyEnvVarName;

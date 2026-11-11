@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { Issue } from "@paperclipai/shared";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
@@ -18,20 +18,16 @@ function isRunActive(run: LiveRunForIssue): boolean {
   return run.status === "queued" || run.status === "running";
 }
 
-interface ActiveAgentsPanelProps {
-  companyId: string;
-}
-
-export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
+export function ActiveAgentsPanel() {
   const { data: liveRuns } = useQuery({
-    queryKey: [...queryKeys.liveRuns(companyId), "dashboard"],
-    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, MIN_DASHBOARD_RUNS),
+    queryKey: [...queryKeys.liveRuns, "dashboard"],
+    queryFn: () => heartbeatsApi.liveRuns(MIN_DASHBOARD_RUNS),
   });
 
   const runs = liveRuns ?? [];
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.list(companyId),
-    queryFn: () => issuesApi.list(companyId),
+    queryKey: queryKeys.issues.list,
+    queryFn: () => issuesApi.list(),
     enabled: runs.length > 0,
   });
 
@@ -45,7 +41,6 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
     runs,
-    companyId,
     maxChunksPerRun: 120,
   });
 

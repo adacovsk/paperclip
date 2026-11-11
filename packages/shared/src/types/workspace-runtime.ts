@@ -61,7 +61,6 @@ export interface IssueExecutionWorkspaceSettings {
 
 export interface ExecutionWorkspace {
   id: string;
-  companyId: string;
   projectId: string;
   projectWorkspaceId: string | null;
   sourceIssueId: string | null;
@@ -88,7 +87,6 @@ export interface ExecutionWorkspace {
 
 export interface WorkspaceRuntimeService {
   id: string;
-  companyId: string;
   projectId: string | null;
   projectWorkspaceId: string | null;
   executionWorkspaceId: string | null;

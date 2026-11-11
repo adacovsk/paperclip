@@ -183,11 +183,6 @@ Use in property rows, comment headers, assignee displays, and anywhere a user/ag
 **File:** `GoalTree.tsx`
 **Usage:** Hierarchical goal tree with expand/collapse. Used on the goals page.
 
-### CompanySwitcher
-
-**File:** `CompanySwitcher.tsx`
-**Usage:** Company selector dropdown in sidebar header.
-
 ---
 
 ## Layout Components
@@ -200,7 +195,7 @@ Use in property rows, comment headers, assignee displays, and anywhere a user/ag
 ### Sidebar
 
 **File:** `Sidebar.tsx`
-**Usage:** Left navigation sidebar (`w-60`). Contains CompanySwitcher, search button, new issue button, and SidebarSections.
+**Usage:** Left navigation sidebar (`w-60`). Contains the instance name header, search button, new issue button, and SidebarSections.
 
 ### SidebarSection
 
@@ -250,7 +245,7 @@ Use in property rows, comment headers, assignee displays, and anywhere a user/ag
 ### OnboardingWizard
 
 **File:** `OnboardingWizard.tsx`
-**Usage:** Multi-step onboarding flow for new users/companies.
+**Usage:** Multi-step onboarding flow for a new instance: name and first goal, first agent, starter task, launch.
 
 ---
 

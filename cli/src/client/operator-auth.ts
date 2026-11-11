@@ -37,8 +37,6 @@ interface ChallengeStatusResponse {
   command: string;
   clientName: string | null;
   requestedAccess: RequestedAccess;
-  requestedCompanyId: string | null;
-  requestedCompanyName: string | null;
   approvedAt: string | null;
   cancelledAt: string | null;
   expiresAt: string;
@@ -193,7 +191,6 @@ export function openUrl(url: string): boolean {
 export async function loginOperatorCli(params: {
   apiBase: string;
   requestedAccess: RequestedAccess;
-  requestedCompanyId?: string | null;
   clientName?: string | null;
   command?: string;
   storePath?: string;
@@ -209,7 +206,6 @@ export async function loginOperatorCli(params: {
       command,
       clientName: params.clientName?.trim() || "paperclipai cli",
       requestedAccess: params.requestedAccess,
-      requestedCompanyId: params.requestedCompanyId?.trim() || null,
     }),
   });
 

@@ -122,7 +122,6 @@ export interface HostServices {
   /** Provides `activity.log`. */
   activity: {
     log(params: {
-      companyId: string;
       message: string;
       entityType?: string;
       entityId?: string;
@@ -140,10 +139,9 @@ export interface HostServices {
     log(params: WorkerToHostMethods["log"][0]): Promise<void>;
   };
 
-  /** Provides `companies.list`, `companies.get`. */
-  companies: {
-    list(params: WorkerToHostMethods["companies.list"][0]): Promise<WorkerToHostMethods["companies.list"][1]>;
-    get(params: WorkerToHostMethods["companies.get"][0]): Promise<WorkerToHostMethods["companies.get"][1]>;
+  /** Provides `instance.get`. */
+  instance: {
+    get(params: WorkerToHostMethods["instance.get"][0]): Promise<WorkerToHostMethods["instance.get"][1]>;
   };
 
   /** Provides `projects.list`, `projects.get`, `projects.listWorkspaces`, `projects.getPrimaryWorkspace`, `projects.getWorkspaceForIssue`. */
@@ -287,9 +285,8 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
   // Logger — always allowed
   "log": null,
 
-  // Companies
-  "companies.list": "companies.read",
-  "companies.get": "companies.read",
+  // Instance profile
+  "instance.get": "instance.read",
 
   // Projects
   "projects.list": "projects.read",
@@ -452,12 +449,9 @@ export function createHostClientHandlers(
       return services.logger.log(params);
     }),
 
-    // Companies
-    "companies.list": gated("companies.list", async (params) => {
-      return services.companies.list(params);
-    }),
-    "companies.get": gated("companies.get", async (params) => {
-      return services.companies.get(params);
+    // Instance profile
+    "instance.get": gated("instance.get", async (params) => {
+      return services.instance.get(params);
     }),
 
     // Projects

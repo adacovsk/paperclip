@@ -313,7 +313,7 @@ def promote(api, agents: dict, project: Path, pr_heads: dict[str, str]) -> tuple
     if not knobs:
         print("promote pace-scale unreadable — promotion left to the Coordinator", flush=True)
         return 0, 0
-    worker = next(a for a in api.get(f"/companies/{api.company}/agents") if a["name"] == "Worker")
+    worker = next(a for a in api.get("/agents") if a["name"] == "Worker")
     slots = ((worker.get("runtimeConfig") or {}).get("heartbeat") or {}).get("maxConcurrentRuns") or 0
     running = api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"])
     new_work = [i for i in running if not i["title"].startswith("Rebase ")]

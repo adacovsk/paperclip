@@ -29,7 +29,6 @@ function buildResolvedWorkspace(overrides: Partial<ResolvedWorkspaceForRun> = {}
 function buildAgent(adapterType: string, runtimeConfig: Record<string, unknown> = {}) {
   return {
     id: "agent-1",
-    companyId: "company-1",
     projectId: null,
     goalId: null,
     name: "Agent",

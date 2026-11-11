@@ -3,12 +3,12 @@ title: Dashboard
 summary: Dashboard metrics endpoint
 ---
 
-Get a health summary for a company in a single call.
+Get a health summary for the instance in a single call.
 
 ## Get Dashboard
 
 ```
-GET /api/companies/{companyId}/dashboard
+GET /api/dashboard
 ```
 
 ## Response

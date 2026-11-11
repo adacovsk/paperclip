@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "@/lib/router";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
@@ -12,7 +12,6 @@ import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 
 interface LiveRunWidgetProps {
   issueId: string;
-  companyId?: string | null;
 }
 
 function toIsoString(value: string | Date | null | undefined): string | null {
@@ -24,7 +23,7 @@ function isRunActive(status: string): boolean {
   return status === "queued" || status === "running";
 }
 
-export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
+export function LiveRunWidget({ issueId }: LiveRunWidgetProps) {
   const queryClient = useQueryClient();
   const [cancellingRunIds, setCancellingRunIds] = useState(new Set<string>());
 
@@ -67,7 +66,7 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
     );
   }, [activeRun, issueId, liveRuns]);
 
-  const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs, companyId });
+  const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs });
 
   const handleCancelRun = async (runId: string) => {
     setCancellingRunIds((prev) => new Set(prev).add(runId));

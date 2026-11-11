@@ -5,7 +5,7 @@ import {
   PLUGIN_CAPABILITIES,
   PLUGIN_UI_SLOT_TYPES,
   PLUGIN_UI_SLOT_ENTITY_TYPES,
-  PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS,
+  PLUGIN_RESERVED_ROUTE_SEGMENTS,
   PLUGIN_LAUNCHER_PLACEMENT_ZONES,
   PLUGIN_LAUNCHER_ACTIONS,
   PLUGIN_LAUNCHER_BOUNDS,
@@ -166,7 +166,7 @@ export const pluginUiSlotDeclarationSchema = z.object({
       path: ["routePath"],
     });
   }
-  if (value.routePath && PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS.includes(value.routePath as (typeof PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS)[number])) {
+  if (value.routePath && PLUGIN_RESERVED_ROUTE_SEGMENTS.includes(value.routePath as (typeof PLUGIN_RESERVED_ROUTE_SEGMENTS)[number])) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `routePath "${value.routePath}" is reserved by the host`,

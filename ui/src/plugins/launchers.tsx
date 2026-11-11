@@ -26,7 +26,7 @@ import type {
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { authApi } from "@/api/auth";
 import { Button } from "@/components/ui/button";
-import { useNavigate, useLocation } from "@/lib/router";
+import { useNavigate, useLocation } from "react-router-dom";
 import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 import {
@@ -44,8 +44,6 @@ import {
 } from "./slots";
 
 export type PluginLauncherContext = {
-  companyId?: string | null;
-  companyPrefix?: string | null;
   projectId?: string | null;
   projectRef?: string | null;
   entityId?: string | null;
@@ -63,7 +61,6 @@ export type ResolvedPluginLauncher = PluginLauncherDeclaration & {
 type UsePluginLaunchersFilters = {
   placementZones: PluginLauncherPlacementZone[];
   entityType?: PluginUiSlotEntityType | null;
-  companyId?: string | null;
   enabled?: boolean;
 };
 
@@ -138,8 +135,6 @@ function buildLauncherHostContext(
   userId: string | null,
 ): PluginHostContext {
   return {
-    companyId: context.companyId ?? null,
-    companyPrefix: context.companyPrefix ?? null,
     projectId: context.projectId ?? (context.entityType === "project" ? context.entityId ?? null : null),
     entityId: context.entityId ?? null,
     entityType: context.entityType ?? null,
@@ -341,7 +336,7 @@ async function resolveLauncherComponent(
  * Scope bridge calls to the currently rendered launcher host context.
  *
  * Hooks such as `useHostContext()`, `usePluginData()`, and `usePluginAction()`
- * consume this ambient context so the bridge can forward company/entity scope
+ * consume this ambient context so the bridge can forward entity scope
  * and render-environment metadata to the plugin worker.
  */
 function PluginLauncherBridgeScope({
@@ -666,7 +661,6 @@ export function PluginLauncherProvider({ children }: { children: ReactNode }) {
             launcher.pluginId,
             launcher.action.target,
             launcher.action.params,
-            hostContext.companyId ?? null,
           );
           return;
         case "openModal":
@@ -767,8 +761,6 @@ export function PluginLauncherOutlet({
   const { launchers, contributionsByPluginId, errorMessage } = usePluginLaunchers({
     placementZones,
     entityType,
-    companyId: context.companyId,
-    enabled: !!context.companyId,
   });
 
   if (errorMessage) {

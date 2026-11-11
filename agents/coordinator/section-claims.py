@@ -47,7 +47,6 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-COMPANY = os.environ.get("PAPERCLIP_COMPANY_ID", "cf4422f9-b895-4918-bbe6-985e841e1ffd")
 API = os.environ.get("PAPERCLIP_API_URL", "http://localhost:3100").rstrip("/")
 
 #: Words that differ between two filings of the same front without changing what it is.
@@ -69,7 +68,7 @@ def normalise(title: str) -> str:
 
 
 def fetch(query: str) -> list[dict]:
-    url = f"{API}/api/companies/{COMPANY}/issues?" + urllib.parse.urlencode({"q": query})
+    url = f"{API}/api/issues?" + urllib.parse.urlencode({"q": query})
     headers = {}
     if key := os.environ.get("PAPERCLIP_API_KEY"):
         headers["Authorization"] = f"Bearer {key}"

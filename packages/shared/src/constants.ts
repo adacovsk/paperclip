@@ -1,5 +1,5 @@
-export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
-export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
+export const INSTANCE_STATUSES = ["active", "paused"] as const;
+export type InstanceStatus = (typeof INSTANCE_STATUSES)[number];
 
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
@@ -131,7 +131,7 @@ export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 export const ISSUE_ORIGIN_KINDS = ["manual", "routine_execution"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 
-export const GOAL_LEVELS = ["company", "team", "agent", "task"] as const;
+export const GOAL_LEVELS = ["instance", "team", "agent", "task"] as const;
 export type GoalLevel = (typeof GOAL_LEVELS)[number];
 
 export const GOAL_STATUSES = ["planned", "active", "achieved", "cancelled"] as const;
@@ -259,7 +259,7 @@ export const FINANCE_UNITS = [
 ] as const;
 export type FinanceUnit = (typeof FINANCE_UNITS)[number];
 
-export const BUDGET_SCOPE_TYPES = ["company", "agent", "project"] as const;
+export const BUDGET_SCOPE_TYPES = ["instance", "agent", "project"] as const;
 export type BudgetScopeType = (typeof BUDGET_SCOPE_TYPES)[number];
 
 export const BUDGET_METRICS = ["billed_cents"] as const;
@@ -335,7 +335,7 @@ export type MembershipStatus = (typeof MEMBERSHIP_STATUSES)[number];
 export const INSTANCE_USER_ROLES = ["instance_admin"] as const;
 export type InstanceUserRole = (typeof INSTANCE_USER_ROLES)[number];
 
-export const INVITE_TYPES = ["company_join", "bootstrap_ceo"] as const;
+export const INVITE_TYPES = ["join", "bootstrap_ceo"] as const;
 export type InviteType = (typeof INVITE_TYPES)[number];
 
 export const INVITE_JOIN_TYPES = ["human", "agent", "both"] as const;
@@ -421,7 +421,7 @@ export type PluginCategory = (typeof PLUGIN_CATEGORIES)[number];
  */
 export const PLUGIN_CAPABILITIES = [
   // Data Read
-  "companies.read",
+  "instance.read",
   "projects.read",
   "project.workspaces.read",
   "issues.read",
@@ -494,15 +494,13 @@ export const PLUGIN_UI_SLOT_TYPES = [
 export type PluginUiSlotType = (typeof PLUGIN_UI_SLOT_TYPES)[number];
 
 /**
- * Reserved company-scoped route segments that plugin page routes may not claim.
+ * Reserved top-level route segments that plugin page routes may not claim.
  *
- * These map to first-class host pages under `/:companyPrefix/...`.
+ * These map to first-class host pages.
  */
-export const PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS = [
+export const PLUGIN_RESERVED_ROUTE_SEGMENTS = [
   "dashboard",
   "onboarding",
-  "companies",
-  "company",
   "settings",
   "plugins",
   "org",
@@ -516,9 +514,14 @@ export const PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS = [
   "inbox",
   "design-guide",
   "tests",
+  "routines",
+  "skills",
+  "execution-workspaces",
+  "instance",
+  "usage",
 ] as const;
-export type PluginReservedCompanyRouteSegment =
-  (typeof PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS)[number];
+export type PluginReservedRouteSegment =
+  (typeof PLUGIN_RESERVED_ROUTE_SEGMENTS)[number];
 
 /**
  * Launcher placement zones describe where a plugin-owned launcher can appear
@@ -606,7 +609,6 @@ export type PluginUiSlotEntityType = (typeof PLUGIN_UI_SLOT_ENTITY_TYPES)[number
  */
 export const PLUGIN_STATE_SCOPE_KINDS = [
   "instance",
-  "company",
   "project",
   "project_workspace",
   "agent",
@@ -658,8 +660,7 @@ export type PluginWebhookDeliveryStatus = (typeof PLUGIN_WEBHOOK_DELIVERY_STATUS
  * @see PLUGIN_SPEC.md §16 — Event System
  */
 export const PLUGIN_EVENT_TYPES = [
-  "company.created",
-  "company.updated",
+  "instance.updated",
   "project.created",
   "project.updated",
   "project.workspace_created",

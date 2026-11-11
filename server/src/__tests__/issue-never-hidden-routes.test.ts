@@ -49,7 +49,7 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "local-operator",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "local_implicit",
       isInstanceAdmin: false,
     };
@@ -63,7 +63,6 @@ function createApp() {
 function makeIssue() {
   return {
     id: ISSUE_ID,
-    companyId: "company-1",
     status: "cancelled" as const,
     assigneeAgentId: null,
     assigneeUserId: null,

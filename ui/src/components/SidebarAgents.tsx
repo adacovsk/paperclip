@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import { NavLink, useLocation } from "@/lib/router";
+import { NavLink, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
-import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { agentsApi } from "../api/agents";
@@ -71,15 +70,13 @@ function RunDot({
 
 export function SidebarAgents() {
   const [open, setOpen] = useState(true);
-  const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
   const { isMobile, setSidebarOpen } = useSidebar();
   const location = useLocation();
 
   const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.list,
+    queryFn: () => agentsApi.list(),
   });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -91,9 +88,8 @@ export function SidebarAgents() {
   // consumers must not see as "live". Prefix-invalidation on the base key still
   // refreshes it via LiveUpdatesProvider.
   const { data: liveRuns } = useQuery({
-    queryKey: [...queryKeys.liveRuns(selectedCompanyId!), "withErrors"],
-    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!, undefined, true),
-    enabled: !!selectedCompanyId,
+    queryKey: [...queryKeys.liveRuns, "withErrors"],
+    queryFn: () => heartbeatsApi.liveRuns(undefined, true),
     refetchInterval: 10_000,
   });
 
@@ -118,11 +114,10 @@ export function SidebarAgents() {
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const { orderedAgents } = useAgentOrder({
     agents: visibleAgents,
-    companyId: selectedCompanyId,
     userId: currentUserId,
   });
 
-  const agentMatch = location.pathname.match(/^\/(?:[^/]+\/)?agents\/([^/]+)(?:\/([^/]+))?/);
+  const agentMatch = location.pathname.match(/^\/agents\/([^/]+)(?:\/([^/]+))?/);
   const activeAgentId = agentMatch?.[1] ?? null;
   const activeTab = agentMatch?.[2] ?? null;
 

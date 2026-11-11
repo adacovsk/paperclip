@@ -30,7 +30,6 @@ export interface ExecutionWorkspaceIssueRef {
 export interface ExecutionWorkspaceAgentRef {
   id: string;
   name: string;
-  companyId: string;
 }
 
 export interface RealizedExecutionWorkspace extends ExecutionWorkspaceInput {
@@ -44,7 +43,6 @@ export interface RealizedExecutionWorkspace extends ExecutionWorkspaceInput {
 
 export interface RuntimeServiceRef {
   id: string;
-  companyId: string;
   projectId: string | null;
   projectWorkspaceId: string | null;
   executionWorkspaceId: string | null;
@@ -136,7 +134,6 @@ function stableRuntimeServiceId(input: {
 function toRuntimeServiceRef(record: RuntimeServiceRecord, overrides?: Partial<RuntimeServiceRef>): RuntimeServiceRef {
   return {
     id: record.id,
-    companyId: record.companyId,
     projectId: record.projectId,
     projectWorkspaceId: record.projectWorkspaceId,
     executionWorkspaceId: record.executionWorkspaceId,
@@ -314,7 +311,6 @@ function buildWorkspaceCommandEnv(input: {
   env.PAPERCLIP_PROJECT_WORKSPACE_ID = input.base.workspaceId ?? "";
   env.PAPERCLIP_AGENT_ID = input.agent.id;
   env.PAPERCLIP_AGENT_NAME = input.agent.name;
-  env.PAPERCLIP_COMPANY_ID = input.agent.companyId;
   env.PAPERCLIP_ISSUE_ID = input.issue?.id ?? "";
   env.PAPERCLIP_ISSUE_IDENTIFIER = input.issue?.identifier ?? "";
   env.PAPERCLIP_ISSUE_TITLE = input.issue?.title ?? "";
@@ -939,7 +935,6 @@ async function waitForReadiness(input: {
 function toPersistedWorkspaceRuntimeService(record: RuntimeServiceRecord): typeof workspaceRuntimeServices.$inferInsert {
   return {
     id: record.id,
-    companyId: record.companyId,
     projectId: record.projectId,
     projectWorkspaceId: record.projectWorkspaceId,
     executionWorkspaceId: record.executionWorkspaceId,
@@ -1050,7 +1045,6 @@ export function normalizeAdapterManagedRuntimeServices(input: {
         providerRef: report.providerRef ?? null,
         reuseKey: report.reuseKey ?? null,
       }),
-      companyId: input.agent.companyId,
       projectId: report.projectId ?? input.workspace.projectId,
       projectWorkspaceId: report.projectWorkspaceId ?? input.workspace.workspaceId,
       executionWorkspaceId: input.executionWorkspaceId ?? null,
@@ -1161,7 +1155,6 @@ async function startLocalRuntimeService(input: {
   const envFingerprint = createHash("sha256").update(stableStringify(envConfig)).digest("hex");
   return {
     id: randomUUID(),
-    companyId: input.agent.companyId,
     projectId: input.workspace.projectId,
     projectWorkspaceId: input.workspace.workspaceId,
     executionWorkspaceId: input.executionWorkspaceId ?? null,
@@ -1398,19 +1391,13 @@ export async function stopRuntimeServicesForExecutionWorkspace(input: {
 
 export async function listWorkspaceRuntimeServicesForProjectWorkspaces(
   db: Db,
-  companyId: string,
   projectWorkspaceIds: string[],
 ) {
   if (projectWorkspaceIds.length === 0) return new Map<string, typeof workspaceRuntimeServices.$inferSelect[]>();
   const rows = await db
     .select()
     .from(workspaceRuntimeServices)
-    .where(
-      and(
-        eq(workspaceRuntimeServices.companyId, companyId),
-        inArray(workspaceRuntimeServices.projectWorkspaceId, projectWorkspaceIds),
-      ),
-    )
+    .where(inArray(workspaceRuntimeServices.projectWorkspaceId, projectWorkspaceIds))
     .orderBy(desc(workspaceRuntimeServices.updatedAt), desc(workspaceRuntimeServices.createdAt));
 
   const grouped = new Map<string, typeof workspaceRuntimeServices.$inferSelect[]>();
@@ -1483,7 +1470,6 @@ export async function persistAdapterManagedRuntimeServices(input: {
       .insert(workspaceRuntimeServices)
       .values({
         id: ref.id,
-        companyId: ref.companyId,
         projectId: ref.projectId,
         projectWorkspaceId: ref.projectWorkspaceId,
         executionWorkspaceId: ref.executionWorkspaceId,

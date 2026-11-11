@@ -3,7 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { agents } from "@paperclipai/db";
 
 /**
- * The company's Coordinator, the default next mover for anything with no live
+ * The instance's Coordinator, the default next mover for anything with no live
  * stage of its own.
  *
  * Its own module rather than a heartbeat export: the REST mutation path needs the
@@ -11,17 +11,17 @@ import { agents } from "@paperclipai/db";
  * the adapter and process machinery in behind it. One lookup, one definition, so
  * the two paths cannot disagree about who the Coordinator is.
  */
-export async function coordinatorIdFor(db: Db, companyId: string): Promise<string | null> {
+export async function coordinatorIdFor(db: Db): Promise<string | null> {
   return db
     .select({ id: agents.id })
     .from(agents)
-    .where(and(eq(agents.companyId, companyId), eq(agents.role, "coordinator")))
+    .where(eq(agents.role, "coordinator"))
     .limit(1)
     .then((rows) => rows[0]?.id ?? null);
 }
 
 /**
- * Who takes a stage-completion wake: the company's Dispatcher when one is live,
+ * Who takes a stage-completion wake: the instance's Dispatcher when one is live,
  * otherwise the Coordinator.
  *
  * Stage completions are most of the Coordinator's wakes, and most of those
@@ -31,18 +31,17 @@ export async function coordinatorIdFor(db: Db, companyId: string): Promise<strin
  * rows that need judgment. A paused or terminated Dispatcher falls back here, so
  * turning it off restores the old routing with no other change.
  */
-export async function stageDispatcherIdFor(db: Db, companyId: string): Promise<string | null> {
+export async function stageDispatcherIdFor(db: Db): Promise<string | null> {
   const dispatcher = await db
     .select({ id: agents.id })
     .from(agents)
     .where(
       and(
-        eq(agents.companyId, companyId),
         eq(agents.role, "dispatcher"),
         notInArray(agents.status, ["paused", "terminated", "pending_approval"]),
       ),
     )
     .limit(1)
     .then((rows) => rows[0]?.id ?? null);
-  return dispatcher ?? coordinatorIdFor(db, companyId);
+  return dispatcher ?? coordinatorIdFor(db);
 }

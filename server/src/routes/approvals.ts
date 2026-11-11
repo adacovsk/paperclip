@@ -16,7 +16,7 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
-import { assertOperator, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertOperator, assertInstanceAccess, getActorInfo } from "./authz.js";
 import { redactEventPayload } from "../redaction.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
@@ -39,15 +39,14 @@ export function approvalRoutes(db: Db) {
     if (!approval) {
       return null;
     }
-    assertCompanyAccess(req, approval.companyId);
+    assertInstanceAccess(req);
     return approval;
   }
 
-  router.get("/companies/:companyId/approvals", async (req, res) => {
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+  router.get("/approvals", async (req, res) => {
+    assertInstanceAccess(req);
     const status = req.query.status as string | undefined;
-    const result = await svc.list(companyId, status);
+    const result = await svc.list(status);
     res.json(result.map((approval) => redactApprovalPayload(approval)));
   });
 
@@ -58,13 +57,12 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    assertCompanyAccess(req, approval.companyId);
+    assertInstanceAccess(req);
     res.json(redactApprovalPayload(approval));
   });
 
-  router.post("/companies/:companyId/approvals", validate(createApprovalSchema), async (req, res) => {
-    const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
+  router.post("/approvals", validate(createApprovalSchema), async (req, res) => {
+    assertInstanceAccess(req);
     const rawIssueIds = req.body.issueIds;
     const issueIds = Array.isArray(rawIssueIds)
       ? rawIssueIds.filter((value: unknown): value is string => typeof value === "string")
@@ -74,14 +72,13 @@ export function approvalRoutes(db: Db) {
     const normalizedPayload =
       approvalInput.type === "hire_agent"
         ? await secretsSvc.normalizeHireApprovalPayloadForPersistence(
-            companyId,
             approvalInput.payload,
             { strictMode: strictSecretsMode },
           )
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
-    const approval = await svc.create(companyId, {
+    const approval = await svc.create({
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -102,7 +99,6 @@ export function approvalRoutes(db: Db) {
     }
 
     await logActivity(db, {
-      companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
@@ -122,7 +118,7 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    assertCompanyAccess(req, approval.companyId);
+    assertInstanceAccess(req);
     const issues = await issueApprovalsSvc.listIssuesForApproval(id);
     res.json(issues);
   });
@@ -146,7 +142,6 @@ export function approvalRoutes(db: Db) {
       const primaryIssueId = linkedIssueIds[0] ?? null;
 
       await logActivity(db, {
-        companyId: approval.companyId,
         actorType: "user",
         actorId: req.actor.userId ?? "operator",
         action: "approval.approved",
@@ -185,7 +180,6 @@ export function approvalRoutes(db: Db) {
           });
 
           await logActivity(db, {
-            companyId: approval.companyId,
             actorType: "user",
             actorId: req.actor.userId ?? "operator",
             action: "approval.requester_wakeup_queued",
@@ -207,7 +201,6 @@ export function approvalRoutes(db: Db) {
             "failed to queue requester wakeup after approval",
           );
           await logActivity(db, {
-            companyId: approval.companyId,
             actorType: "user",
             actorId: req.actor.userId ?? "operator",
             action: "approval.requester_wakeup_failed",
@@ -241,7 +234,6 @@ export function approvalRoutes(db: Db) {
 
     if (applied) {
       await logActivity(db, {
-        companyId: approval.companyId,
         actorType: "user",
         actorId: req.actor.userId ?? "operator",
         action: "approval.rejected",
@@ -271,7 +263,6 @@ export function approvalRoutes(db: Db) {
       );
 
       await logActivity(db, {
-        companyId: approval.companyId,
         actorType: "user",
         actorId: req.actor.userId ?? "operator",
         action: "approval.revision_requested",
@@ -291,7 +282,7 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    assertCompanyAccess(req, existing.companyId);
+    assertInstanceAccess(req);
 
     if (req.actor.type === "agent" && req.actor.agentId !== existing.requestedByAgentId) {
       res.status(403).json({ error: "Only requesting agent can resubmit this approval" });
@@ -301,7 +292,6 @@ export function approvalRoutes(db: Db) {
     const normalizedPayload = req.body.payload
       ? existing.type === "hire_agent"
         ? await secretsSvc.normalizeHireApprovalPayloadForPersistence(
-            existing.companyId,
             req.body.payload,
             { strictMode: strictSecretsMode },
           )
@@ -310,7 +300,6 @@ export function approvalRoutes(db: Db) {
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {
-      companyId: approval.companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
@@ -329,7 +318,7 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    assertCompanyAccess(req, approval.companyId);
+    assertInstanceAccess(req);
     const comments = await svc.listComments(id);
     res.json(comments);
   });
@@ -341,7 +330,7 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    assertCompanyAccess(req, approval.companyId);
+    assertInstanceAccess(req);
     const actor = getActorInfo(req);
     const comment = await svc.addComment(id, req.body.body, {
       agentId: actor.agentId ?? undefined,
@@ -349,7 +338,6 @@ export function approvalRoutes(db: Db) {
     });
 
     await logActivity(db, {
-      companyId: approval.companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
@@ -371,7 +359,7 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    assertCompanyAccess(req, approval.companyId);
+    assertInstanceAccess(req);
     const { approvals, issueApprovals, approvalComments, budgetIncidents } = await import("@paperclipai/db");
     const { eq } = await import("drizzle-orm");
     await db.delete(approvalComments).where(eq(approvalComments.approvalId, id));

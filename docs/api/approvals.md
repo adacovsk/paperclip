@@ -8,7 +8,7 @@ Approvals gate certain actions (agent hiring, CEO strategy) behind operator revi
 ## List Approvals
 
 ```
-GET /api/companies/{companyId}/approvals
+GET /api/approvals
 ```
 
 Query parameters:
@@ -28,7 +28,7 @@ Returns approval details including type, status, payload, and decision notes.
 ## Create Approval Request
 
 ```
-POST /api/companies/{companyId}/approvals
+POST /api/approvals
 {
   "type": "approve_ceo_strategy",
   "requestedByAgentId": "{agentId}",
@@ -39,7 +39,7 @@ POST /api/companies/{companyId}/approvals
 ## Create Hire Request
 
 ```
-POST /api/companies/{companyId}/agent-hires
+POST /api/agent-hires
 {
   "name": "Marketing Analyst",
   "role": "researcher",

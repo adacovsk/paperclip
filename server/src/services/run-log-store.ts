@@ -28,7 +28,7 @@ export interface RunLogFinalizeSummary {
 }
 
 export interface RunLogStore {
-  begin(input: { companyId: string; agentId: string; runId: string }): Promise<RunLogHandle>;
+  begin(input: { agentId: string; runId: string }): Promise<RunLogHandle>;
   append(
     handle: RunLogHandle,
     event: { stream: "stdout" | "stderr" | "system"; chunk: string; ts: string },
@@ -94,9 +94,8 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
 
   return {
     async begin(input) {
-      const [companyId, agentId] = safeSegments(input.companyId, input.agentId);
-      const runId = safeSegments(input.runId)[0]!;
-      const relDir = path.join(companyId, agentId);
+      const [agentId, runId] = safeSegments(input.agentId, input.runId);
+      const relDir = agentId;
       const relPath = path.join(relDir, `${runId}.ndjson`);
       await ensureDir(relDir);
 

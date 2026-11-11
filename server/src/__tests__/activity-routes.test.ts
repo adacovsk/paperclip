@@ -37,7 +37,7 @@ function createApp() {
     (req as any).actor = {
       type: "operator",
       userId: "user-1",
-      companyIds: ["company-1"],
+      isMember: true,
       source: "session",
       isInstanceAdmin: false,
     };
@@ -56,7 +56,6 @@ describe("activity routes", () => {
   it("resolves issue identifiers before loading runs", async () => {
     mockIssueService.getByIdentifier.mockResolvedValue({
       id: "issue-uuid-1",
-      companyId: "company-1",
     });
     mockActivityService.runsForIssue.mockResolvedValue([
       {
@@ -69,7 +68,7 @@ describe("activity routes", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-475");
     expect(mockIssueService.getById).not.toHaveBeenCalled();
-    expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("company-1", "issue-uuid-1");
+    expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("issue-uuid-1");
     expect(res.body).toEqual([{ runId: "run-1" }]);
   });
 });

@@ -13,19 +13,17 @@ export interface BaseClientOptions {
   profile?: string;
   apiBase?: string;
   apiKey?: string;
-  companyId?: string;
   json?: boolean;
 }
 
 export interface ResolvedClientContext {
   api: PaperclipApiClient;
-  companyId?: string;
   profileName: string;
   profile: ClientContextProfile;
   json: boolean;
 }
 
-export function addCommonClientOptions(command: Command, opts?: { includeCompany?: boolean }): Command {
+export function addCommonClientOptions(command: Command): Command {
   command
     .option("-c, --config <path>", "Path to Paperclip config file")
     .option("-d, --data-dir <path>", "Paperclip data directory root (isolates state from ~/.paperclip)")
@@ -35,17 +33,10 @@ export function addCommonClientOptions(command: Command, opts?: { includeCompany
     .option("--api-key <token>", "Bearer token for agent-authenticated calls")
     .option("--json", "Output raw JSON");
 
-  if (opts?.includeCompany) {
-    command.option("-C, --company-id <id>", "Company ID (overrides context default)");
-  }
-
   return command;
 }
 
-export function resolveCommandContext(
-  options: BaseClientOptions,
-  opts?: { requireCompany?: boolean },
-): ResolvedClientContext {
+export function resolveCommandContext(options: BaseClientOptions): ResolvedClientContext {
   const context = readContext(options.context);
   const { name: profileName, profile } = resolveProfile(context, options.profile);
 
@@ -62,17 +53,6 @@ export function resolveCommandContext(
   const storedOperatorCredential = explicitApiKey ? null : getStoredOperatorCredential(apiBase);
   const apiKey = explicitApiKey || storedOperatorCredential?.token;
 
-  const companyId =
-    options.companyId?.trim() ||
-    process.env.PAPERCLIP_COMPANY_ID?.trim() ||
-    profile.companyId;
-
-  if (opts?.requireCompany && !companyId) {
-    throw new Error(
-      "Company ID is required. Pass --company-id, set PAPERCLIP_COMPANY_ID, or set context profile companyId via `paperclipai context set`.",
-    );
-  }
-
   const api = new PaperclipApiClient({
     apiBase,
     apiKey,
@@ -88,7 +68,6 @@ export function resolveCommandContext(
           const login = await loginOperatorCli({
             apiBase,
             requestedAccess,
-            requestedCompanyId: companyId ?? null,
             command: buildCliCommandLabel(),
           });
           return login.token;
@@ -96,7 +75,6 @@ export function resolveCommandContext(
   });
   return {
     api,
-    companyId,
     profileName,
     profile,
     json: Boolean(options.json),

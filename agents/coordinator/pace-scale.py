@@ -61,7 +61,6 @@ WRITER_THRESHOLD = 2
 PLANNER_FLOOR = 40
 
 API = os.environ.get("PAPERCLIP_API_URL", "http://127.0.0.1:3100").rstrip("/")
-COMPANY = os.environ.get("PAPERCLIP_COMPANY_ID", "cf4422f9-b895-4918-bbe6-985e841e1ffd")
 
 
 def knobs(open_: bool, why: str) -> dict:
@@ -88,7 +87,7 @@ def apply(result: dict) -> list[str]:
             return json.load(resp)
 
     changed = []
-    agents = {a["name"]: a for a in call("GET", f"/companies/{COMPANY}/agents")}
+    agents = {a["name"]: a for a in call("GET", "/agents")}
     for name, slots in (("Worker", result["worker_slots"]), ("Reviewer", result["reviewer_slots"])):
         agent = agents.get(name)
         if agent is None:

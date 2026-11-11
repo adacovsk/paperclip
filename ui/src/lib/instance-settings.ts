@@ -10,6 +10,7 @@ export function normalizeRememberedInstanceSettingsPath(rawPath: string | null):
 
   if (
     pathname === "/instance/settings/general" ||
+    pathname === "/instance/settings/profile" ||
     pathname === "/instance/settings/heartbeats" ||
     pathname === "/instance/settings/plugins" ||
     pathname === "/instance/settings/experimental"

@@ -48,12 +48,12 @@ This auto-onboards if config is missing, runs health checks with auto-repair, an
 
 Once Paperclip is running:
 
-1. Create your first company in the web UI
-2. Define a company goal
+1. Name your instance in the onboarding wizard
+2. Define the instance goal
 3. Create a CEO agent and configure its adapter
 4. Build out the org chart with more agents
 5. Set budgets and assign initial tasks
-6. Hit go — agents start their heartbeats and the company runs
+6. Hit go — agents start their heartbeats and the instance runs
 
 <Card title="Core Concepts" href="/start/core-concepts">
   Learn the key concepts behind Paperclip
