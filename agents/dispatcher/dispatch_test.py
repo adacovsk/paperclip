@@ -102,9 +102,32 @@ class ReviewerStage(unittest.TestCase):
         stages = [child("Verify: T-1", "done", "1", "verify"), child("Review: T-1", "done", "2", "review")]
         self.assertEqual(decide(parent(), stages, CLEAN, pr_head="b" * 40).kind, "skip")
 
-    def test_finished_verify_is_left_to_landing(self):
+    def test_a_verify_whose_pr_merged_is_left_to_the_merge_sweep(self):
         stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
-        self.assertEqual(decide(parent(), stages, CLEAN).kind, "skip")
+        self.assertEqual(decide(parent(), stages, CLEAN, pr_merged=True).kind, "skip")
+
+    def test_a_verify_closed_done_with_no_pr_is_owed_a_fresh_verify(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        decision = decide(parent(), stages, CLEAN)
+        self.assertEqual((decision.kind, decision.reason), ("verify", "verify closed done with no PR; a fresh verify is owed"))
+        self.assertIs(dispatch.unlanded_verify(dispatch.ordered_stages(stages)), stages[1])
+
+    def test_a_second_verify_closed_done_with_no_pr_is_handed_off(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify"), child("Verify: T-1", "done", "3", "verify")]
+        decision = decide(parent(), stages, CLEAN)
+        self.assertEqual((decision.kind, decision.reason), ("handoff", "2 verifies closed done with no PR"))
+
+    def test_an_unlanded_verify_with_nothing_to_land_is_handed_off(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        empty = GitState(exists=True, ahead=0, merges_clean=True)
+        self.assertEqual(decide(parent(), stages, empty).kind, "handoff")
+        dirty = GitState(exists=True, ahead=2, dirty=True, merges_clean=True)
+        self.assertEqual(decide(parent(), stages, dirty).kind, "handoff")
+
+    def test_an_unlanded_verify_on_a_chain_with_steps_left_is_handed_off(self):
+        stages = [self.review, child("Verify: T-1", "done", "2", "verify")]
+        git = GitState(exists=True, ahead=2, merges_clean=True, chain_steps=1)
+        self.assertEqual(decide(parent(description="Chain: 2 steps"), stages, git).kind, "handoff")
 
     def cancelled_verify(self, at="2026-10-18T00:58:00Z"):
         return [self.review, {**child("Verify: T-1", "cancelled", "2", "verify"), "cancelledAt": at}]
@@ -136,7 +159,7 @@ class ReviewerStage(unittest.TestCase):
 
     def test_a_cancelled_verify_followed_by_another_stage_is_not_a_ruling(self):
         stages = [*self.cancelled_verify(), child("Verify: T-1", "done", "3", "verify")]
-        self.assertEqual(decide(parent(), stages, CLEAN).kind, "skip")
+        self.assertEqual(decide(parent(), stages, CLEAN, pr_merged=True).kind, "skip")
 
     def test_ci_fix_key_counts_as_a_verify(self):
         stages = [self.review, child("ci-fix: abc", "in_review", "2", "ci-fix")]
@@ -344,6 +367,23 @@ class Holds(unittest.TestCase):
         ]
         self.assertTrue(dispatch.overruled(comments, (("AA-9",), "closed")))
 
+    def test_a_re_hold_waits_out_an_open_pr_but_not_a_closed_blocker(self):
+        open_pr = {"AA-9": {"identifier": "AA-9", "status": "in_review"}}
+        self.assertIn("PR", dispatch.hold_release(("AA-9",), "pr", open_pr, {"AA-9"}, re_held=False))
+        self.assertIsNone(dispatch.hold_release(("AA-9",), "pr", open_pr, {"AA-9"}, re_held=True))
+        merged = {"AA-9": {"identifier": "AA-9", "status": "done"}}
+        self.assertEqual(dispatch.hold_release(("AA-9",), "pr", merged, set(), re_held=True), "AA-9 is done")
+
+    def test_a_hold_on_several_blockers_waits_for_every_one(self):
+        blockers = {"AA-1": {"identifier": "AA-1", "status": "done"}, "AA-2": {"identifier": "AA-2", "status": "in_review"}}
+        self.assertIsNone(dispatch.hold_release(("AA-1", "AA-2"), "merge", blockers, set(), re_held=False))
+        self.assertIsNone(dispatch.hold_release(("AA-1", "AA-3"), "merge", blockers, set(), re_held=False))
+        blockers["AA-2"]["status"] = "cancelled"
+        self.assertEqual(
+            dispatch.hold_release(("AA-1", "AA-2"), "merge", blockers, set(), re_held=False),
+            "AA-1 is done; AA-2 is cancelled",
+        )
+
     def test_a_first_hold_is_not_overruled(self):
         self.assertFalse(dispatch.overruled([{"createdAt": "1", "body": "Held: until AA-9 merges"}], (("AA-9",), "merge")))
 
@@ -365,39 +405,72 @@ class UnheldEscalations(unittest.TestCase):
 
     VERIFY = {"id": "v", "identifier": "AA-20"}
 
+    STAGE_AGENTS = {"arch", "rev"}
+
     @staticmethod
-    def comment(at, body):
-        return {"createdAt": at, "body": body}
+    def comment(at, body, author="arch"):
+        return {"createdAt": at, "body": body, "authorAgentId": author}
+
+    def test_a_requeue_note_is_not_an_escalation(self):
+        comments = [
+            self.comment("1", "main does not compile; nothing here is this task's."),
+            self.comment("2", "Requeued by requeue-base-red.sh: main moved past the break; the verify re-dispatched.", None),
+        ]
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+
+    def test_another_agents_note_is_not_an_escalation(self):
+        comments = [self.comment("1", "Handing to the Architect: its verify result needs a model.", "disp")]
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+
+    def test_a_marked_escalation_routes_whoever_posted_it(self):
+        comments = [self.comment("1", "Red twice.\n\nPAPERCLIP-ESCALATE: pick a scope", None)]
+        self.assertEqual(
+            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
+            "Held: planner — AA-20 escalated: pick a scope",
+        )
+
+    def test_a_stage_re_dispatched_since_it_was_read_is_not_routed(self):
+        class Api:
+            def __init__(self, fresh):
+                self.fresh = fresh
+
+            def get(self, path):
+                return self.fresh
+
+        read = {"id": "v", "status": "blocked", "assigneeAgentId": "arch"}
+        self.assertTrue(dispatch.still_parked(Api({"status": "blocked", "assigneeAgentId": "arch"}), read))
+        self.assertFalse(dispatch.still_parked(Api({"status": "todo", "assigneeAgentId": "arch"}), read))
+        self.assertFalse(dispatch.still_parked(Api({"status": "blocked", "assigneeAgentId": "planner"}), read))
 
     def test_routes_a_marked_escalation_with_its_reason(self):
         comments = [self.comment("2", "Two worn-item tests fail.\n\nPAPERCLIP-ESCALATE: pick a scope for the Epaulet slot")]
         self.assertEqual(
-            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set()),
+            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
             "Held: planner — AA-20 escalated: pick a scope for the Epaulet slot",
         )
 
     def test_routes_a_prose_escalation_by_its_first_line(self):
         comments = [self.comment("2", "What it needs: an operator to land it.\nDetail follows.")]
         self.assertEqual(
-            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set()),
+            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
             "Held: planner — AA-20 escalated: What it needs: an operator to land it.",
         )
 
     def test_a_held_stage_is_owned(self):
         comments = [self.comment("1", "PAPERCLIP-ESCALATE: x"), self.comment("2", "Held: operator — needs a ruling")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set()))
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
 
     def test_a_conflict_is_the_rebase_lanes(self):
         comments = [self.comment("1", "PAPERCLIP-ESCALATE: conflict with main")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, False, set()))
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, False, set(), self.STAGE_AGENTS))
 
     def test_a_red_main_is_the_base_red_markers_by_stage_or_parent(self):
         comments = [self.comment("1", "PAPERCLIP-ESCALATE: main does not compile")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-20"}))
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-2"}))
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-20"}, self.STAGE_AGENTS))
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-2"}, self.STAGE_AGENTS))
 
     def test_a_stage_with_no_comment_is_left(self):
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", [], True, set()))
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", [], True, set(), self.STAGE_AGENTS))
 
 
 class OrphanStages(unittest.TestCase):
@@ -521,17 +594,28 @@ class PlannerHolds(unittest.TestCase):
         ]}, {"AA-7": "done"})
         self.assertEqual(dispatch.release_holds(api, {}), 0)
 
-    def test_a_final_re_hold_on_a_met_condition_is_named_not_released(self):
+    def test_a_re_hold_on_a_closed_blocker_is_released_whoever_wrote_it(self):
         api = self.Api({"1": [
-            {"createdAt": "1", "body": "Held: until AA-7 merges — builds on its seam"},
-            {"createdAt": "2", "body": "Released: AA-7 is done.\n\n> Held: until AA-7 merges — builds on its seam"},
-            {"createdAt": "3", "body": "Held: until AA-7 merges — re-held"},
+            {"createdAt": "1", "body": "Held: until AA-7 opens its PR — files"},
+            {"createdAt": "2", "body": "Released: AA-7 has opened its PR.\n\n> Held: until AA-7 opens its PR — files"},
+            {"createdAt": "3", "body": "Held: until AA-7 opens its PR — 3 live writers"},
         ]}, {"AA-7": "done"})
+        self.assertEqual(dispatch.release_holds(api, {}), 1)
+        ident, body, comment = api.writes[0]
+        self.assertEqual((ident, body), ("AA-1", {"status": "backlog"}))
+        self.assertTrue(comment.startswith("Released: AA-7 is done."))
+
+    def test_a_re_hold_on_a_blocker_with_its_pr_open_is_named_not_released(self):
+        api = self.Api({"1": [
+            {"createdAt": "1", "body": "Held: until AA-7 opens its PR — files"},
+            {"createdAt": "2", "body": "Released: AA-7 has opened its PR.\n\n> Held: until AA-7 opens its PR — files"},
+            {"createdAt": "3", "body": "Held: until AA-7 opens its PR — still contended"},
+        ]})
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(dispatch.release_holds(api, {}), 0)
+            self.assertEqual(dispatch.release_holds(api, {"task/AA-7": "a" * 40}), 0)
         self.assertEqual(api.writes, [])
-        self.assertIn("re-held on a condition already met, so never released: AA-1", out.getvalue())
+        self.assertIn("with the PR open, so held until the merge: AA-1", out.getvalue())
 
     def test_a_hold_on_several_blockers_waits_for_all_of_them(self):
         comments = {"1": [{"createdAt": "1", "body": "Held: until AA-7 and AA-8 merge — one slice at a time"}]}

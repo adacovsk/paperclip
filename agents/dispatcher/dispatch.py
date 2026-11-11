@@ -304,7 +304,7 @@ ESCALATE_LINE = re.compile(r"^PAPERCLIP-ESCALATE:\s*(.+)$", re.MULTILINE)
 
 
 def unheld_escalation(stage: dict, parent: str, comments: list[dict], merges_clean: bool,
-                      base_red: set[str]) -> str | None:
+                      base_red: set[str], escalators: set[str]) -> str | None:
     """The `Held: planner` line for a blocked stage nothing routes, else None.
 
     A Verify or Review escalates by parking `blocked`. Three kinds have an owner:
@@ -315,6 +315,13 @@ def unheld_escalation(stage: dict, parent: str, comments: list[dict], merges_cle
     written in prose — sat `blocked` with no reader, holding every task queued
     behind its files. The Planner is the pipeline's judgment for scope, so the
     stage is routed there with the escalation's own reason.
+
+    Only the stage's own agent escalates: the newest comment must carry the
+    `PAPERCLIP-ESCALATE:` line or be written by one of `escalators` (the agents
+    that run stages). A requeue, release or hand-off note is the opposite of an
+    escalation -- it says the stage was just sent back to work -- and it lands
+    while this sweep still holds the stage's `blocked` read, with the base-red
+    marker that guarded the stage already deleted by the requeue.
     """
     # A base-red marker names the escalating stage, or its parent when it could not.
     if not merges_clean or {stage["identifier"], parent} & base_red:
@@ -324,11 +331,26 @@ def unheld_escalation(stage: dict, parent: str, comments: list[dict], merges_cle
         return None
     body = newest.get("body") or ""
     m = ESCALATE_LINE.search(body)
+    if not m and newest.get("authorAgentId") not in escalators:
+        return None
     reason = m.group(1).strip() if m else body.strip().split("\n", 1)[0]
     return f"Held: planner — {stage['identifier']} escalated: {reason}"
 
 
-def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | None = None) -> Decision:
+def unlanded_verify(stages: list[tuple[str, dict]]) -> dict | None:
+    """The newest real stage, when it is a Verify closed `done`.
+
+    Every path that closes a Verify `done` has a PR behind it (open at the
+    landed head, or merged) or closes the parent with it. So with the parent
+    still open and no PR, open or merged, the Verify was closed by hand and
+    verified nothing.
+    """
+    stage, last = next(((s, c) for s, c in reversed(stages) if s != "rebase"), (None, None))
+    return last if stage == "verify" and last["status"] == "done" else None
+
+
+def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | None = None,
+           pr_merged: bool = False) -> Decision:
     """One parent -> what its next stage is.
 
     Pure, so the signal table is testable without an API or a worktree. A chain
@@ -337,14 +359,15 @@ def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | Non
     Review after a cancelled Verify, where the chain was otherwise verified
     with a step still missing.
     """
-    decision = next_stage(parent, children, git, pr_head)
+    decision = next_stage(parent, children, git, pr_head, pr_merged)
     m = CHAIN_STEPS.search(parent.get("description") or "")
     if m and decision.kind in STAGE_STARTS and git.chain_steps < int(m.group(1)):
         return Decision("handoff", f"chain task, {git.chain_steps} of {m.group(1)} steps committed")
     return decision
 
 
-def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str | None) -> Decision:
+def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str | None,
+               pr_merged: bool = False) -> Decision:
     stages = ordered_stages(children)
     if parent["status"] in ("done", "cancelled"):
         return Decision("skip", f"parent is {parent['status']}")
@@ -406,6 +429,8 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
         return Decision("handoff", "Reviewer done, no label and nothing cargo reads")
     if stage == "verify" and last["status"] == "cancelled" and last is stages[-1][1]:
         return after_cancelled_verify(last, git)
+    if stage == "verify" and last["status"] == "done" and not pr_merged:
+        return after_unlanded_verify(stages, git)
     if stage == "verify":
         # Landing and the merge sweep own everything after a verify.
         return Decision("skip", "verify finished; landing owns it")
@@ -426,6 +451,24 @@ def after_cancelled_verify(verify: dict, git: GitState) -> Decision:
     if git.dirty:
         return Decision("handoff", "verify cancelled; the Worker's rework left a dirty tree")
     return Decision("review", "verify cancelled; the Worker committed rework since")
+
+
+def after_unlanded_verify(stages: list[tuple[str, dict]], git: GitState) -> Decision:
+    """A Verify closed `done` with no PR, open or merged, verified nothing: run it again.
+
+    Read as "landing owns it", the parent sat `in_review` with no stage, no PR
+    and no run, holding its files against every task queued behind them. One
+    fresh Verify is owed; a second one closed the same way is somebody closing
+    them on purpose, which is the Coordinator's to read.
+    """
+    if git.dirty:
+        return Decision("handoff", "verify closed done with no PR, on a dirty tree")
+    if git.ahead == 0:
+        return Decision("handoff", "verify closed done with no PR and no commits to land")
+    done = [c for stage, c in stages if stage == "verify" and c["status"] == "done"]
+    if len(done) > 1:
+        return Decision("handoff", f"{len(done)} verifies closed done with no PR")
+    return Decision("verify", "verify closed done with no PR; a fresh verify is owed")
 
 
 def held_until(comment: str) -> tuple[tuple[str, ...], str] | None:
@@ -461,6 +504,20 @@ def hold_resolved(blocker: dict | None, kind: str, blocker_pr_open: bool) -> str
     if kind == "pr" and blocker_pr_open:
         return f"{blocker['identifier']} has opened its PR"
     return None
+
+
+def hold_release(blocker_ids: tuple[str, ...], kind: str, blockers: dict[str, dict | None],
+                 pr_open: set[str], re_held: bool) -> str | None:
+    """Why a hold on these blockers is released, or None while any still holds it.
+
+    `re_held` is `overruled()`: the hold was written again after this sweep
+    released it. An open PR then no longer releases it, since that is the
+    release the re-hold overruled. A closed blocker still does. A hold written
+    on a blocker that was already merged otherwise matched an old release of
+    the same line and was final from its first second.
+    """
+    reasons = [hold_resolved(blockers.get(b), kind, not re_held and b in pr_open) for b in blocker_ids]
+    return "; ".join(reasons) if all(reasons) else None
 
 
 def verify_landed(verify: dict, open_head: str | None, merged_pr: int | None,
@@ -637,6 +694,11 @@ def overruled(comments: list[dict], hold: tuple[str, str]) -> bool:
     The hold names its release condition, so a wrong release means the hold
     was written in the wrong form. The Coordinator's re-hold is the correction;
     releasing again would only buy another Coordinator run to re-hold it.
+
+    That holds only while a blocker is still open: an `opens its PR` re-hold on
+    a blocker whose PR is open is read as "until it merges". Once every blocker
+    is done or cancelled no reading of the hold is unmet, so `hold_release`
+    releases it whoever wrote it.
 
     Only a release of this same hold -- same blocker, same condition -- counts.
     Matching the blocker id anywhere in a `Released:` comment would also match
@@ -1116,6 +1178,9 @@ def sweep(api: Api, project: Path) -> None:
 
     owned = api.issues(status="in_review", assigneeAgentId=agents["Worker"])
     parents = [p for p in owned if not stage_of(p)]
+    # An `in_review` parent nobody holds has no run coming and no other sweep
+    # reading it, so it is judged here like a Worker-held one.
+    parents += [p for p in api.issues(status="in_review") if not p.get("assigneeAgentId") and not stage_of(p)]
     # A finished rebase's parent may be parked anywhere (a conflict hold blocks
     # it), so it joins the sweep by its child rather than by its own status.
     listed = {p["id"] for p in parents}
@@ -1140,6 +1205,13 @@ def sweep(api: Api, project: Path) -> None:
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         loaded = list(pool.map(load, parents))
     pr_heads = open_pr_heads(project)
+    merged: dict[str, int] | None = None  # a `gh` call; read on first use
+
+    def pr_merged(branch: str) -> bool:
+        nonlocal merged
+        if merged is None:
+            merged = merged_pr_numbers(project)
+        return branch in merged
 
     capacity: int | None | str = "unread"  # the probe costs seconds; read it on first use
     slots = ((worker.get("runtimeConfig") or {}).get("heartbeat") or {}).get("maxConcurrentRuns") or 0
@@ -1208,25 +1280,31 @@ def sweep(api: Api, project: Path) -> None:
     # Oldest parent first, so a hot file's longest-waiting branch gets the slot.
     # A stage that escalated on a red `main` is owned by its base-red marker.
     base_red_stages = {name for m in base_red_markers() for name in (m.escalated, m.task)}
+    escalators = {agents[name] for name in ("Architect", "Reviewer") if name in agents}
     for parent, children, git_st in sorted(loaded, key=lambda t: t[0]["createdAt"]):
         with skip_unreachable(f"stage   {parent['identifier']}"):
             if git_st is None:
                 continue
-            decision = decide(parent, children, git_st, pr_heads.get(f"task/{parent['identifier']}"))
+            branch = f"task/{parent['identifier']}"
             stages = ordered_stages(children)
+            landed = branch not in pr_heads and unlanded_verify(stages) is not None and pr_merged(branch)
+            decision = decide(parent, children, git_st, pr_heads.get(branch), landed)
             if decision.reason == BLOCKED_STAGE and agents.get("Planner"):
                 blocked = stages[-1][1]
                 hold = unheld_escalation(blocked, parent["identifier"], api.get(f"/issues/{blocked['id']}/comments"),
-                                         git_st.merges_clean, base_red_stages)
-                if hold:
+                                         git_st.merges_clean, base_red_stages, escalators)
+                if hold and still_parked(api, blocked):
                     route_to_planner(api, blocked, hold, agents["Planner"])
             if decision.kind == "review":
                 create_review(api, agents, parent, git_st)
             elif decision.kind == "verify":
-                review = max((c for c in children if stage_of(c) == "review"), key=lambda c: c["createdAt"])
+                # The stage this Verify answers: the Review that passed, or the
+                # Verify that was closed without landing anything.
+                after = unlanded_verify(stages) or max(
+                    (c for c in children if stage_of(c) == "review"), key=lambda c: c["createdAt"])
                 dispatch_now = take_capacity()
                 launcher = self_launcher(parent["id"]) if dispatch_now else None
-                created = create_verify(api, agents, parent, review, git_st, dispatch_now,
+                created = create_verify(api, agents, parent, after, git_st, dispatch_now,
                                         launcher[0] if launcher else None)
                 if launcher and created:
                     launch_verify(api, agents, created, launcher[1])
@@ -2160,7 +2238,6 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
         triples = list(pool.map(in_force, held))
 
     waiting = []
-    final = []
     legacy = 0
     unparsed = []
     for issue, body, comments in triples:
@@ -2168,10 +2245,8 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
             route_to_planner(api, issue, body, planner)
             continue
         parsed = held_until(body) or held_closed(body)
-        if parsed and not overruled(comments, parsed):
-            waiting.append((issue, body, parsed))
-        elif parsed:
-            final.append((issue, parsed))
+        if parsed:
+            waiting.append((issue, body, parsed, overruled(comments, parsed)))
         legacy += body.startswith(LEGACY_HOLD) and not parsed
         if body.startswith(HELD_UNTIL_PREFIX) and not parsed:
             unparsed.append(issue["identifier"])
@@ -2182,18 +2257,24 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
         # An unreadable release condition is a permanent block unless someone sees it.
         print(f"holds   {len(unparsed)} `Held: until` line(s) match no release form: {', '.join(unparsed)}", flush=True)
     blockers: dict[str, dict | None] = {}
+    pr_open = {head.removeprefix("task/") for head in pr_heads}
     released = 0
-    for issue, body, (blocker_ids, kind) in waiting:
+    met = []
+    for issue, body, (blocker_ids, kind), re_held in waiting:
         for blocker_id in blocker_ids:
             if blocker_id not in blockers:
                 try:
                     blockers[blocker_id] = api.get(f"/issues/{blocker_id}")
                 except urllib.error.HTTPError:
                     blockers[blocker_id] = None
-        reasons = [hold_resolved(blockers[b], kind, f"task/{b}" in pr_heads) for b in blocker_ids]
-        if not all(reasons):
+        why = hold_release(blocker_ids, kind, blockers, pr_open, re_held)
+        if not why:
+            # A re-hold whose blocker has its PR open waits for the merge. Not
+            # released -- the re-hold may be a deliberate correction -- but
+            # named, since the line it carries says something else.
+            if re_held and hold_release(blocker_ids, kind, blockers, pr_open, False):
+                met.append(issue["identifier"])
             continue
-        why = "; ".join(reasons)
         quoted = body.strip().splitlines()[0]
         api.set_status(
             issue,
@@ -2202,23 +2283,22 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
             f"release {issue['identifier']}: {why}",
         )
         released += 1
-    # A re-hold is final, so one written on a condition that already holds can
-    # never be released by this sweep. Not acted on -- the re-hold may be a
-    # deliberate correction -- but named, since nothing else will notice it.
-    met = []
-    for issue, (blocker_ids, kind) in final:
-        for blocker_id in blocker_ids:
-            if blocker_id not in blockers:
-                try:
-                    blockers[blocker_id] = api.get(f"/issues/{blocker_id}")
-                except urllib.error.HTTPError:
-                    blockers[blocker_id] = None
-        if all(hold_resolved(blockers[b], kind, f"task/{b}" in pr_heads) for b in blocker_ids):
-            met.append(issue["identifier"])
     if met:
-        print(f"holds   {len(met)} re-held on a condition already met, so never released: {', '.join(met)}", flush=True)
+        print(f"holds   {len(met)} re-held on `opens its PR` with the PR open, so held until the merge: "
+              f"{', '.join(met)}", flush=True)
     save_state("holds.json", {"at": time.time()}, api.dry_run)
     return released
+
+
+def still_parked(api: Api, stage: dict) -> bool:
+    """Whether a stage read earlier this sweep is still `blocked` on the same assignee.
+
+    The sweep's stage list is seconds old by the time it is acted on. A requeue
+    that re-dispatched the stage in between wins: routing over it would take a
+    Verify off the Architect and park it on an agent that cannot build.
+    """
+    fresh = api.get(f"/issues/{stage['id']}")
+    return fresh["status"] == "blocked" and fresh.get("assigneeAgentId") == stage.get("assigneeAgentId")
 
 
 def route_to_planner(api: Api, issue: dict, body: str, planner: str) -> None:
