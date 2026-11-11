@@ -25,6 +25,7 @@ export { goals } from "./goals.js";
 export { issues } from "./issues.js";
 export { routines, routineTriggers, routineRuns } from "./routines.js";
 export { issueWorkProducts } from "./issue_work_products.js";
+export { issueBuilds } from "./issue_builds.js";
 export { labels } from "./labels.js";
 export { issueLabels } from "./issue_labels.js";
 export { issueApprovals } from "./issue_approvals.js";

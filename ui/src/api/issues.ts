@@ -3,6 +3,7 @@ import type {
   DocumentRevision,
   Issue,
   IssueAttachment,
+  IssueBuild,
   IssueComment,
   IssueDocument,
   IssueLabel,
@@ -115,6 +116,7 @@ export const issuesApi = {
     return api.postForm<IssueAttachment>(`/issues/${issueId}/attachments`, form);
   },
   deleteAttachment: (id: string) => api.delete<{ ok: true }>(`/attachments/${id}`),
+  listBuilds: (id: string) => api.get<IssueBuild[]>(`/issues/${id}/builds`),
   listApprovals: (id: string) => api.get<Approval[]>(`/issues/${id}/approvals`),
   linkApproval: (id: string, approvalId: string) =>
     api.post<Approval[]>(`/issues/${id}/approvals`, { approvalId }),

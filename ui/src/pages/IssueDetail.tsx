@@ -50,7 +50,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
-import type { Agent, IssueAttachment } from "@paperclipai/shared";
+import type { Agent, IssueAttachment, IssueBuildOutcome } from "@paperclipai/shared";
 
 type CommentReassignment = {
   assigneeAgentId: string | null;
@@ -79,6 +79,13 @@ const ACTION_LABELS: Record<string, string> = {
   "approval.created": "requested approval",
   "approval.approved": "approved",
   "approval.rejected": "rejected",
+};
+
+const BUILD_OUTCOME_CLASS: Record<IssueBuildOutcome, string> = {
+  green: "text-green-600 dark:text-green-400",
+  red: "text-red-600 dark:text-red-400",
+  superseded: "text-muted-foreground",
+  fault: "text-amber-600 dark:text-amber-400",
 };
 
 function humanizeValue(value: unknown): string {
@@ -203,6 +210,7 @@ export function IssueDetail() {
   const [detailTab, setDetailTab] = useState("comments");
   const [secondaryOpen, setSecondaryOpen] = useState({
     approvals: false,
+    builds: false,
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
@@ -232,6 +240,13 @@ export function IssueDetail() {
     queryFn: () => activityApi.runsForIssue(issueId!),
     enabled: !!issueId,
     refetchInterval: 5000,
+  });
+
+  const { data: builds } = useQuery({
+    queryKey: queryKeys.issues.builds(issueId!),
+    queryFn: () => issuesApi.listBuilds(issueId!),
+    enabled: !!issueId,
+    refetchInterval: 30000,
   });
 
   const { data: linkedApprovals } = useQuery({
@@ -1022,6 +1037,56 @@ export function IssueDetail() {
           )}
         </TabsContent>
       </Tabs>
+
+      {builds && builds.length > 0 && (
+        <Collapsible
+          open={secondaryOpen.builds}
+          onOpenChange={(open) => setSecondaryOpen((prev) => ({ ...prev, builds: open }))}
+          className="rounded-lg border border-border"
+        >
+          <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left">
+            <span className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              Builds ({builds.length})
+              <span className={cn("text-xs font-medium", BUILD_OUTCOME_CLASS[builds[0]!.outcome])}>
+                latest: {builds[0]!.label}
+              </span>
+            </span>
+            <ChevronDown
+              className={cn("h-4 w-4 text-muted-foreground transition-transform", secondaryOpen.builds && "rotate-180")}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border divide-y divide-border">
+              {builds.map((build) => (
+                <div key={build.id} className="px-3 py-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={cn("font-medium", BUILD_OUTCOME_CLASS[build.outcome])}>{build.label}</span>
+                      <span className="text-muted-foreground">exit {build.exitCode}</span>
+                      <span className="text-muted-foreground">{build.lane}</span>
+                      {build.headSha && (
+                        <span className="font-mono text-muted-foreground">{build.headSha.slice(0, 9)}</span>
+                      )}
+                      {build.baseSha && (
+                        <span className="font-mono text-muted-foreground">on {build.baseSha.slice(0, 9)}</span>
+                      )}
+                      {build.host && <span className="text-muted-foreground">{build.host}</span>}
+                    </div>
+                    <span className="text-muted-foreground">{relativeTime(build.finishedAt)}</span>
+                  </div>
+                  {(build.action || build.note) && (
+                    <p className="mt-1 text-muted-foreground break-words">
+                      {build.action && <span className="font-medium">{build.action}</span>}
+                      {build.action && build.note ? ": " : ""}
+                      {build.note}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {linkedApprovals && linkedApprovals.length > 0 && (
         <Collapsible
