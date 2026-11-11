@@ -150,9 +150,9 @@ class Judge(unittest.TestCase):
         unlanded = {"src/resources/campaign_data.rs": ["AA-4"]}
         self.assertEqual(judge(task(title), body, self.board(unlanded=unlanded), CLEAN, {}).action, "promote")
 
-    def test_hold_line_is_in_the_release_condition_form(self):
-        v = promote.Verdict("hold", "why", "AA-4", "merges")
-        self.assertEqual(promote.hold_line(v), "Held: until AA-4 merges — why")
+    def test_every_release_condition_a_verdict_names_has_a_hold_kind(self):
+        self.assertEqual(promote.HOLD_KINDS[promote.Verdict("hold", "why", "AA-4").hold_kind], "until_merge")
+        self.assertEqual(promote.HOLD_KINDS["opens its PR"], "until_pr")
 
 
 if __name__ == "__main__":

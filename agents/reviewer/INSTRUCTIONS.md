@@ -37,7 +37,7 @@ exit. Do NOT edit, commit or push.
 
    Rebase conflicts → `git rebase --abort`, then post the comment `"Rebase conflict at <sha> on
    <paths> — needs operator merge (conflict class)"` and PATCH the Review stage `blocked`, then
-   exit. The Dispatcher dispatches the rebase for a `blocked` Review, and an `in_review` one is invisible to it. Do not write `Held: operator`:
+   exit. The Dispatcher dispatches the rebase for a `blocked` Review, and an `in_review` one is invisible to it. Do not put an `operator` hold on it:
    that marker is released only by an operator answer, so a conflict the rebase lane resolves would
    sit in the operator's queue instead.
 

@@ -10,8 +10,8 @@ twin, and every one of them had to be cancelled by hand.
 Each sweep groups live top-level tasks by title, keeps the most advanced copy, and
 cancels the others when they are `backlog` or `blocked`, unassigned, and their branch
 carries no commits. A copy with commits is reported and left alone: picking which of
-two pieces of work survives is a reviewer's call, not a title match's. Holds that named
-a cancelled copy are re-pointed at the survivor in the same sweep, because a hold on a
+two pieces of work survives is a reviewer's call, not a title match's. Holds whose blockers
+include a cancelled copy are re-pointed at the survivor in the same sweep, because a hold on a
 cancelled task reads as released, and the release sweep would otherwise free work that
 is still waiting.
 """
@@ -35,7 +35,6 @@ CANCELLABLE = {"backlog", "blocked"}
 #: A truncated title shorter than this is too generic to call a match on its own.
 MIN_WORDS = 6
 _SECTION = re.compile(r"§\s*(\d+(?:\.\d+)+)")
-_TASK_REF = re.compile(r"\bAA-\d+\b")
 
 
 def _prefix(short: list[str], long: list[str]) -> bool:
@@ -106,17 +105,13 @@ def plan(group: list[dict], ahead: dict[str, int]) -> tuple[dict, list[dict], li
     return keep, cancel, left
 
 
-def repoint(hold: str, moved: dict[str, str]) -> str | None:
-    """The hold's first line with cancelled copies swapped for their survivors, or None."""
-    line = hold.strip().split("\n", 1)[0]
-    if not line.startswith("Held:"):
-        return None
-    hits = [t for t in dict.fromkeys(_TASK_REF.findall(line)) if t in moved]
+def repoint(hold: dict | None, moved: dict[str, str]) -> tuple[list[str], list[str]] | None:
+    """(the hold's blockers with cancelled copies swapped for their survivors, the copies swapped), or None."""
+    blockers = [b["identifier"] for b in (hold or {}).get("blockers") or []]
+    hits = [t for t in blockers if t in moved]
     if not hits:
         return None
-    for t in hits:
-        line = re.sub(rf"\b{t}\b", moved[t], line)
-    return f"{line}\n\n(Re-pointed: {', '.join(hits)} cancelled as a duplicate.)"
+    return list(dict.fromkeys(moved.get(t, t) for t in blockers)), hits
 
 
 def commits_ahead(project: Path, ident: str) -> int:
@@ -146,10 +141,21 @@ def sweep(api, project: Path) -> int:
     if not moved:
         return 0
     for issue in api.issues(status="blocked"):
-        comments = api.get(f"/issues/{issue['id']}/comments") or []
-        newest = max(comments, key=lambda c: c["createdAt"], default=None)
-        line = repoint((newest or {}).get("body") or "", moved)
-        if line and issue["identifier"] not in moved:
-            api.write("POST", f"/issues/{issue['id']}/comments", {"body": line},
-                      f"dedupe  {issue['identifier']}: hold re-pointed: {line.split(chr(10), 1)[0][:100]}")
+        swapped = repoint(issue.get("hold"), moved)
+        if not swapped or issue["identifier"] in moved:
+            continue
+        blockers, hits = swapped
+        hold = issue["hold"]
+        waits_on = tuple(b for b in blockers if b != issue["identifier"])
+        if not waits_on:
+            # Held on its own twin, and it is the copy kept: nothing is left to wait for.
+            api.set_status(issue, {"status": "backlog"},
+                           f"Released: {', '.join(hits)} cancelled as a duplicate of this task, "
+                           "which was all its hold waited on.",
+                           f"dedupe  {issue['identifier']}: released, held only on its own duplicate")
+            continue
+        api.hold(issue, hold["kind"], f"dedupe  {issue['identifier']}: hold re-pointed at {', '.join(waits_on)}",
+                 blockers=waits_on, note=hold.get("note"),
+                 comment=f"Hold re-pointed: {', '.join(hits)} cancelled as a duplicate; now waits on "
+                 f"{', '.join(waits_on)}.")
     return len(moved)

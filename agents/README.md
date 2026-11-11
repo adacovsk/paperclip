@@ -85,7 +85,7 @@ Only the operator merges task PRs, and nobody commits to `main` directly.
 ```
 backlog, unassigned                     ← Planner files it from the roadmap's active fronts on main
   → todo, Worker assigned               ← promote.py / Coordinator: worktree first, assignee last (the assignee write is the wake) <!-- privacy-ok: the pipeline's own scripts, not project source -->
-  → blocked, unassigned, "Held: …"      ← when it can't be dispatched yet
+  → blocked, unassigned, `hold` set     ← when it can't be dispatched yet
   → in_progress                         ← server, on the Worker's wake
   → in_review                           ← server, when the Worker exits
       Review subtask (in_review, Reviewer)   ← Dispatcher
@@ -104,19 +104,25 @@ States are `backlog`, `todo`, `in_progress`, `in_review`, `blocked`, `done` and
 `cancelled`. A closed, unmerged PR is the operator's decision, and the Coordinator
 treats it as one.
 
-**Holds.** A task that can't be dispatched yet is `blocked` with a null assignee,
-written in the same PATCH as a `Held:` comment that names what releases it:
+**Holds.** A task that can't be dispatched yet carries a hold: the `hold` field on
+the task, which names what releases it. Setting it is one write
+(`PATCH {"hold": {"kind": …, "blockers": [<id>…], "note": "<why>"}}`): the server
+parks the task `blocked` with no assignee, posts the `Held:` line to the thread,
+and refuses a blocker that does not exist. Moving the task to another status
+clears the hold.
 
-- `Held: until <id> merges`
-- `Held: until <id> opens its PR`
-- `Held: planner` — not `blocked`: `todo`, assigned to the Planner, whose only wake is that assignment
-- `Held: operator` — paperclip source fixes, rules/IP rulings, money/credentials/destructive remote changes only
-- `Held: worktree allocation failed`
+- `until_merge`, naming tasks — released when every one is done or cancelled
+- `until_pr`, naming tasks — released when every one has an open PR, or is closed
+- `planner` — not `blocked`: `todo`, assigned to the Planner, whose only wake is that assignment
+- `operator` — paperclip source fixes, rules/IP rulings, money/credentials/destructive remote changes only
+- `worktree` — no worktree could be allocated
+- `other` — a condition none of these fit, said in the note; nothing mechanical releases it
 
-The Dispatcher releases the first two once their condition holds, hands a
-`blocked` `Held: planner` task to the Planner, and never
-re-releases a hold the Coordinator wrote back. `dispatcher/hold_of_record.py` prints <!-- privacy-ok: the pipeline's own scripts, not project source -->
-the hold currently in force.
+The Dispatcher releases the first two once their condition holds and hands a
+`blocked` `planner` hold to the Planner. A hold written again on the same kind and
+blockers after a release comes back `reheld`, and the Dispatcher no longer
+releases that one on an open PR. The hold in force is the task's `hold`
+(`GET /api/issues/<id>`), never something to recover from its comments.
 
 **Build results** are sentinel files in `~/.cache/paperclip-verify/`, keyed by the
 parent task id. In `{parent}.exit`:
@@ -211,7 +217,7 @@ a change to how the pipeline runs, not a correction to this table.
 - Run cargo only as the matrix allows.
 - Never edit another role's `INSTRUCTIONS.md`. The Planner edits them through its own worktree; everyone else files a followup.
 - No raw `curl` against the Paperclip API from a model role. Use the `paperclip` skill.
-- Pair every status PATCH with a comment saying why. Never revert a block someone else wrote, except to release a `Held:` line whose condition has been met.
+- Pair every status PATCH with a comment saying why. Never revert a block someone else wrote, except to release a hold whose condition has been met.
 - "Landed" means merged into `origin/main`, checked with `git merge-base --is-ancestor`. A pushed branch is not landed.
 - A claim that something doesn't exist must cite `origin/main`, not the task branch.
 
