@@ -1,6 +1,6 @@
 # Why the schema regeneration is one chained command
 
-**Justifies:** *The `set -o pipefail` and the `&&` are both load-bearing* (Procedure step 6.5)
+**Justifies:** *chained to its diff check so a generator that never ran cannot read as a clean tree* (Procedure step 6.5)
 
 The check is "did regenerating change anything?", and a diff answers it by comparing files. But
 *nothing was written* and *nothing changed* produce the same empty diff, so a generator that

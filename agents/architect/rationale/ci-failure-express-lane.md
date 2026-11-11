@@ -1,6 +1,6 @@
 # The express lane
 
-**Justifies:** *Export `CARGO_SEM_PRIORITY=1` before the launch when — and only when — the task is marked priority.* (Cargo discipline rule 3)
+**Justifies:** *Pass `--express` to `local-verify.sh` (it exports `CARGO_SEM_PRIORITY=1`) when — and only when — the task is marked priority.* (Cargo discipline rule 3)
 
 Strict FIFO has one pathological case, and this is it.
 

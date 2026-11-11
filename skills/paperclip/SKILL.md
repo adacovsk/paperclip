@@ -81,7 +81,7 @@ summary wakes you again — six consecutive no-op fires, observed.
 - Budget >80% → critical only. 100% → auto-paused.
 - Ticket refs as links: `[AA-24](/AA/issues/AA-24)` not bare `AA-24`
 - Comments: concise markdown, status line + bullets + links
-- No git commits without `Co-Authored-By: Paperclip <noreply@paperclip.ing>`
+- No `Co-Authored-By` trailer on git commits
 
 ## Full Reference
 
