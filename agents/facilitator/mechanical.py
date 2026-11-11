@@ -9,6 +9,12 @@ account's usage limit runs out, and so did the Facilitator, two nights running, 
 verify stages sat idle for days with nothing left to re-fire them. A script spends no
 model quota and runs every half hour, so a stall lasts one sweep, not a day.
 
+Three more are readings the nightly run could not take for itself. A routine's own
+firing is hidden from the default issue list, so a firing whose wake died was never
+re-fired by anyone (`missed_routines`). And two things were only ever sampled: the last
+day of runs, which the nightly run read fifty rows at a time (`run_digest`), and whether
+main's nightly check is passing or has stopped arriving (`read_nightly`).
+
 What still needs a reader stays in the Facilitator's sweep: why a toggle did not take,
 whether a wedge is new, run productivity, config drift, comment-without-PATCH. This
 module writes REPORT_FILE for that sweep to read.
@@ -55,6 +61,18 @@ STRANDED_GLOB = "refs/heads/task/AA-*"
 REAP_SCAN_SECONDS = float(os.environ.get("FACILITATOR_REAP_SCAN_SECONDS", 6 * 3600))
 REAP_LOG = STATE_DIR / "reap.log"
 REAP_PID = STATE_DIR / "reap.pid"
+#: The issue list leaves these out unless asked, so every scan built on it is blind to
+#: a routine's own task.
+ROUTINE_ORIGIN = "routine_execution"
+#: How far back `run_digest` counts, and the most rows it reads to get there.
+DIGEST_SECONDS = float(os.environ.get("FACILITATOR_DIGEST_SECONDS", 24 * 3600))
+DIGEST_ROWS = int(os.environ.get("FACILITATOR_DIGEST_ROWS", 1000))
+QUOTA_ERROR = "claude_usage_limit"
+#: The commit status the nightly check posts on main, and how old the newest one may
+#: be before its absence is the finding: a day's cadence plus half a day of slack.
+NIGHTLY_CONTEXT = os.environ.get("FACILITATOR_NIGHTLY_CONTEXT", "tester/nightly")
+NIGHTLY_STALE_SECONDS = float(os.environ.get("FACILITATOR_NIGHTLY_STALE_SECONDS", 36 * 3600))
+NIGHTLY_PAGES = 3
 WEDGE_TITLE = "[class:wedged-dispatcher] "
 STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
 STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
@@ -164,6 +182,147 @@ def toggle(api, issue: dict) -> None:
 
 def stall_hours(issue: dict) -> float:
     return (time.time() - ts(issue["updatedAt"])) / 3600
+
+
+# --------------------------------------------------------------------------- §2a routine firings
+
+
+def missed_routines(issues: list[dict], live_runs: list[dict], paused: set[str], skip_agent: str | None,
+                    now: float) -> tuple[list[dict], list[tuple[dict, dict]]]:
+    """(firings owed a wake, [(firing that never ran, the later firing replacing it)]).
+
+    `issues` are a company's open routine firings. A routine files one task per firing
+    and wakes its agent once; when that wake dies (the usage limit was out), the task
+    sits assigned with no run, and the schedule's next firing files another beside it
+    instead of retrying. Two daily routines went three days without one completed run
+    that way, one of them the nightly check on main.
+
+    Only a routine's newest firing is worth a run: an older one asks for the same sweep
+    over a staler tree. So the newest is re-fired if it has stalled, and every stalled
+    firing behind it is superseded, whether or not the newest is itself running.
+    """
+    live_ids = {r["id"] for r in live_runs}
+    live_issues = {r.get("issueId") for r in live_runs if r.get("issueId")}
+
+    def stalled(issue: dict) -> bool:
+        if issue.get("activeRun") or issue["id"] in live_issues:
+            return False
+        if issue.get("executionRunId") and issue["executionRunId"] in live_ids:
+            return False
+        return now - ts(issue["updatedAt"]) >= STALL_SECONDS
+
+    by_routine: dict[str, list[dict]] = {}
+    for issue in issues:
+        agent = issue.get("assigneeAgentId")
+        if issue.get("originKind") != ROUTINE_ORIGIN or not issue.get("originId"):
+            continue
+        if not agent or agent == skip_agent or agent in paused:
+            continue
+        if issue["status"] not in ("todo", "in_progress"):
+            continue
+        by_routine.setdefault(issue["originId"], []).append(issue)
+
+    refire, superseded = [], []
+    for firings in by_routine.values():
+        firings.sort(key=lambda i: i["createdAt"])
+        newest = firings[-1]
+        if stalled(newest):
+            refire.append(newest)
+        superseded += [(old, newest) for old in firings[:-1] if stalled(old)]
+    return sorted(refire, key=lambda i: i["updatedAt"]), superseded
+
+
+def supersede(api, old: dict, newest: dict) -> None:
+    api.set_status(old, {"status": "cancelled"},
+                   f"Superseded by {newest['identifier']}: this firing never got a run, and the routine has "
+                   "fired again since. Only the newest firing is re-fired.",
+                   f"routine {old['identifier']}: superseded by {newest['identifier']}")
+
+
+# --------------------------------------------------------------------------- §3 run digest
+
+
+def run_digest(runs: list[dict], names: dict[str, str], now: float) -> dict:
+    """The last DIGEST_SECONDS of runs, counted per agent by outcome.
+
+    `quotaOut` names the agents whose newest finished run died on the usage limit: for
+    those, every failure in the window is one cause, not a config bug per run.
+    `coveredHours` is how far back the rows actually reached. A flood of failed wakes
+    can fill the fetch in a few hours, and a count that silently covers less than the
+    window reads as a quiet day.
+    """
+    def at(run: dict) -> float:
+        return ts(run.get("startedAt") or run["createdAt"])
+
+    counts: dict[str, dict[str, int]] = {}
+    newest_finished: dict[str, dict] = {}
+    oldest = now
+    for run in runs:
+        when = at(run)
+        oldest = min(oldest, when)
+        if now - when > DIGEST_SECONDS:
+            continue
+        agent = names.get(run["agentId"], run["agentId"])
+        outcome = run["status"] + (f":{run['errorCode']}" if run.get("errorCode") else "")
+        counts.setdefault(agent, {})
+        counts[agent][outcome] = counts[agent].get(outcome, 0) + 1
+        if run.get("finishedAt") and (agent not in newest_finished or when > at(newest_finished[agent])):
+            newest_finished[agent] = run
+    return {
+        "coveredHours": round(min(now - oldest, DIGEST_SECONDS) / 3600, 1),
+        "byAgent": counts,
+        "quotaOut": sorted(a for a, r in newest_finished.items() if r.get("errorCode") == QUOTA_ERROR),
+    }
+
+
+# --------------------------------------------------------------------------- main's nightly check
+
+
+def read_nightly(commits: list[dict], now: float) -> dict:
+    """The newest NIGHTLY_CONTEXT status among main's commits, newest commit first.
+
+    `stale` covers both ways the check can stop speaking for main: the newest status
+    is older than NIGHTLY_STALE_SECONDS, or the commits searched reach back past that
+    age and carry none. A search that ran out of commits before reaching that age
+    proves nothing either way and says so with `stale: None`.
+    """
+    for behind, commit in enumerate(commits):
+        for status in (commit.get("status") or {}).get("contexts") or []:
+            if status["context"] == NIGHTLY_CONTEXT:
+                age = now - ts(status["createdAt"])
+                return {"sha": commit["oid"], "state": status["state"].lower(), "ageHours": round(age / 3600, 1),
+                        "commitsSince": behind, "stale": age > NIGHTLY_STALE_SECONDS}
+    reached = now - ts(commits[-1]["committedDate"]) if commits else 0
+    return {"sha": None, "state": None, "searched": len(commits),
+            "stale": True if reached > NIGHTLY_STALE_SECONDS else None}
+
+
+NIGHTLY_QUERY = """query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){
+ref(qualifiedName:"refs/heads/main"){target{... on Commit{history(first:100,after:$after){
+pageInfo{hasNextPage endCursor}
+nodes{oid committedDate status{contexts{context state createdAt}}}}}}}}}"""
+
+
+def nightly(project: Path, now: float) -> dict:
+    """`read_nightly` over main's recent commits. A failed read is reported, not raised:
+    the rest of the sweep does not depend on it."""
+    commits: list[dict] = []
+    after = None
+    try:
+        for _ in range(NIGHTLY_PAGES):
+            args = ["gh", "api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-f", f"query={NIGHTLY_QUERY}"]
+            if after:
+                args += ["-f", f"after={after}"]
+            out = subprocess.run(args, cwd=project, capture_output=True, text=True, timeout=60, check=True).stdout
+            history = json.loads(out)["data"]["repository"]["ref"]["target"]["history"]
+            commits += history["nodes"]
+            found = read_nightly(commits, now)
+            if found["sha"] or not history["pageInfo"]["hasNextPage"]:
+                return found
+            after = history["pageInfo"]["endCursor"]
+        return read_nightly(commits, now)
+    except (subprocess.SubprocessError, OSError, KeyError, TypeError, ValueError) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
 # --------------------------------------------------------------------------- §2b wedged dispatcher
@@ -373,7 +532,7 @@ def save(path: Path, data: dict, dry_run: bool) -> None:
 
 
 def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_since=None) -> dict:
-    """Run all four checks, act on them, and write REPORT_FILE. Returns the report."""
+    """Run every check, act on them, and write REPORT_FILE. Returns the report."""
     now = time.time()
     me = os.environ.get("PAPERCLIP_AGENT_ID")
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
@@ -384,6 +543,13 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     parent_owed = frozenset(a["id"] for a in roster if a.get("name") == "Architect")
     stalled = missed_wakes(open_issues, live_runs, paused, me, now, quiet_since,
                            closed_parent_check(api, open_issues), parent_owed)
+    routine_firings = api.issues(status="todo,in_progress", includeRoutineExecutions="true")
+    refire, superseded = missed_routines(routine_firings, live_runs, paused, me, now)
+    for old, newest in superseded:
+        supersede(api, old, newest)
+    # Routine firings go first: there are a handful at most, and TOGGLE_CAP would
+    # otherwise leave a day-old health sweep behind twenty older stages.
+    stalled = refire + stalled
     due, failing, history = plan_toggles(stalled, load(TOGGLES_FILE), now)
     for issue in due:
         toggle(api, issue)
@@ -402,9 +568,14 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     if now - previous.get("branchesAt", 0) >= BRANCH_SCAN_SECONDS:
         merged, branches_at = merged_branches(project, open_heads, api.dry_run, now), now
         stranded = stranded_branches(project, api.dry_run, now)
+        main_nightly = nightly(project, now)
     else:
         merged, branches_at = previous.get("branchesOnMain", []), previous["branchesAt"]
         stranded = previous.get("strandedPushed", [])
+        main_nightly = previous.get("nightly") or nightly(project, now)
+
+    names = {a["id"]: a["name"] for a in roster}
+    digest = run_digest(api.get(f"/companies/{api.company}/heartbeat-runs?limit={DIGEST_ROWS}") or [], names, now)
 
     reap_at = previous.get("reapAt", 0)
     if now - reap_at >= REAP_SCAN_SECONDS and launch_reap(api.dry_run):
@@ -416,6 +587,11 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         "stalledWaiting": [i["identifier"] for i in stalled if i not in due],
         "toggleNotTaking": [{"identifier": i["identifier"], "toggles": history[i["id"]]["count"],
                              "assigneeAgentId": i["assigneeAgentId"]} for i in failing],
+        "routinesRefired": [i["identifier"] for i in due if i in refire],
+        "routinesSuperseded": [{"identifier": old["identifier"], "by": newest["identifier"]}
+                               for old, newest in superseded],
+        "runDigest": digest,
+        "nightly": main_nightly,
         "wedged": found,
         "wedgeFiled": filed,
         "branchesAt": branches_at,

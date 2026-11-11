@@ -184,6 +184,119 @@ class FileWedges(unittest.TestCase):
         self.assertTrue(comment.startswith("Held: operator") and "Recurrence:" in comment)
 
 
+def firing(ident, routine="r1", status="todo", hours_ago=3, created_hours_ago=None, agent="tester", **extra):
+    return task(ident, title="Nightly", status=status, hours_ago=hours_ago, agent=agent,
+                originKind=m.ROUTINE_ORIGIN, originId=routine,
+                createdAt=iso(hours_ago if created_hours_ago is None else created_hours_ago), **extra)
+
+
+def routines(issues, runs=(), paused=(), skip=None):
+    refire, superseded = m.missed_routines(issues, list(runs), set(paused), skip, NOW)
+    return [i["identifier"] for i in refire], [(old["identifier"], new["identifier"]) for old, new in superseded]
+
+
+class MissedRoutines(unittest.TestCase):
+    def test_a_firing_that_never_got_a_run_is_refired(self):
+        self.assertEqual(routines([firing("A")]), (["A"], []))
+
+    def test_a_firing_its_agent_took_and_then_lost_is_refired(self):
+        self.assertEqual(routines([firing("A", status="in_progress", executionRunId="dead")]), (["A"], []))
+
+    def test_a_fresh_firing_is_given_time_to_start(self):
+        self.assertEqual(routines([firing("A", hours_ago=1)]), ([], []))
+
+    def test_a_running_firing_is_left_alone(self):
+        self.assertEqual(routines([firing("A")], runs=[{"id": "r", "issueId": "A", "status": "running"}]), ([], []))
+
+    def test_only_the_newest_firing_is_refired_and_the_rest_are_superseded(self):
+        got = routines([firing("old", hours_ago=50), firing("mid", hours_ago=26), firing("new", hours_ago=3)])
+        self.assertEqual(got, (["new"], [("old", "new"), ("mid", "new")]))
+
+    def test_a_stalled_firing_behind_a_running_one_is_superseded_not_refired(self):
+        got = routines([firing("old", hours_ago=26), firing("new", hours_ago=1)],
+                       runs=[{"id": "r", "issueId": "new", "status": "running"}])
+        self.assertEqual(got, ([], [("old", "new")]))
+
+    def test_each_routine_keeps_its_own_newest(self):
+        got = routines([firing("A", routine="r1"), firing("B", routine="r2", hours_ago=4)])
+        self.assertEqual(got, (["B", "A"], []))
+
+    def test_ordinary_tasks_and_finished_firings_are_not_firings(self):
+        plain = task("P", status="todo")
+        self.assertEqual(routines([plain, firing("A", status="in_review"), firing("B", status="blocked")]), ([], []))
+
+    def test_the_sweeping_agent_and_paused_agents_are_skipped(self):
+        self.assertEqual(routines([firing("A", agent="dispatcher"), firing("B", routine="r2", agent="off")],
+                                  paused={"off"}, skip="dispatcher"), ([], []))
+
+    def test_superseding_cancels_with_the_replacement_named(self):
+        api = FakeApi()
+        m.supersede(api, firing("old"), firing("new"))
+        kind, ident, body, comment = api.calls[0]
+        self.assertEqual((kind, ident, body), ("STATUS", "old", {"status": "cancelled"}))
+        self.assertIn("Superseded by new", comment)
+
+
+def run(agent, status, hours_ago, error=None, finished=True):
+    return {"agentId": agent, "status": status, "errorCode": error, "startedAt": iso(hours_ago),
+            "createdAt": iso(hours_ago), "finishedAt": iso(hours_ago) if finished else None}
+
+
+class RunDigest(unittest.TestCase):
+    NAMES = {"a": "Architect", "w": "Worker"}
+
+    def test_runs_are_counted_per_agent_by_outcome(self):
+        got = m.run_digest([run("a", "succeeded", 1), run("a", "failed", 2, m.QUOTA_ERROR),
+                            run("a", "failed", 3, m.QUOTA_ERROR), run("w", "running", 0.1, finished=False)],
+                           self.NAMES, NOW)
+        self.assertEqual(got["byAgent"], {"Architect": {"succeeded": 1, f"failed:{m.QUOTA_ERROR}": 2},
+                                          "Worker": {"running": 1}})
+
+    def test_runs_older_than_the_window_are_not_counted(self):
+        got = m.run_digest([run("a", "succeeded", 30)], self.NAMES, NOW)
+        self.assertEqual((got["byAgent"], got["coveredHours"]), ({}, 24.0))
+
+    def test_a_fetch_that_stops_short_of_the_window_says_how_far_it_reached(self):
+        self.assertEqual(m.run_digest([run("a", "failed", 2), run("a", "failed", 5)], self.NAMES, NOW)["coveredHours"], 5.0)
+
+    def test_quota_is_out_for_an_agent_whose_newest_finished_run_died_on_it(self):
+        got = m.run_digest([run("a", "failed", 1, m.QUOTA_ERROR), run("a", "succeeded", 5),
+                            run("w", "succeeded", 1), run("w", "failed", 5, m.QUOTA_ERROR)], self.NAMES, NOW)
+        self.assertEqual(got["quotaOut"], ["Architect"])
+
+    def test_a_run_still_going_does_not_decide_quota(self):
+        got = m.run_digest([run("a", "running", 0.1, finished=False), run("a", "failed", 1, m.QUOTA_ERROR)],
+                           self.NAMES, NOW)
+        self.assertEqual(got["quotaOut"], ["Architect"])
+
+
+def commit(oid, hours_ago, state=None, status_hours_ago=None, context=None):
+    contexts = [] if state is None else [{"context": context or m.NIGHTLY_CONTEXT, "state": state,
+                                          "createdAt": iso(hours_ago if status_hours_ago is None else status_hours_ago)}]
+    return {"oid": oid, "committedDate": iso(hours_ago), "status": {"contexts": contexts} if contexts else None}
+
+
+class Nightly(unittest.TestCase):
+    def test_the_newest_status_is_read_with_the_commits_merged_since(self):
+        got = m.read_nightly([commit("c3", 1), commit("c2", 5, "FAILURE", 4), commit("c1", 30, "SUCCESS")], NOW)
+        self.assertEqual(got, {"sha": "c2", "state": "failure", "ageHours": 4.0, "commitsSince": 1, "stale": False})
+
+    def test_a_status_older_than_the_cadence_allows_is_stale(self):
+        self.assertTrue(m.read_nightly([commit("c2", 1), commit("c1", 60, "SUCCESS")], NOW)["stale"])
+
+    def test_another_checks_status_is_not_the_nightly(self):
+        got = m.read_nightly([commit("c1", 1, "SUCCESS", context="other/check"), commit("c0", 60)], NOW)
+        self.assertEqual((got["sha"], got["stale"]), (None, True))
+
+    def test_no_status_on_commits_reaching_past_the_threshold_is_stale(self):
+        self.assertEqual(m.read_nightly([commit("c2", 1), commit("c1", 60)], NOW),
+                         {"sha": None, "state": None, "searched": 2, "stale": True})
+
+    def test_a_search_that_did_not_reach_the_threshold_decides_nothing(self):
+        self.assertIsNone(m.read_nightly([commit("c2", 1), commit("c1", 5)], NOW)["stale"])
+        self.assertIsNone(m.read_nightly([], NOW)["stale"])
+
+
 class Branches(unittest.TestCase):
     def test_young_branches_and_open_pr_heads_are_never_candidates(self):
         rows = [("old", NOW - 48 * HOUR, "s1"), ("young", NOW - HOUR, "s2"), ("pr", NOW - 48 * HOUR, "s3")]
