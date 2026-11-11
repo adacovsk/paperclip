@@ -19,8 +19,8 @@ export function MyIssues() {
   }, [setBreadcrumbs]);
 
   const { data: issues, isLoading, error } = useQuery({
-    queryKey: queryKeys.issues.list,
-    queryFn: () => issuesApi.list(),
+    queryKey: queryKeys.issues.listOpen,
+    queryFn: () => issuesApi.listOpen(),
   });
 
 

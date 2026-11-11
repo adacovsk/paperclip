@@ -11,11 +11,16 @@ import type {
 } from "@paperclipai/shared";
 import { api } from "./client";
 
+export const OPEN_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
+export const CLOSED_ISSUE_STATUSES = "done,cancelled";
+export const RECENT_ISSUE_WINDOW_DAYS = 14;
+
 export const issuesApi = {
   list: (
     filters?: {
       status?: string;
       projectId?: string;
+      parentId?: string;
       assigneeAgentId?: string;
       participantAgentId?: string;
       assigneeUserId?: string;
@@ -27,11 +32,14 @@ export const issuesApi = {
       originId?: string;
       includeRoutineExecutions?: boolean;
       q?: string;
+      updatedSince?: Date;
+      limit?: number;
     },
   ) => {
     const params = new URLSearchParams();
     if (filters?.status) params.set("status", filters.status);
     if (filters?.projectId) params.set("projectId", filters.projectId);
+    if (filters?.parentId) params.set("parentId", filters.parentId);
     if (filters?.assigneeAgentId) params.set("assigneeAgentId", filters.assigneeAgentId);
     if (filters?.participantAgentId) params.set("participantAgentId", filters.participantAgentId);
     if (filters?.assigneeUserId) params.set("assigneeUserId", filters.assigneeUserId);
@@ -43,9 +51,18 @@ export const issuesApi = {
     if (filters?.originId) params.set("originId", filters.originId);
     if (filters?.includeRoutineExecutions) params.set("includeRoutineExecutions", "true");
     if (filters?.q) params.set("q", filters.q);
+    if (filters?.updatedSince) params.set("updatedSince", filters.updatedSince.toISOString());
+    if (filters?.limit) params.set("limit", String(filters.limit));
     const qs = params.toString();
     return api.get<Issue[]>(`/issues${qs ? `?${qs}` : ""}`);
   },
+  /** Issues that are not done or cancelled — a few hundred, where the full list is tens of thousands. */
+  listOpen: () => issuesApi.list({ status: OPEN_ISSUE_STATUSES }),
+  /** Issues touched in the last RECENT_ISSUE_WINDOW_DAYS days, covering every chart and recent-activity view. */
+  listRecent: () =>
+    issuesApi.list({ updatedSince: new Date(Date.now() - RECENT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000) }),
+  /** The most recently updated closed issues, `limit` at a time. */
+  listClosed: (limit: number) => issuesApi.list({ status: CLOSED_ISSUE_STATUSES, limit }),
   listLabels: () => api.get<IssueLabel[]>(`/labels`),
   createLabel: (data: { name: string; color: string }) =>
     api.post<IssueLabel>(`/labels`, data),

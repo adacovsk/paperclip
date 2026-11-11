@@ -5,6 +5,7 @@ import { PROJECT_COLORS, type BudgetPolicySummary } from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
 import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
+import { useBoundedIssueList } from "../hooks/useBoundedIssueList";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
 import { assetsApi } from "../api/assets";
@@ -160,25 +161,25 @@ function ProjectIssuesList({ projectId }: { projectId: string }) {
     return ids;
   }, [liveRuns]);
 
-  const { data: issues, isLoading, error } = useQuery({
-    queryKey: queryKeys.issues.listByProject(projectId),
-    queryFn: () => issuesApi.list({ projectId }),
-  });
+  const issueList = useBoundedIssueList({ projectId });
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
       issuesApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list });
     },
   });
 
   return (
     <IssuesList
-      issues={issues ?? []}
-      isLoading={isLoading}
-      error={error as Error | null}
+      issues={issueList.issues}
+      isLoading={issueList.isLoading}
+      error={issueList.error}
+      onStatusFilterChange={issueList.onStatusFilterChange}
+      hasMoreClosed={issueList.hasMoreClosed}
+      isLoadingClosed={issueList.isLoadingClosed}
+      onLoadMoreClosed={issueList.loadMoreClosed}
       agents={agents}
       liveIssueIds={liveIssueIds}
       projectId={projectId}

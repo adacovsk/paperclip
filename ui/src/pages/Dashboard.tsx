@@ -56,8 +56,8 @@ export function Dashboard() {
   });
 
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.list,
-    queryFn: () => issuesApi.list(),
+    queryKey: queryKeys.issues.listRecent,
+    queryFn: () => issuesApi.listRecent(),
   });
 
   const { data: projects } = useQuery({

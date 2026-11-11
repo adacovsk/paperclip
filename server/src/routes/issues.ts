@@ -50,6 +50,9 @@ import {
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 
+/** Ceiling on `limit` for the issue list; a client paging through closed issues asks for more in steps. */
+const MAX_ISSUE_LIST_LIMIT = 5000;
+
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
@@ -267,6 +270,19 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
 
+    const updatedSinceRaw = typeof req.query.updatedSince === "string" ? req.query.updatedSince.trim() : "";
+    const updatedSince = updatedSinceRaw ? new Date(updatedSinceRaw) : undefined;
+    if (updatedSince && Number.isNaN(updatedSince.getTime())) {
+      res.status(400).json({ error: "updatedSince must be an ISO timestamp" });
+      return;
+    }
+    const limitRaw = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    if (limitRaw !== undefined && !(Number.isInteger(limitRaw) && limitRaw > 0)) {
+      res.status(400).json({ error: "limit must be a positive integer" });
+      return;
+    }
+    const limit = limitRaw === undefined ? undefined : Math.min(limitRaw, MAX_ISSUE_LIST_LIMIT);
+
     const result = await svc.list({
       status: req.query.status as string | undefined,
       assigneeAgentId: req.query.assigneeAgentId as string | undefined,
@@ -283,6 +299,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       includeRoutineExecutions:
         req.query.includeRoutineExecutions === "true" || req.query.includeRoutineExecutions === "1",
       q: req.query.q as string | undefined,
+      updatedSince,
+      limit,
     });
     res.json(result);
   });

@@ -172,6 +172,12 @@ interface IssuesListProps {
   };
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
+  /** Told the view's status filter, so the page can load only the issues it can show. */
+  onStatusFilterChange?: (statuses: string[]) => void;
+  /** Older closed issues exist beyond the ones loaded. */
+  hasMoreClosed?: boolean;
+  isLoadingClosed?: boolean;
+  onLoadMoreClosed?: () => void;
 }
 
 interface IssuesSearchInputProps {
@@ -227,6 +233,10 @@ export function IssuesList({
   searchFilters,
   onSearchChange,
   onUpdateIssue,
+  onStatusFilterChange,
+  hasMoreClosed,
+  isLoadingClosed,
+  onLoadMoreClosed,
 }: IssuesListProps) {
   const { openNewIssue } = useDialog();
   const { data: session } = useQuery({
@@ -260,6 +270,10 @@ export function IssuesList({
         : getViewState(viewStateKey));
     }
   }, [viewStateKey, initialAssignees]);
+
+  useEffect(() => {
+    onStatusFilterChange?.(viewState.statuses);
+  }, [onStatusFilterChange, viewState.statuses]);
 
   const handleIssueSearchCommit = useCallback((nextSearch: string) => {
     startTransition(() => {
@@ -876,6 +890,13 @@ export function IssuesList({
             </CollapsibleContent>
           </Collapsible>
         ))
+      )}
+      {hasMoreClosed && onLoadMoreClosed && (
+        <div className="flex justify-center py-3">
+          <Button variant="outline" size="sm" onClick={onLoadMoreClosed} disabled={isLoadingClosed}>
+            {isLoadingClosed ? "Loading…" : "Load older closed issues"}
+          </Button>
+        </div>
       )}
     </div>
   );

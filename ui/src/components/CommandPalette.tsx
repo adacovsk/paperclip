@@ -56,8 +56,8 @@ export function CommandPalette() {
   }, [open]);
 
   const { data: issues = [] } = useQuery({
-    queryKey: queryKeys.issues.list,
-    queryFn: () => issuesApi.list(),
+    queryKey: queryKeys.issues.listOpen,
+    queryFn: () => issuesApi.listOpen(),
     enabled: open,
   });
 

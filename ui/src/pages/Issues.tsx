@@ -2,6 +2,7 @@ import { useEffect, useMemo, useCallback } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { useBoundedIssueList } from "../hooks/useBoundedIssueList";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -73,10 +74,7 @@ export function Issues() {
     setBreadcrumbs([{ label: "Issues" }]);
   }, [setBreadcrumbs]);
 
-  const { data: issues, isLoading, error } = useQuery({
-    queryKey: [...queryKeys.issues.list, "participant-agent", participantAgentId ?? "__all__"],
-    queryFn: () => issuesApi.list({ participantAgentId }),
-  });
+  const issueList = useBoundedIssueList({ participantAgentId });
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
@@ -89,9 +87,13 @@ export function Issues() {
 
   return (
     <IssuesList
-      issues={issues ?? []}
-      isLoading={isLoading}
-      error={error as Error | null}
+      issues={issueList.issues}
+      isLoading={issueList.isLoading}
+      error={issueList.error}
+      onStatusFilterChange={issueList.onStatusFilterChange}
+      hasMoreClosed={issueList.hasMoreClosed}
+      isLoadingClosed={issueList.isLoadingClosed}
+      onLoadMoreClosed={issueList.loadMoreClosed}
       agents={agents}
       projects={projects}
       liveIssueIds={liveIssueIds}

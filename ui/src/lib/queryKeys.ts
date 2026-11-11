@@ -18,6 +18,10 @@ export const queryKeys = {
   issues: {
     list: ["issues", "list"] as const,
     listByStatus: (status: string) => ["issues", "list", "status", status] as const,
+    listOpen: ["issues", "list", "open"] as const,
+    listRecent: ["issues", "list", "recent"] as const,
+    listClosed: (limit: number) => ["issues", "list", "closed", limit] as const,
+    children: (parentId: string) => ["issues", "list", "children", parentId] as const,
     search: (q: string, projectId?: string) =>
       ["issues", "list", "search", q, projectId ?? "__all-projects__"] as const,
     listAssignedToMe: ["issues", "list", "assigned-to-me"] as const,
@@ -25,8 +29,6 @@ export const queryKeys = {
     listTouchedByMe: ["issues", "list", "touched-by-me"] as const,
     listUnreadTouchedByMe: ["issues", "list", "unread-touched-by-me"] as const,
     labels: ["issues", "list", "labels"] as const,
-    listByProject: (projectId: string) =>
-      ["issues", "list", "project", projectId] as const,
     detail: (id: string) => ["issues", "detail", id] as const,
     comments: (issueId: string) => ["issues", "comments", issueId] as const,
     attachments: (issueId: string) => ["issues", "attachments", issueId] as const,
