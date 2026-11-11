@@ -6,19 +6,19 @@
   <a href="#quickstart"><strong>Quickstart</strong></a> &middot;
   <a href="agents/README.md"><strong>The pipeline</strong></a> &middot;
   <a href="doc/"><strong>Docs</strong></a> &middot;
-  <a href="https://github.com/paperclipai/paperclip"><strong>Upstream</strong></a>
+  <a href="https://github.com/paperclipai/paperclip"><strong>Origin</strong></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/adacovsk/paperclip/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
-  <a href="https://github.com/paperclipai/paperclip"><img src="https://img.shields.io/badge/fork%20of-paperclipai%2Fpaperclip-lightgrey" alt="Fork of paperclipai/paperclip" /></a>
+  <a href="https://github.com/paperclipai/paperclip"><img src="https://img.shields.io/badge/forked%20from-paperclipai%2Fpaperclip-lightgrey" alt="Forked from paperclipai/paperclip" /></a>
 </p>
 
 # Paperclip, the pipeline fork
 
-This is `adacovsk/paperclip`, a fork of
-[`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) that has become
-a separate codebase. Upstream is building a general platform for AI companies, with
+This is `adacovsk/paperclip`. It began as a fork of
+[`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) and is now a
+separate, standalone codebase. Upstream is building a general platform for AI companies, with
 runners, sandboxes, MCP connections, apps and catalogs. This fork kept Paperclip's
 control plane and pointed it at one job: running an unattended software pipeline
 against a real repository, around the clock, with one human who reviews and merges.
