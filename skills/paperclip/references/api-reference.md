@@ -497,6 +497,30 @@ Terminal states: `done`, `cancelled`
 - `completed_at` is auto-set on `done`.
 - One assignee per task at a time.
 
+### Holds
+
+A hold says why a task is parked and what releases it. It is the `hold` field on the issue, returned by every issue read and list:
+
+```
+PATCH /api/issues/AA-120
+{ "hold": { "kind": "until_merge", "blockers": ["AA-118"], "note": "builds on the new loader" } }
+```
+
+| Kind | Waits on | `blockers` |
+|---|---|---|
+| `until_merge` | every blocker being `done` or `cancelled` | required |
+| `until_pr` | every blocker having an open PR, or being closed | required |
+| `planner` | a Planner decision | none |
+| `operator` | an operator decision | none |
+| `worktree` | a worktree becoming available | none |
+| `other` | whatever `note` says (required) | none |
+
+- Setting a hold sets `status: blocked` and clears the assignee in the same write. A `planner` hold may instead stand on a `todo` task assigned to the Planner.
+- `blockers` are issue ids or identifiers. A blocker that does not exist is refused with 422.
+- With no `comment` in the request, the server writes the `Held: …` line to the thread.
+- Moving the task to any other status clears the hold. `"hold": null` clears it without moving the task.
+- `hold.reheld` is true when the same condition on the same blockers was held and cleared before.
+
 ---
 
 ## Error Handling

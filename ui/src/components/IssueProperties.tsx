@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link } from "react-router-dom";
-import type { Issue } from "@paperclipai/shared";
+import type { Issue, IssueHoldKind } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -44,6 +44,15 @@ interface IssuePropertiesProps {
   onUpdate: (data: Record<string, unknown>) => void;
   inline?: boolean;
 }
+
+const HOLD_KIND_LABELS: Record<IssueHoldKind, string> = {
+  until_merge: "Until merged:",
+  until_pr: "Until a PR is open for:",
+  planner: "Planner decision",
+  operator: "Operator decision",
+  worktree: "No worktree could be allocated",
+  other: "Held",
+};
 
 function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -491,6 +500,24 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             showLabel
           />
         </PropertyRow>
+
+        {issue.hold && (
+          <PropertyRow label="Held">
+            <div className="min-w-0 text-sm">
+              <span>{HOLD_KIND_LABELS[issue.hold.kind]}</span>
+              {issue.hold.blockers.map((blocker, index) => (
+                <span key={blocker.id}>
+                  {index === 0 ? " " : ", "}
+                  <Link to={`/issues/${blocker.identifier}`} className="hover:underline">
+                    {blocker.identifier}
+                  </Link>
+                </span>
+              ))}
+              {issue.hold.reheld && <span className="text-muted-foreground"> (held again after a release)</span>}
+              {issue.hold.note && <p className="text-xs text-muted-foreground break-words">{issue.hold.note}</p>}
+            </div>
+          </PropertyRow>
+        )}
 
         <PropertyRow label="Priority">
           <PriorityIcon

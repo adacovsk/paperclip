@@ -13,6 +13,10 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
+  formatHoldLine,
+  holdSurvivesStatus,
+  isHoldLine,
+  type IssueHold,
 } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -40,6 +44,7 @@ import {
   resolveSubtaskWakeTarget,
   summarizeOpenChildren,
 } from "../services/subtask-wake-target.js";
+import { holdPlacement, issueHoldService } from "../services/issue-holds.js";
 import { stageDispatcherIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
@@ -56,6 +61,7 @@ const MAX_ISSUE_LIST_LIMIT = 5000;
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
+  const holds = issueHoldService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const agentsSvc = agentService(db);
@@ -996,9 +1002,51 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     const actor = getActorInfo(req);
     const isClosed = existing.status === "done" || existing.status === "cancelled";
-    const { comment: commentBody, reopen: reopenRequested, ...updateFields } = req.body;
+    const {
+      comment: requestedComment,
+      reopen: reopenRequested,
+      hold: holdInput,
+      ...fieldsWithoutHold
+    } = req.body;
+    const updateFields: typeof fieldsWithoutHold & { hold?: IssueHold | null } = fieldsWithoutHold;
+    let commentBody = requestedComment;
     if (commentBody && reopenRequested === true && isClosed && updateFields.status === undefined) {
       updateFields.status = "todo";
+    }
+
+    // The hold is settled before the comment is written, so a hold that is
+    // refused leaves nothing behind.
+    const holdActor = {
+      agentId: actor.agentId,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+    };
+    if (holdInput === null) {
+      updateFields.hold = null;
+    } else if (holdInput) {
+      const hold = await holds.fromInput(id, holdInput, holdActor);
+      const placement = holdPlacement(hold.kind, existing, updateFields);
+      if (placement.status === "blocked" && (updateFields.assigneeAgentId || updateFields.assigneeUserId)) {
+        throw unprocessable("A held, blocked task has no assignee: a comment on it would wake them");
+      }
+      if (!holdSurvivesStatus(hold.kind, placement.status)) {
+        throw unprocessable(`A ${hold.kind} hold cannot stand on a ${placement.status} task`);
+      }
+      updateFields.hold = hold;
+      // The line is the hold's record in the thread, and what a reader that has
+      // not moved to the field still goes by.
+      commentBody ??= formatHoldLine(hold);
+    } else if (commentBody && isHoldLine(commentBody)) {
+      // A writer still declaring holds as comments. The field follows the
+      // comment only where the task already is, or is being put, somewhere the
+      // hold stands: this path must not move a task the caller did not move.
+      const hold = await holds.fromComment(id, commentBody, holdActor);
+      if (hold) {
+        const placement = holdPlacement(hold.kind, existing, updateFields);
+        const stands = placement.status === (updateFields.status ?? existing.status);
+        if (stands && !(placement.status === "blocked" && placement.assigned)) {
+          updateFields.hold = hold;
+        }
+      }
     }
     // The comment is written BEFORE the update, and the order is the whole point.
     // These are two writes and cannot be made one without threading a transaction
@@ -1552,6 +1600,22 @@ export function issueRoutes(db: Db, storage: StorageService) {
       agentId: actor.agentId ?? undefined,
       userId: actor.actorType === "user" ? actor.actorId : undefined,
     });
+
+    // A hold restated or declared as a bare comment, by a writer that has not
+    // moved to the field. It is recorded only on a task already parked where the
+    // hold stands; a comment alone never moves a task.
+    if (isHoldLine(req.body.body)) {
+      const hold = await holds.fromComment(id, req.body.body, {
+        agentId: actor.agentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      if (hold) {
+        const placement = holdPlacement(hold.kind, currentIssue, {});
+        if (placement.status === currentIssue.status && !(placement.status === "blocked" && placement.assigned)) {
+          await svc.update(id, { hold });
+        }
+      }
+    }
 
     if (actor.runId) {
       await heartbeat.reportRunActivity(actor.runId).catch((err) =>
