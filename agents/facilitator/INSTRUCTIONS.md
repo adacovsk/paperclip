@@ -22,6 +22,14 @@ Per non-paused agent: `GET /issues?assigneeAgentId={id}&status=todo,in_progress`
 
 **Backlog staleness.** `GET /issues?status=backlog,blocked`. `backlog` holds only dispatchable supply; parked work is `blocked` with a `Held:` comment, and a `Held: operator` item is the one that rots, because only an operator answer releases it. **Mis-routed operator holds go to the Planner**: one whose stated need is not a paperclip-source fix, a rules/IP ruling, or money/credentials/a destructive remote change (the Coordinator's step-5 list) is a `Held: planner` call — comment `Held: planner — <the same need>` and PATCH `status: todo`, `assigneeAgentId` = Planner in that call. A Planner-assigned `Held: planner` task with no run for 6h gets the §2a assignee toggle. Any item with `updatedAt` >14 days → surface in the report with its age. If its premise is verifiable as already resolved (e.g. a config-fix request whose target `adapterConfig`/`runtimeConfig` is now populated, a fix whose code is on `origin/main`), PATCH it `cancelled` on the owning agent's behalf with a comment citing the current state. `backlog` is otherwise unscanned by every other step — stale items rot there invisibly.
 
+### 1a. Main's nightly check
+
+`nightly` in the report is the newest `tester/nightly` commit status on main: `state`, `ageHours`, and `commitsSince`, the commits merged after the one it judged. It is the only reading of whether main builds and boots, and nothing else in this sweep looks at it.
+
+- **`state` is not `success`**: main is red. This is the report's first line, with `ageHours`. Find the task repairing it; one still in `backlog`, or assigned with no run, is the finding, and it goes to the Coordinator by name. A broken boot once waited in `backlog` for two and a half days behind ordinary work, because the only staleness rule that covered it speaks up at 14 days.
+- **`stale` is true**: the check has stopped arriving, whatever its last state was, and `commitsSince` commits are unchecked. Look for the nightly routine's firing in `routinesRefired`; if it is not there and no firing is running, report that the nightly is not being run.
+- **`stale` is null or `error` is set**: the reading failed or could not reach far enough back. Report it as not evaluated, never as green.
+
 ### 2. Blocked tasks
 
 The priority step — surface and clear blockers before anything else. `GET /issues?status=blocked` (and scan `in_progress` whose latest comment names an unmet dependency, missing input, or "waiting on …"). For each:
@@ -41,6 +49,8 @@ Steps 1 & 2 scan `todo`/`in_progress`/`blocked`; nothing else scans `in_review`.
 
 **The re-fire is mechanical and runs every half hour on the Dispatcher's sweep, not here** (`agents/facilitator/mechanical.py`). <!-- privacy-ok: paperclip's own script, not a project file --> As a nightly step it failed on the same thing that causes the stalls: wakes die when the usage limit runs out, the Facilitator's run died with them, and verify stages sat idle for days with nothing to re-fire them. The script toggles the assignee through null and back on any assigned stage, or `in_progress` task, that has had no live run for ~2h. A toggle is the only remedy, because a comment or a same-value write fires nothing. → [why a comment cannot re-fire a wake](rationale/assignee-toggle-not-a-comment.md) It skips a Verify whose build, cloud watcher or landing is still running, and it retries a toggle that did not take no more than once per 6h.
 
+**A routine's own firing is re-fired the same way** (`routinesRefired`, `routinesSuperseded`). The issue list leaves routine-filed tasks out unless it is asked with `includeRoutineExecutions=true`, so no scan built on it, the script's or yours in §1, ever saw one. A routine wakes its agent once per firing; when that wake died on the usage limit, the task sat assigned with no run and the next day's firing was filed beside it. Two daily routines went three days without a completed run that way, this one and the nightly check on main. The script re-fires only a routine's newest firing and cancels the unrun ones behind it as superseded, since each asks for the same sweep over a staler tree. If you find yourself running as a re-fired firing, that is why the gap in your reports exists: say how long it was.
+
 Your part is reading its report: `~/.cache/paperclip-dispatcher/facilitator.json`.
 - **`at` older than ~2h** means the Dispatcher is not sweeping. That is the finding: report it. Then do this step by hand, toggling `assigneeAgentId` null → agent and leaving `status` alone. Confirm a fresh `executionRunId` appears within ~30s.
 - **`toggleNotTaking`** lists tasks toggled 3+ times without moving. That is a rotation/config bug, not a missed wake: diagnose it from the run history (§3) and file it.
@@ -57,6 +67,8 @@ Detection is mechanical (the same script and report). An agent with `queued` > 0
 - **If the wedged agent is the Dispatcher, the script cannot see it.** It runs inside the Dispatcher's sweep. A stale report `at` is how this shows up, so check `GET /api/companies/{companyId}/live-runs` by hand in that case.
 
 ### 3. Run productivity
+
+**Start from `runDigest` in the report**: the last 24h of runs counted per agent by outcome (`succeeded`, `failed:<errorCode>`, …). The 50-row read below is a sample, and during a flood of failed wakes it is a two-minute sample of one agent. `quotaOut` names the agents whose newest finished run died on the usage limit; for those, every `failed:claude_usage_limit` in the window is one cause. Report it as one line with the count and do not file it per agent or per run: those runs cost nothing, and they are also what restarts the pipeline the moment the limit lifts. `coveredHours` under 24 means the rows ran out before the window did, so say what the counts cover.
 
 `GET /api/companies/{companyId}/heartbeat-runs?limit=50` — the run history for the whole company, newest first. The route is **company-scoped**; there is no per-agent spelling (`/api/agents/{id}/heartbeat-runs` 404s, which is what previously led this step to be wrongly descoped as "no such route"). Companion routes: `/api/heartbeat-runs/{runId}` (single run), `…/{runId}/log`, `…/{runId}/events`, `…/{runId}/issues`.
 
@@ -168,7 +180,7 @@ Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fail
 `agents/facilitator/reap.py` <!-- privacy-ok: paperclip's own script, not a project file --> clears what a task leaves behind once it is `done` or `cancelled`. The mechanical sweep launches it detached every 6h. It acts only when `REAP_ACT=1` is set in the Dispatcher's environment; without that, it writes what it would do to `reapLog` in the report. It covers local worktrees and branches (a task branch whose commits exist nowhere else is pushed first), `cloud-verify/*` local and remote refs, remote task branches 7 days after the task finished, merged and clean `op/*` branches in both repos, completed cloud sessions, verify cache files, and cloud watchers still waiting on a finished task. It never touches a live task, an open PR, a running session or a dirty tree. Your part: read `reapLog`. Its `KEPT` lines are what it refused to delete, mostly worktrees with uncommitted changes. Report them, because only the operator can decide what that work is. Also report any `FAIL` or `SKIP` line.
 ### 8. Report
 
-Comment one summary on the routine task: queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
+Comment one summary on the routine task: main's nightly check first when it is red or stale (§1a), queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), routine firings re-fired or superseded (§2a), the run digest's failures by cause (§3), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
 
 ## Filing
 
