@@ -355,7 +355,7 @@ Authorization:
 - an ancestor manager in the target agent's reporting chain.
 
 Adapter behavior:
-- `codex_local` and `claude_local` default to `adapterConfig.instructionsFilePath`
+- `claude_local` defaults to `adapterConfig.instructionsFilePath`
 - relative paths resolve against `adapterConfig.cwd`
 - absolute paths are stored as-is
 - clear by sending `{ "path": null }`

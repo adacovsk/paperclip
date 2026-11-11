@@ -13,25 +13,13 @@ import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
   Bot,
-  Code,
-  Gem,
-  MousePointer2,
   Sparkles,
-  Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
-import { HermesIcon } from "./HermesIcon";
 
 type AdvancedAdapterType =
   | "claude_local"
-  | "codex_local"
-  | "gemini_local"
-  | "opencode_local"
-  | "pi_local"
-  | "cursor"
-  | "openclaw_gateway"
-  | "hermes_local";
+  | "openclaw_gateway";
 
 const ADVANCED_ADAPTER_OPTIONS: Array<{
   value: AdvancedAdapterType;
@@ -46,43 +34,6 @@ const ADVANCED_ADAPTER_OPTIONS: Array<{
     icon: Sparkles,
     desc: "Local Claude agent",
     recommended: true,
-  },
-  {
-    value: "codex_local",
-    label: "Codex",
-    icon: Code,
-    desc: "Local Codex agent",
-    recommended: true,
-  },
-  {
-    value: "gemini_local",
-    label: "Gemini CLI",
-    icon: Gem,
-    desc: "Local Gemini agent",
-  },
-  {
-    value: "opencode_local",
-    label: "OpenCode",
-    icon: OpenCodeLogoIcon,
-    desc: "Local multi-provider agent",
-  },
-  {
-    value: "hermes_local",
-    label: "Hermes Agent",
-    icon: HermesIcon,
-    desc: "Local multi-provider agent",
-  },
-  {
-    value: "pi_local",
-    label: "Pi",
-    icon: Terminal,
-    desc: "Local Pi agent",
-  },
-  {
-    value: "cursor",
-    label: "Cursor",
-    icon: MousePointer2,
-    desc: "Local Cursor agent",
   },
   {
     value: "openclaw_gateway",

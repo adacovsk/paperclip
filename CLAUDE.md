@@ -11,7 +11,7 @@ Paperclip = open-source control plane for autonomous AI companies. Node.js serve
 | `ui/src/pages/` | React 19 + Tailwind v4 + shadcn/ui operator UI |
 | `packages/db/src/schema/` | Drizzle ORM tables (PostgreSQL) |
 | `packages/shared/` | Shared TS types, constants, validators |
-| `packages/adapters/` | Agent adapters: claude-local, codex-local, cursor-local, pi-local, gemini-local, opencode-local, openclaw-gateway |
+| `packages/adapters/` | Agent adapters: claude-local, openclaw-gateway (`process` and `http` live in `server/src/adapters/`) |
 | `packages/adapter-utils/` | Shared adapter utilities |
 | `skills/` | Runtime-injected agent skills (paperclip, create-agent, create-plugin, para-memory) |
 | `cli/` | `paperclipai` CLI |

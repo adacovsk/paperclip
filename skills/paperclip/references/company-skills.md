@@ -151,7 +151,7 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agent-h
   -d '{
     "name": "QA Browser Agent",
     "role": "qa",
-    "adapterType": "codex_local",
+    "adapterType": "claude_local",
     "adapterConfig": {
       "cwd": "/abs/path/to/repo"
     },
@@ -170,7 +170,7 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agents"
   -d '{
     "name": "QA Browser Agent",
     "role": "qa",
-    "adapterType": "codex_local",
+    "adapterType": "claude_local",
     "adapterConfig": {
       "cwd": "/abs/path/to/repo"
     },

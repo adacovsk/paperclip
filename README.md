@@ -52,7 +52,7 @@ All of upstream's core model is still here and still works:
 - company import/export
 - the plugin system
 - the mobile layout
-- the adapters: Claude Code, Codex, Cursor, Gemini, OpenCode, Pi, Hermes, OpenClaw gateway, plus plain process and HTTP agents
+- the adapters: Claude Code and OpenClaw gateway, plus plain process and HTTP agents
 
 ## What this fork changes
 

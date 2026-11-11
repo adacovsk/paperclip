@@ -57,7 +57,7 @@ paperclip/
 │   ├── adapter-utils/           # Adapter interfaces and helpers
 │   └── adapters/
 │       ├── claude-local/        # Claude Code adapter
-│       └── codex-local/         # OpenAI Codex adapter
+│       └── openclaw-gateway/    # OpenClaw gateway adapter
 │
 ├── skills/                      # Agent skills
 │   └── paperclip/               # Core Paperclip skill (heartbeat protocol)

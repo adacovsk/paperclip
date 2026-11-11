@@ -93,7 +93,6 @@
             "pages": [
               "adapters/overview",
               "adapters/claude-local",
-              "adapters/codex-local",
               "adapters/process",
               "adapters/http",
               "adapters/creating-an-adapter"

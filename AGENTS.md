@@ -15,7 +15,7 @@ Paperclip = control plane for autonomous AI companies. V1 contract: `doc/SPEC-im
 | `ui/src/pages/` | React operator UI (React 19, Tailwind v4, shadcn/ui) |
 | `packages/db/src/schema/` | Drizzle ORM table definitions |
 | `packages/shared/` | Shared types, constants, validators |
-| `packages/adapters/` | Agent runtime adapters (claude-local, codex-local, cursor-local, etc.) |
+| `packages/adapters/` | Agent runtime adapters (claude-local, openclaw-gateway) |
 | `skills/` | Runtime-injected agent skills |
 | `cli/` | `paperclipai` CLI client |
 | `doc/` | Product and ops docs |

@@ -25,12 +25,7 @@ export const AGENT_ADAPTER_TYPES = [
   "process",
   "http",
   "claude_local",
-  "codex_local",
-  "opencode_local",
-  "pi_local",
-  "cursor",
   "openclaw_gateway",
-  "hermes_local",
 ] as const;
 export type AgentAdapterType = (typeof AGENT_ADAPTER_TYPES)[number];
 

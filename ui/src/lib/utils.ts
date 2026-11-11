@@ -57,7 +57,6 @@ export function providerDisplayName(provider: string): string {
     openrouter: "OpenRouter",
     chatgpt: "ChatGPT",
     google: "Google",
-    cursor: "Cursor",
     jetbrains: "JetBrains AI",
   };
   return map[provider.toLowerCase()] ?? provider;

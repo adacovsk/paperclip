@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { agents } from "@paperclipai/db";
-import { sessionCodec as codexSessionCodec } from "@paperclipai/adapter-codex-local/server";
+import { sessionCodec as claudeSessionCodec } from "@paperclipai/adapter-claude-local/server";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {
   buildExplicitResumeSessionOverride,
@@ -198,7 +198,7 @@ describe("buildExplicitResumeSessionOverride", () => {
         sessionDisplayId: "session-after",
         lastRunId: "run-1",
       },
-      sessionCodec: codexSessionCodec,
+      sessionCodec: claudeSessionCodec,
     });
 
     expect(result).toEqual({
@@ -223,7 +223,7 @@ describe("buildExplicitResumeSessionOverride", () => {
         sessionDisplayId: "other-session",
         lastRunId: "run-2",
       },
-      sessionCodec: codexSessionCodec,
+      sessionCodec: claudeSessionCodec,
     });
 
     expect(result).toEqual({
@@ -281,14 +281,7 @@ describe("prioritizeProjectWorkspaceCandidatesForRun", () => {
 });
 
 describe("parseSessionCompactionPolicy", () => {
-  it("disables Paperclip-managed rotation by default for codex and claude local", () => {
-    expect(parseSessionCompactionPolicy(buildAgent("codex_local"))).toEqual({
-      enabled: true,
-      maxSessionRuns: 0,
-      maxRawInputTokens: 0,
-      maxSessionAgeHours: 0,
-      rotateOnTaskCompletion: true,
-    });
+  it("disables Paperclip-managed rotation by default for claude local", () => {
     expect(parseSessionCompactionPolicy(buildAgent("claude_local"))).toEqual({
       enabled: true,
       maxSessionRuns: 0,
@@ -298,27 +291,10 @@ describe("parseSessionCompactionPolicy", () => {
     });
   });
 
-  it("keeps conservative defaults for adapters without confirmed native compaction", () => {
-    expect(parseSessionCompactionPolicy(buildAgent("cursor"))).toEqual({
-      enabled: true,
-      maxSessionRuns: 200,
-      maxRawInputTokens: 2_000_000,
-      maxSessionAgeHours: 72,
-      rotateOnTaskCompletion: true,
-    });
-    expect(parseSessionCompactionPolicy(buildAgent("opencode_local"))).toEqual({
-      enabled: true,
-      maxSessionRuns: 200,
-      maxRawInputTokens: 2_000_000,
-      maxSessionAgeHours: 72,
-      rotateOnTaskCompletion: true,
-    });
-  });
-
   it("lets explicit agent overrides win over adapter defaults", () => {
     expect(
       parseSessionCompactionPolicy(
-        buildAgent("codex_local", {
+        buildAgent("claude_local", {
           heartbeat: {
             sessionCompaction: {
               maxSessionRuns: 25,
