@@ -2357,8 +2357,8 @@ export function heartbeatService(db: Db) {
 
     // A usage limit is recorded on the agent rather than only on the run, because
     // what has to change is the *next* wake, not this run's row. `getInvocationBlock`
-    // reads it back; it is cleared by the reset instant passing, so nothing has to
-    // remember to unset it.
+    // reads it back. It lapses when the reset instant passes, and a succeeded run
+    // clears it early (below).
     const usageLimit = usageLimitFromResult(result, { runId: run.id });
     if (usageLimit) {
       logger.warn(
@@ -2387,6 +2387,33 @@ export function heartbeatService(db: Db) {
         updatedAt: new Date(),
       })
       .where(eq(agentRuntimeState.agentId, agent.id));
+
+    // A run that completed proves the provider limit has lifted, and the limit is
+    // the account's, not the agent's: every agent on this adapter shares it. Without
+    // this the stored reset instant is the only way out, so an operator who resets
+    // or raises the limit early still watches the whole fleet idle until the
+    // originally announced time. Only limits observed before this run started are
+    // cleared, so a limit hit by another agent mid-run is not erased by it.
+    if (!usageLimit && run.status === "succeeded" && run.startedAt) {
+      const cleared = await db
+        .update(agentRuntimeState)
+        .set({ stateJson: sql`${agentRuntimeState.stateJson} - 'usageLimit'`, updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuntimeState.companyId, agent.companyId),
+            eq(agentRuntimeState.adapterType, agent.adapterType),
+            sql`${agentRuntimeState.stateJson} ? 'usageLimit'`,
+            sql`(${agentRuntimeState.stateJson}->'usageLimit'->>'observedAt')::timestamptz < ${run.startedAt.toISOString()}::timestamptz`,
+          ),
+        )
+        .returning({ agentId: agentRuntimeState.agentId });
+      if (cleared.length > 0) {
+        logger.info(
+          { runId: run.id, agentIds: cleared.map((r) => r.agentId) },
+          "run succeeded — lifting stored usage limits on agents sharing its adapter",
+        );
+      }
+    }
 
     if (additionalCostCents > 0 || hasTokenUsage) {
       const costs = costService(db, budgetHooks);
@@ -4251,6 +4278,17 @@ export function heartbeatService(db: Db) {
         .then((rows) => rows[0]?.projectId ?? null);
     }
 
+    // An operator asking for a run is asserting the limit has lifted — they are the
+    // one who can see the provider account. Clear the stored window so the wake is
+    // not refused; if the limit is in fact still on, this run hits it and re-arms
+    // the window, which costs one run.
+    if (opts.requestedByActorType === "user") {
+      await db
+        .update(agentRuntimeState)
+        .set({ stateJson: sql`${agentRuntimeState.stateJson} - 'usageLimit'`, updatedAt: new Date() })
+        .where(and(eq(agentRuntimeState.agentId, agentId), sql`${agentRuntimeState.stateJson} ? 'usageLimit'`));
+    }
+
     const budgetBlock = await budgets.getInvocationBlock(agent.companyId, agentId, {
       issueId,
       projectId,
@@ -4259,8 +4297,8 @@ export function heartbeatService(db: Db) {
       // A usage limit is a wait, so it is a skip rather than an error: throwing
       // here would abort `tickTimers` mid-scan and take every agent after this one
       // down with it, and a budget hard-stop only gets away with that because it
-      // pauses the agent as well. A user-requested wake still throws, so an
-      // operator asking for a run is told why it did not start.
+      // pauses the agent as well. A user-requested wake has already cleared the
+      // stored limit above, so it never reaches this branch as a usage limit.
       if (budgetBlock.kind === "usage_limit" && opts.requestedByActorType !== "user") {
         await writeSkippedRequest("usage_limit.blocked");
         logger.info({ agentId, reason: budgetBlock.reason }, "suppressed wake — agent is waiting out a usage limit");
