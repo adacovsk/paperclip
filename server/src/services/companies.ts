@@ -26,7 +26,7 @@ import {
   principalPermissionGrants,
   companyMemberships,
 } from "@paperclipai/db";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 
 export function companyService(db: Db) {
   const ISSUE_PREFIX_FALLBACK = "CMP";
@@ -109,41 +109,19 @@ export function companyService(db: Db) {
     return normalized.slice(0, 3) || ISSUE_PREFIX_FALLBACK;
   }
 
-  function suffixForAttempt(attempt: number) {
-    if (attempt <= 1) return "";
-    return "A".repeat(attempt - 1);
-  }
-
-  function isIssuePrefixConflict(error: unknown) {
-    const constraint = typeof error === "object" && error !== null && "constraint" in error
-      ? (error as { constraint?: string }).constraint
-      : typeof error === "object" && error !== null && "constraint_name" in error
-        ? (error as { constraint_name?: string }).constraint_name
-        : undefined;
-    return typeof error === "object"
-      && error !== null
-      && "code" in error
-      && (error as { code?: string }).code === "23505"
-      && constraint === "companies_issue_prefix_idx";
-  }
-
-  async function createCompanyWithUniquePrefix(data: typeof companies.$inferInsert) {
-    const base = deriveIssuePrefixBase(data.name);
-    let suffix = 1;
-    while (suffix < 10000) {
-      const candidate = `${base}${suffixForAttempt(suffix)}`;
-      try {
-        const rows = await db
-          .insert(companies)
-          .values({ ...data, issuePrefix: candidate })
-          .returning();
-        return rows[0];
-      } catch (error) {
-        if (!isIssuePrefixConflict(error)) throw error;
-      }
-      suffix += 1;
+  // An instance holds exactly one company: everything below it (agents,
+  // projects, the issue prefix and counter) is instance-wide in practice, and
+  // the company level is being folded into the instance.
+  async function createSingletonCompany(data: typeof companies.$inferInsert) {
+    const existing = await db.select({ id: companies.id }).from(companies).limit(1);
+    if (existing.length > 0) {
+      throw conflict("This instance already has a company; it holds only one.");
     }
-    throw new Error("Unable to allocate unique issue prefix");
+    const [row] = await db
+      .insert(companies)
+      .values({ ...data, issuePrefix: deriveIssuePrefixBase(data.name) })
+      .returning();
+    return row;
   }
 
   return {
@@ -163,7 +141,7 @@ export function companyService(db: Db) {
     },
 
     create: async (data: typeof companies.$inferInsert) => {
-      const created = await createCompanyWithUniquePrefix(data);
+      const created = await createSingletonCompany(data);
       const row = await getCompanyQuery(db)
         .where(eq(companies.id, created.id))
         .then((rows) => rows[0] ?? null);

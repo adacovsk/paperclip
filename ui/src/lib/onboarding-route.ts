@@ -26,15 +26,15 @@ export function resolveRouteOnboardingOptions(params: {
 
   if (!isOnboardingPath(pathname)) return null;
 
-  if (!companyPrefix) {
-    return { initialStep: 1 };
-  }
-
+  // An instance holds exactly one company, so the company step only runs when
+  // none exists yet; otherwise onboarding adds an agent to the one there is.
   const matchedCompany =
-    companies.find(
-      (company) =>
-        company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase(),
-    ) ?? null;
+    (companyPrefix
+      ? companies.find(
+          (company) =>
+            company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase(),
+        )
+      : undefined) ?? companies[0];
 
   if (!matchedCompany) {
     return { initialStep: 1 };

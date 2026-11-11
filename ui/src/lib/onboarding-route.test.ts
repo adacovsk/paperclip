@@ -48,6 +48,22 @@ describe("resolveRouteOnboardingOptions", () => {
       }),
     ).toEqual({ initialStep: 1 });
   });
+
+  it("adds an agent to the existing company instead of creating another", () => {
+    expect(
+      resolveRouteOnboardingOptions({
+        pathname: "/onboarding",
+        companies: [{ id: "company-1", issuePrefix: "PAP" }],
+      }),
+    ).toEqual({ initialStep: 2, companyId: "company-1" });
+    expect(
+      resolveRouteOnboardingOptions({
+        pathname: "/xyz/onboarding",
+        companyPrefix: "xyz",
+        companies: [{ id: "company-1", issuePrefix: "PAP" }],
+      }),
+    ).toEqual({ initialStep: 2, companyId: "company-1" });
+  });
 });
 
 describe("shouldRedirectCompanylessRouteToOnboarding", () => {

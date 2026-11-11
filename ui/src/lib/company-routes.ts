@@ -1,6 +1,5 @@
 const OPERATOR_ROUTE_ROOTS = new Set([
   "dashboard",
-  "companies",
   "company",
   "skills",
   "org",
