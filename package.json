@@ -18,12 +18,6 @@
     "secrets:migrate-inline-env": "tsx scripts/migrate-inline-env-secrets.ts",
     "db:backup": "./scripts/backup-db.sh",
     "paperclipai": "node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts",
-    "build:npm": "./scripts/build-npm.sh",
-    "release": "./scripts/release.sh",
-    "release:canary": "./scripts/release.sh canary",
-    "release:stable": "./scripts/release.sh stable",
-    "release:github": "./scripts/create-github-release.sh",
-    "release:rollback": "./scripts/rollback-latest.sh",
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
     "check:agent-git": "node scripts/check-agent-git-predicates.mjs",
     "check:agent-privacy": "node scripts/check-agent-privacy.mjs",
@@ -34,9 +28,7 @@
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
     "test:e2e": "npx playwright test --config tests/e2e/playwright.config.ts",
     "test:e2e:headed": "npx playwright test --config tests/e2e/playwright.config.ts --headed",
-    "evals:smoke": "cd evals/promptfoo && npx promptfoo@0.103.3 eval",
-    "test:release-smoke": "npx playwright test --config tests/release-smoke/playwright.config.ts",
-    "test:release-smoke:headed": "npx playwright test --config tests/release-smoke/playwright.config.ts --headed"
+    "evals:smoke": "cd evals/promptfoo && npx promptfoo@0.103.3 eval"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
