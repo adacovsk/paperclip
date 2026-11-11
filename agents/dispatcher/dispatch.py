@@ -13,6 +13,8 @@ whole instruction set. This script runs those rows directly:
   rebase finished, merge-tree clean       -> close it, re-Verify the parent
                                              (or resume the Review it held)
   stage blocked on a merge conflict       -> Rebase subtask, Worker slots allowing
+  open PR, branch conflicts with main     -> Verify subtask, launched like any other:
+                                             resolve mode in the cloud lane
   held Verify, capacity free              -> dispatch it
   Verify whose landed head the PR carries -> close it (or the PR merged)
   Verify the cloud lane found superseded  -> close it and its parent
@@ -296,6 +298,47 @@ def needs_rebase(parent: dict, stages: list[tuple[str, dict]], git: GitState) ->
     return Decision("rebase", ", ".join(paths))
 
 
+#: `pr_conflict`'s reason, which the sweep reads to clear the landed result.
+PR_CONFLICT = "open PR conflicts with origin/main"
+
+
+def pr_conflict(parent: dict, stages: list[tuple[str, dict]], git: GitState) -> Decision | None:
+    """A fresh Verify for a landed branch `origin/main` has since moved against, else None.
+
+    An open PR used to end the sweep's interest in a parent: landed work waits
+    on a human merge. But `main` keeps moving under it, and once the branch
+    conflicts the merge it waits on cannot happen. Nothing reopened it, so the
+    operator met a conflicting PR with no stage behind it and resolved it by
+    hand, where cargo does not run: one such merge dropped a closing brace
+    from a test file and every verify behind it went red on `main`'s break.
+    The Verify launches like any other, so the conflict goes to the cloud lane
+    in resolve mode and the result is built before anyone merges it.
+
+    `modify/delete` is left alone, as in `needs_rebase`: it is re-filed, not
+    resolved. Past the cap the Coordinator is told instead: a branch `main`
+    outruns that often is one for a deliberate merge order, not another build.
+    """
+    if parent["status"] != "in_review" or not git.exists or git.dirty or git.ahead == 0:
+        return None
+    if git.merges_clean or git.deleted_on_main:
+        return None
+    done = sum(1 for stage, c in stages if stage == "verify" and c["status"] == "done")
+    if done > MAX_REBASES:
+        return Decision("handoff", f"open PR conflicts with origin/main again after {done} verifies")
+    return Decision("verify", PR_CONFLICT)
+
+
+def clear_landed_result(identifier: str) -> None:
+    """Drop the result the open PR was landed from, so the next launch is a first launch.
+
+    The sentinel and the resolve marker describe the head already in the PR.
+    Left in place they make `relaunch-verify.sh launch` refuse (a result is
+    present, a resolve was already tried) and the conflict costs a model run.
+    """
+    for ext in ("exit", "cloud.resolve"):
+        (VERIFY_DIR / f"{identifier}.{ext}").unlink(missing_ok=True)
+
+
 #: `next_stage`'s verdict on a parent whose last stage is `blocked`: its block
 #: comment owns it. `unheld_escalation` checks that something actually does.
 BLOCKED_STAGE = "last stage is blocked; its block comment owns it"
@@ -400,6 +443,9 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
         return Decision("skip", BLOCKED_STAGE)
 
     if pr_head:
+        conflicted = pr_conflict(parent, stages, git)
+        if conflicted:
+            return conflicted
         # Landed work waits on a human merge; the merge sweep owns it, whatever
         # stage ran last (a re-review after the verify is a normal history).
         return Decision("skip", "PR open")
@@ -1302,6 +1348,8 @@ def sweep(api: Api, project: Path) -> None:
                 # Verify that was closed without landing anything.
                 after = unlanded_verify(stages) or max(
                     (c for c in children if stage_of(c) == "review"), key=lambda c: c["createdAt"])
+                if decision.reason == PR_CONFLICT and not api.dry_run:
+                    clear_landed_result(parent["identifier"])
                 dispatch_now = take_capacity()
                 launcher = self_launcher(parent["id"]) if dispatch_now else None
                 created = create_verify(api, agents, parent, after, git_st, dispatch_now,
