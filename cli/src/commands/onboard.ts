@@ -321,20 +321,15 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
       s.start("Validating API key...");
       try {
         if (llm.provider === "claude") {
-          const res = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
+          const res = await fetch("https://api.anthropic.com/v1/models", {
+            // Lists models rather than sending a message: a key check that names a
+            // model reports a good key as unverifiable once that model is retired.
             headers: {
               "x-api-key": llm.apiKey,
               "anthropic-version": "2023-06-01",
-              "content-type": "application/json",
             },
-            body: JSON.stringify({
-              model: "claude-sonnet-4-6",
-              max_tokens: 1,
-              messages: [{ role: "user", content: "hi" }],
-            }),
           });
-          if (res.ok || res.status === 400) {
+          if (res.ok) {
             s.stop("API key is valid");
           } else if (res.status === 401) {
             s.stop(pc.yellow("API key appears invalid — you can update it later"));
