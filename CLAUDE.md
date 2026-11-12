@@ -21,6 +21,8 @@ Paperclip = open-source control plane for autonomous AI agents. Node.js server +
 
 ```sh
 pnpm dev                  # Server + UI at http://localhost:3100 (embedded Postgres auto-starts)
+pnpm serve                # Server without watch: what the live service runs
+pnpm deploy:live          # Pull the live checkout; install/build/restart only as needed
 pnpm build                # Build all
 pnpm -r typecheck         # TS check all packages
 pnpm --filter '<pkg>...' typecheck  # one package plus its deps
@@ -32,16 +34,28 @@ pnpm paperclipai doctor   # Health check (--repair to fix)
 
 Data: `~/.paperclip/instances/default/db/`. Reset: `rm -rf` that dir + `pnpm dev`.
 
-**`pnpm dev` runs the server under `tsx watch`, and every reload kills all
-in-flight agent runs.** Children are tracked, not detached, so the shutdown
-handler SIGTERMs them — editing or merging any watched server file mid-run
-discards that run's work (a 12-minute Worker run went this way; the retry
-re-pays the whole context load). It is the sole confirmed cause of clustered
-`process_lost` — the run record now names the signal, so check for
-`the server shut down` in the error before investigating OOM or the SDK.
-Serve a live pipeline from a built server (`pnpm build` + `pnpm --filter
-@paperclipai/server start`), and keep `pnpm dev` for development where losing
-a run is acceptable.
+**The live server runs `pnpm serve` (no watch); `scripts/deploy.sh` is the only
+thing that restarts it.** Every restart kills all in-flight agent runs: children
+are tracked, not detached, so the shutdown handler SIGTERMs them. The service
+used to run `pnpm dev` (`tsx watch`), where any pull or merge that touched a
+server file was a restart — six in one day, none of them meant as deploys, one
+discarding a 12-minute Worker run. A lost run is retried, but the retry re-pays
+the whole context load. So:
+
+- **Pulling the live checkout deploys nothing.** `pnpm deploy:live` pulls, then
+  installs, rebuilds the UI and restarts only when the change needs each
+  (`--wait N` holds the restart until no run is in flight). An `agents/**` change
+  needs none of them: those scripts are read from the checkout each time they run.
+- **A script change that depends on a server change must not be pulled before the
+  server is restarted** — the scripts take effect at the pull, the server at the
+  restart. `deploy.sh` does both in order; a bare `git pull` does only the first.
+- **There is no compiled server.** `pnpm build` + `node server/dist/index.js`
+  fails on its first import: the workspace packages export their TypeScript
+  source, and only publishing rewrites that to `dist/`. `pnpm serve` runs the
+  same source through `tsx`, loaded once at boot.
+- Clustered `process_lost` is still a restart until shown otherwise — check for
+  `the server shut down` in the run's error before investigating OOM or the SDK.
+- Keep `pnpm dev` for development, where losing a run is acceptable.
 
 ## Stack
 
