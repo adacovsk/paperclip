@@ -1,10 +1,15 @@
 # AGENTS.md
 
-Paperclip = control plane for autonomous AI agents. V1 contract: `doc/SPEC-implementation.md`.
+Paperclip = control plane for an unattended, multi-agent software pipeline. Node.js server + React UI.
+
+**The repo's rules live in [`CLAUDE.md`](CLAUDE.md), and it is authoritative.** Read its Rules section before any change; this file only orients. Keeping the rules in one file is deliberate: a second copy here drifted until the two contradicted each other.
 
 ## Read First
 
-1. `doc/GOAL.md` 2. `doc/PRODUCT.md` 3. `doc/SPEC-implementation.md` 4. `doc/DEVELOPING.md` 5. `doc/DATABASE.md`
+1. `CLAUDE.md` (rules, commands, done-when)
+2. `agents/README.md` (the pipeline's cross-role contract)
+3. `doc/SPEC-implementation.md` (V1 build contract)
+4. `doc/DEVELOPING.md`, `doc/DATABASE.md`
 
 ## Repo Map
 
@@ -17,8 +22,10 @@ Paperclip = control plane for autonomous AI agents. V1 contract: `doc/SPEC-imple
 | `packages/shared/` | Shared types, constants, validators |
 | `packages/adapters/` | Agent runtime adapters (claude-local, codex-local, cursor-local, etc.) |
 | `skills/` | Runtime-injected agent skills |
+| `agents/` | The pipeline: role specs and the scripts between model runs. **Public**: see `CLAUDE.md` rule 9 |
 | `cli/` | `paperclipai` CLI client |
 | `doc/` | Product and ops docs |
+| `docs/` | Mintlify docs site; plans go in `docs/plans/YYYY-MM-DD-slug.md` |
 
 ## Dev
 
@@ -28,19 +35,6 @@ pnpm install && pnpm dev  # API + UI at http://localhost:3100, embedded Postgres
 
 Reset: `rm -rf ~/.paperclip/instances/default/db && pnpm dev`
 
-## Rules
+## Done When
 
-1. **One instance, no tenant layer.** Every entity belongs to the instance; routes are flat (`/api/<rest>`) and gate on `assertInstanceAccess(req)`.
-2. **Sync all layers on changes.** `packages/db` schema -> `packages/shared` types -> `server` routes/services -> `ui` pages.
-3. **Never break invariants.** Single-assignee tasks, atomic checkout, approval gates, budget hard-stop, activity logging.
-4. **Auth.** Operator = full control. Agents = bearer API keys, instance-wide. HTTP errors: 400/401/403/404/409/422/500.
-5. **DB changes.** Edit schema -> export from index -> `pnpm db:generate` -> `pnpm -r typecheck`.
-6. **Don't replace strategic docs wholesale.** Additive updates only. Plans go in `doc/plans/YYYY-MM-DD-slug.md`.
-7. **Don't commit `pnpm-lock.yaml`.** CI owns it.
-
-## Done = All True
-
-1. Matches `doc/SPEC-implementation.md`
-2. `pnpm -r typecheck && pnpm test:run && pnpm build` all pass
-3. Contracts synced across db/shared/server/ui
-4. Docs updated if behavior changed
+`pnpm -r typecheck && pnpm test:run && pnpm build` all pass, contracts are synced across db/shared/server/ui, and docs are updated if behavior changed.

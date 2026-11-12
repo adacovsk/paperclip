@@ -1,70 +1,53 @@
-# Contributing Guide
+# Contributing
 
-Thanks for wanting to contribute!
+Paperclip has one operator, who reviews and merges every PR, and an agent pipeline that
+opens many of them. The rules below apply to both. [`CLAUDE.md`](CLAUDE.md) holds the
+full rule set.
 
-We really appreciate both small fixes and thoughtful larger changes.
+## Where to send it
 
-## Two Paths to Get Your Pull Request Accepted
+Open issues and PRs against **`adacovsk/paperclip`**, base branch `master`. This
+codebase started from `paperclipai/paperclip` but is a separate project now, and
+nothing moves between the two. If your clone has a remote pointing at that repo, pass
+`--repo adacovsk/paperclip` to every `gh` command, or run
+`gh repo set-default adacovsk/paperclip` once. Otherwise `gh` can silently open the PR
+on the wrong repo.
 
-### Path 1: Small, Focused Changes (Fastest way to get merged)
+## Before you open a PR
 
-- Pick **one** clear thing to fix/improve
-- Touch the **smallest possible number of files**
-- Make sure the change is very targeted and easy to review
-- All automated checks pass
-- No new lint/test failures
+```bash
+pnpm -r typecheck && pnpm test:run && pnpm build
+```
 
-These almost always get merged quickly when they're clean.
+`pr.yml` runs the same three on every PR, after a policy job. Also check these:
 
-### Path 2: Bigger or Impactful Changes
+- **Lockfile.** Commit `pnpm-lock.yaml` only together with the manifest change that
+  moved it. A lockfile-only edit is rejected; regenerate it with
+  `gh workflow run refresh-lockfile.yml --repo adacovsk/paperclip`. Never hand-resolve
+  a lockfile conflict.
+- **Schema changes** go through every layer: `packages/db` → `packages/shared` →
+  `server` → `ui`, with a migration from `pnpm db:generate`.
+- **`agents/**` is public.** The pipeline runs against a private repository, so
+  nothing from it goes in: no tracker ids, PR numbers, repo name or source filenames.
+  Keep the lesson and drop the pointer. Run `pnpm check:agent-privacy` and
+  `pnpm check:agent-rationale` before pushing any `agents/**` edit.
+- **Docs** are updated in the same PR when behavior changes.
 
-- **First** open a draft PR that describes what you're trying to solve and your rough approach
-- Once there's rough agreement, build it
-- In your PR include:
-  - Before / After screenshots (or short video if UI/behavior change)
-  - Clear description of what & why
-  - Proof it works (manual testing notes)
-  - All tests passing
-  - All PR comments addressed
+## Shape of a PR
 
-PRs that follow this path are **much** more likely to be accepted, even when they're large.
+- One PR = one logical change. Small and targeted merges fastest.
+- For a large or cross-cutting change, open a draft PR describing the problem and
+  approach first.
+- Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md). It starts with a
+  **thinking path**, 5–8 steps from what Paperclip is down to this change:
 
-## General Rules (both paths)
+  > - Paperclip runs an unattended agent pipeline against a real repository
+  > - Agents wake on a schedule, on assignment, or when another agent's stage completes
+  > - A stage-completion wake could re-wake an agent on a task it already held
+  > - That looped without progress and burned the run budget
+  > - This pull request refuses a wake on a task the agent already holds
+  > - The benefit is that a finished stage advances the board instead of spinning
 
-- Write clear commit messages
-- Keep PR title + description meaningful
-- One PR = one logical change (unless it's a small related group)
-- Run tests locally first
-- Be kind in discussions 😄
-
-## Writing a Good PR message
-
-Please include a "thinking path" at the top of your PR message that explains from the top of the project down to what you fixed. E.g.:
-
-### Thinking Path Example 1:
-
-> - Paperclip orchestrates ai-agents for zero-human organizations
-> - There are many types of adapters for each LLM model provider
-> - But LLM's have a context limit and not all agents can automatically compact their context
-> - So we need to have an adapter-specific configuration for which adapters can and cannot automatically compact their context
-> - This pull request adds per-adapter configuration of compaction, either auto or paperclip managed
-> - That way we can get optimal performance from any adapter/provider in Paperclip
-
-### Thinking Path Example 2:
-
-> - Paperclip orchestrates ai-agents for zero-human organizations
-> - But humans want to watch the agents and oversee their work
-> - Human users also operate in teams and so they need their own logins, profiles, views etc.
-> - So we have a multi-user system for humans
-> - But humans want to be able to update their own profile picture and avatar
-> - But the avatar upload form wasn't saving the avatar to the file storage system
-> - So this PR fixes the avatar upload form to use the file storage service
-> - The benefit is we don't have a one-off file storage for just one aspect of the system, which would cause confusion and extra configuration
-
-Then have the rest of your normal PR message after the Thinking Path.
-
-This should include details about what you did, why you did it, why it matters & the benefits, how we can verify it works, and any risks.
-
-Please include screenshots if possible if you have a visible change. (use something like the [agent-browser skill](https://github.com/vercel-labs/agent-browser/blob/main/skills/agent-browser/SKILL.md) or similar to take screenshots). Ideally, you include before and after screenshots.
-
-Happy hacking!
+- Say how a reviewer can verify it. For UI changes, include before/after screenshots.
+- When closing a defect, state which mechanism you verified, not only that the symptom
+  is gone (`CLAUDE.md` rule 10).

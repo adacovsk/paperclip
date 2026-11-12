@@ -6,34 +6,32 @@
   <a href="#quickstart"><strong>Quickstart</strong></a> &middot;
   <a href="agents/README.md"><strong>The pipeline</strong></a> &middot;
   <a href="doc/"><strong>Docs</strong></a> &middot;
-  <a href="https://github.com/paperclipai/paperclip"><strong>Origin</strong></a>
+  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/adacovsk/paperclip/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
-  <a href="https://github.com/paperclipai/paperclip"><img src="https://img.shields.io/badge/forked%20from-paperclipai%2Fpaperclip-lightgrey" alt="Forked from paperclipai/paperclip" /></a>
 </p>
 
-# Paperclip, the pipeline fork
+# Paperclip
 
-This is `adacovsk/paperclip`. It began as a fork of
-[`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) and is now a
-separate, standalone codebase. Upstream is building a general AI-agent platform, with
-runners, sandboxes, MCP connections, apps and catalogs. This fork kept Paperclip's
-control plane and pointed it at one job: running an unattended software pipeline
-against a real repository, around the clock, with one human who reviews and merges.
+Paperclip is a control plane for running an unattended software pipeline against a
+real repository, around the clock, with one human who reviews and merges. A team of
+AI agents plans, implements, reviews, builds and lands changes; the operator sets
+direction and merges.
 
-Most of the differences come from operating that pipeline and fixing whatever broke
-it. The server and UI changes harden the run engine, so that runs don't wedge,
-livelock or report themselves finished when they aren't. The [`agents/`](agents/)
-directory holds the pipeline itself: eight role specs and the scripts that run
-between model runs.
+Two things make that work. The server and UI are hardened for long unattended
+operation, so that runs don't wedge, livelock or report themselves finished when
+they aren't. The [`agents/`](agents/) directory holds the pipeline itself: eight
+role specs and the scripts that run between model runs.
 
-The two codebases share no history after the fork point, and nothing is merged in
-either direction. **File issues and PRs here, not upstream.** Upstream's docs site,
-Discord, npm package and roadmap all describe upstream's build.
+> **Provenance.** This codebase started from
+> [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip) and has since
+> diverged into a separate project. The two share no history past that point and
+> nothing is merged in either direction. That project's docs site, Discord, npm
+> package and roadmap describe its build, not this one. File issues and PRs here.
 
-## What Paperclip is
+## How it works
 
 Paperclip is a Node.js server and React UI that orchestrates a team of AI agents.
 Agents belong to the instance. They have roles, a reporting line and a budget, and they
@@ -42,7 +40,7 @@ and status change is logged, and agents wake on a schedule (a *routine*), on
 assignment, or when another agent's stage completes. The operator sees everything
 from one dashboard and can pause, reassign or override any of it.
 
-Most of upstream's core model is still here and still works:
+The core model:
 
 - org charts
 - per-agent budgets and cost tracking
@@ -51,9 +49,7 @@ Most of upstream's core model is still here and still works:
 - the mobile layout
 - the adapters: Claude Code, Codex, Cursor, Gemini, OpenCode, Pi, Hermes, OpenClaw gateway, plus plain process and HTTP agents
 
-## What this fork changes
-
-### The pipeline
+## The pipeline
 
 [`agents/README.md`](agents/README.md) is the cross-role contract. It records, for
 each role, who may edit what, who runs the build, who pushes, who opens a PR, and
@@ -92,9 +88,9 @@ Builds are the bottleneck, and most of `agents/architect/` exists to manage them
   that reads that data, or a shared symbol. A green branch that main's advance
   doesn't reach goes straight to landing.
 
-### Run-engine hardening
+## Run-engine hardening
 
-Each of these is a failure the pipeline hit and this fork then closed:
+Each of these is a failure the pipeline hit and then closed:
 
 | | |
 | --- | --- |
@@ -109,7 +105,7 @@ Each of these is a failure the pipeline hit and this fork then closed:
 | **Diagnosable failures** | A run killed by server shutdown says so, so `process_lost` is no longer mistaken for OOM. |
 | **Bounded history** | Run, issue, comment and activity lists are paginated and run history is pruned, so the dashboard stays fast on a long-running instance. |
 
-### Operator UI
+## Operator UI
 
 - The Inbox lists only what has gone wrong.
 - The sidebar shows live run dots per agent.
@@ -120,7 +116,7 @@ Each of these is a failure the pipeline hit and this fork then closed:
 - "Board" is renamed "operator" throughout the code, API, UI and database.
 - There is no tenant layer: one instance is one organization. API routes are flat (`/api/issues`, `/api/agents`), the instance record is `/api/instance/profile`, and UI paths carry no prefix segment.
 
-### Security
+## Security
 
 - Agent-facing routes check instance access end to end: import, approvals, activity and heartbeat.
 - Bearer tokens are redacted from logs.
@@ -128,16 +124,21 @@ Each of these is a failure the pipeline hit and this fork then closed:
 - `agents:read_config` adds a read-only view of agent configuration.
 - `pnpm check:agent-privacy` keeps private references out of `agents/**`, which is public.
 
-### Removed
+## Deliberately absent
 
-- **The provider quota-windows subsystem.** Weekly quota is read where the pipeline actually uses it: `cloud-pace.py` and cost tracking.
+Paperclip runs one pipeline whose operator edits the source directly, so it leaves
+out what a general multi-tenant platform needs:
+
+- **Tenants.** One instance is one organization (see Operator UI above).
+- **Plugins.** A new capability is a change to the server, the UI or `agents/**`.
+- **Provider quota windows.** Weekly quota is read where the pipeline actually uses it: `cloud-pace.py` and cost tracking.
 - **Hiding issues.** The API refuses `hiddenAt`.
 - **The CEO onboarding bundle.** New agents get the default instructions.
 
 ## Quickstart
 
-Run it from source. This build is not published to npm: `npx paperclipai` installs
-**upstream's** package, not this one.
+Run it from source. Paperclip is not published to npm: `npx paperclipai` installs
+an unrelated package from the project this one started from.
 
 ```bash
 git clone https://github.com/adacovsk/paperclip.git
@@ -185,9 +186,10 @@ That is also what `pr.yml` runs on every PR to `master`, after a policy job that
 rejects lockfile-only edits. [`CLAUDE.md`](CLAUDE.md) has the repo's rules, and
 [`doc/DEVELOPING.md`](doc/DEVELOPING.md) the full development guide.
 
-If your clone has a remote pointing at upstream, pass `--repo adacovsk/paperclip` to
-every `gh` command. `gh` prefers a remote named `upstream` and will open your PR there.
+If your clone also has a remote pointing at `paperclipai/paperclip`, pass
+`--repo adacovsk/paperclip` to every `gh` command. `gh` prefers a remote named
+`upstream` over `origin` and will silently open your PR there.
 
 ## License
 
-MIT. Portions &copy; the upstream Paperclip authors; fork changes &copy; 2026 adacovsk.
+MIT. Portions &copy; the original Paperclip authors; subsequent changes &copy; 2026 adacovsk.
