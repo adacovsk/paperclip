@@ -441,7 +441,7 @@ Each is a distinct page/route:
 
 1. **Org Chart** — the org tree with live status indicators (running/idle/paused/error) per agent. Real-time activity feed of what agents are doing.
 2. **Task Operator** — Task management. Kanban and list views. Filter by team, agent, project, status.
-3. **Dashboard** — high-level metrics: agent count, active tasks, costs, goal progress, burn rate. The "glance" view from GOAL.md.
+3. **Dashboard** — high-level metrics: agent count, active tasks, costs, goal progress, burn rate. The "glance" view.
 4. **Agent Detail** — deep dive on a single agent: their tasks, activity, costs, configuration, status history.
 5. **Project/Initiative Views** — progress tracking against milestones and goals.
 6. **Cost Dashboard** — spend visualization at every level (agent, task, project, instance).

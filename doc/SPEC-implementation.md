@@ -3,7 +3,7 @@
 Status: Implementation contract for first release (V1)
 Date: 2026-02-17
 Audience: Product, engineering, and agent-integration authors
-Source inputs: `GOAL.md`, `PRODUCT.md`, `SPEC.md`, `DATABASE.md`, current monorepo code
+Source inputs: `SPEC.md`, `DATABASE.md`, current monorepo code
 
 ## 1. Document Role
 
