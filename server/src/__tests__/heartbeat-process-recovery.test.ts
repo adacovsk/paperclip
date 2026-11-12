@@ -316,6 +316,61 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(issue?.checkoutRunId).toBe(runId);
   });
 
+  it("leaves the agent idle, not in error, when its run's process was lost", async () => {
+    const { agentId } = await seedRunFixture({ processPid: 999_999_999, processLossRetryCount: 1 });
+    await db.update(agents).set({ status: "running" }).where(eq(agents.id, agentId));
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.reapOrphanedRuns();
+
+    const agent = await db.select().from(agents).where(eq(agents.id, agentId)).then((rows) => rows[0]);
+    expect(agent?.status).toBe("idle");
+  });
+
+  it("retries a retry that a restart killed, and says the server shut down", async () => {
+    const { agentId, runId } = await seedRunFixture({ processPid: 999_999_999, processLossRetryCount: 1 });
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.reapOrphanedRuns({ serverJustStarted: true });
+
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(2);
+    const lost = runs.find((row) => row.id === runId);
+    const retry = runs.find((row) => row.id !== runId);
+    // No shutdown stamp was written, as when the database dies with the server.
+    expect(lost?.error).toContain("the server shut down");
+    expect(retry?.status).toBe("queued");
+    expect(retry?.processLossRetryCount).toBe(2);
+  });
+
+  it("stops retrying a run that restarts keep killing", async () => {
+    const { agentId, issueId } = await seedRunFixture({ processPid: 999_999_999, processLossRetryCount: 4 });
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.reapOrphanedRuns({ serverJustStarted: true });
+
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
+    expect(issue?.executionRunId).toBeNull();
+  });
+
+  it("clears an error status a lost process left behind, and no other", async () => {
+    const lost = await seedRunFixture({ runStatus: "failed", runErrorCode: "process_lost" });
+    const broke = await seedRunFixture({ runStatus: "failed", runErrorCode: "adapter_failed" });
+    const finishedAt = new Date("2026-03-19T00:05:00.000Z");
+    await db.update(heartbeatRuns).set({ finishedAt });
+    await db.update(agents).set({ status: "error" });
+    const heartbeat = heartbeatService(db);
+
+    expect(await heartbeat.clearProcessLostAgentErrors()).toBe(1);
+
+    const statusOf = (id: string) =>
+      db.select().from(agents).where(eq(agents.id, id)).then((rows) => rows[0]?.status);
+    expect(await statusOf(lost.agentId)).toBe("idle");
+    expect(await statusOf(broke.agentId)).toBe("error");
+  });
+
   it("clears the detached warning when the run reports activity again", async () => {
     const { runId } = await seedRunFixture({
       includeIssue: false,
