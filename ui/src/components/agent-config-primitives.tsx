@@ -28,6 +28,7 @@ export const help: Record<string, string> = {
   cwd: "Deprecated legacy working directory fallback for local adapters. Existing agents may still carry this value, but new configurations should use project workspaces instead.",
   promptTemplate: "Sent on every heartbeat. Keep this small and dynamic. Use it for current-task framing, not large static instructions. Supports {{ agent.id }}, {{ agent.name }}, {{ agent.role }} and other template variables.",
   model: "Override the default model used by the adapter.",
+  claudeModel: "Full Claude model id, e.g. claude-opus-5-5. Leave empty to use the Claude CLI's default.",
   thinkingEffort: "Control model reasoning depth. Supported values vary by adapter/model.",
   chrome: "Enable Claude's Chrome integration by passing --chrome.",
   dangerouslySkipPermissions: "Run unattended by auto-approving adapter permission prompts when supported.",

@@ -719,29 +719,48 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 />
               </Field>
 
-              <ModelDropdown
-                models={models}
-                value={currentModelId}
-                onChange={(v) =>
-                  isCreate
-                    ? set!({ model: v })
-                    : mark("adapterConfig", "model", v || undefined)
-                }
-                open={modelOpen}
-                onOpenChange={setModelOpen}
-                allowDefault={adapterType !== "opencode_local" && adapterType !== "hermes_local"}
-                required={adapterType === "opencode_local" || adapterType === "hermes_local"}
-                groupByProvider={adapterType === "opencode_local"}
-                creatable={adapterType === "hermes_local" || adapterType === "claude_local"}
-                detectedModel={adapterType === "hermes_local" ? detectedModel : null}
-                onDetectModel={adapterType === "hermes_local"
-                  ? async () => {
-                      const result = await refetchDetectedModel();
-                      return result.data?.model ?? null;
+              {adapterType === "claude_local" ? (
+                // A typed id, not a list: any list of Claude models is stale by
+                // the next release.
+                <Field label="Model" hint={help.claudeModel}>
+                  <DraftInput
+                    value={currentModelId}
+                    onCommit={(v) =>
+                      isCreate
+                        ? set!({ model: v.trim() })
+                        : mark("adapterConfig", "model", v.trim() || undefined)
                     }
-                  : undefined}
-                detectModelLabel={adapterType === "hermes_local" ? "Detect from Hermes config" : undefined}
-              />
+                    immediate
+                    className={inputClass}
+                    placeholder="Claude CLI default"
+                    spellCheck={false}
+                  />
+                </Field>
+              ) : (
+                <ModelDropdown
+                  models={models}
+                  value={currentModelId}
+                  onChange={(v) =>
+                    isCreate
+                      ? set!({ model: v })
+                      : mark("adapterConfig", "model", v || undefined)
+                  }
+                  open={modelOpen}
+                  onOpenChange={setModelOpen}
+                  allowDefault={adapterType !== "opencode_local" && adapterType !== "hermes_local"}
+                  required={adapterType === "opencode_local" || adapterType === "hermes_local"}
+                  groupByProvider={adapterType === "opencode_local"}
+                  creatable={adapterType === "hermes_local"}
+                  detectedModel={adapterType === "hermes_local" ? detectedModel : null}
+                  onDetectModel={adapterType === "hermes_local"
+                    ? async () => {
+                        const result = await refetchDetectedModel();
+                        return result.data?.model ?? null;
+                      }
+                    : undefined}
+                  detectModelLabel={adapterType === "hermes_local" ? "Detect from Hermes config" : undefined}
+                />
+              )}
               {fetchedModelsError && (
                 <p className="text-xs text-destructive">
                   {fetchedModelsError instanceof Error
