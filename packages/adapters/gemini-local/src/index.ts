@@ -2,14 +2,11 @@ export const type = "gemini_local";
 export const label = "Gemini CLI (local)";
 export const DEFAULT_GEMINI_LOCAL_MODEL = "auto";
 
-export const models = [
-  { id: DEFAULT_GEMINI_LOCAL_MODEL, label: "Auto" },
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-  { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
-];
+/**
+ * Deliberately empty: models are discovered from the provider at request time
+ * or typed. A list written here is stale by the next model release.
+ */
+export const models: { id: string; label: string }[] = [];
 
 export const agentConfigurationDoc = `# gemini_local agent configuration
 

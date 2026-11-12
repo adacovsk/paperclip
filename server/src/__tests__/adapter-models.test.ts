@@ -1,6 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local";
-import { models as cursorFallbackModels } from "@paperclipai/adapter-cursor-local";
 import { resetOpenCodeModelsCacheForTests } from "@paperclipai/adapter-opencode-local/server";
 import { listAdapterModels } from "../adapters/index.js";
 import { resetCodexModelsCacheForTests } from "../adapters/codex-models.js";
@@ -22,15 +20,15 @@ describe("adapter model listing", () => {
     expect(models).toEqual([]);
   });
 
-  it("returns codex fallback models when no OpenAI key is available", async () => {
+  it("returns no codex models when no OpenAI key is available", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const models = await listAdapterModels("codex_local");
 
-    expect(models).toEqual(codexFallbackModels);
+    expect(models).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("loads codex models dynamically and merges fallback options", async () => {
+  it("loads codex models dynamically, with nothing written in", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -48,10 +46,10 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
-    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+    expect(first.map((model) => model.id)).toEqual(["gpt-5", "gpt-5-pro"]);
   });
 
-  it("falls back to static codex models when OpenAI model discovery fails", async () => {
+  it("returns no codex models when OpenAI model discovery fails", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: false,
@@ -60,11 +58,11 @@ describe("adapter model listing", () => {
     } as Response);
 
     const models = await listAdapterModels("codex_local");
-    expect(models).toEqual(codexFallbackModels);
+    expect(models).toEqual([]);
   });
 
 
-  it("returns cursor fallback models when CLI discovery is unavailable", async () => {
+  it("returns no cursor models when CLI discovery is unavailable", async () => {
     setCursorModelsRunnerForTests(() => ({
       status: null,
       stdout: "",
@@ -73,7 +71,7 @@ describe("adapter model listing", () => {
     }));
 
     const models = await listAdapterModels("cursor");
-    expect(models).toEqual(cursorFallbackModels);
+    expect(models).toEqual([]);
   });
 
   it("loads cursor models dynamically and caches them", async () => {
@@ -92,7 +90,7 @@ describe("adapter model listing", () => {
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "auto")).toBe(true);
     expect(first.some((model) => model.id === "gpt-5.3-codex-high")).toBe(true);
-    expect(first.some((model) => model.id === "composer-1")).toBe(true);
+    expect(first).toHaveLength(4);
   });
 
   it("returns no opencode models when opencode command is unavailable", async () => {

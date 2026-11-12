@@ -74,7 +74,6 @@ import {
 } from "hermes-paperclip-adapter/server";
 import {
   agentConfigurationDoc as hermesAgentConfigurationDoc,
-  models as hermesModels,
 } from "hermes-paperclip-adapter";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
@@ -179,7 +178,9 @@ const hermesLocalAdapter: ServerAdapterModule = {
   // context still requires an owner-id field this server no longer has.
   listSkills: hermesListSkills as unknown as ServerAdapterModule["listSkills"],
   syncSkills: hermesSyncSkills as unknown as ServerAdapterModule["syncSkills"],
-  models: hermesModels,
+  // Not the list hermes-paperclip-adapter ships: a written list is stale by
+  // the next release. The model is detected from Hermes config or typed.
+  models: [],
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: hermesAgentConfigurationDoc,
   detectModel: () => detectModelFromHermes(),

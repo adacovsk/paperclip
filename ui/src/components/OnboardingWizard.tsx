@@ -31,7 +31,6 @@ import {
 } from "../lib/onboarding-launch";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
@@ -286,9 +285,7 @@ export function OnboardingWizard() {
       ...defaultCreateValues,
       adapterType,
       model:
-        adapterType === "codex_local"
-          ? model || DEFAULT_CODEX_LOCAL_MODEL
-          : adapterType === "gemini_local"
+        adapterType === "gemini_local"
             ? model || DEFAULT_GEMINI_LOCAL_MODEL
           : adapterType === "cursor"
           ? model || DEFAULT_CURSOR_LOCAL_MODEL
@@ -729,9 +726,6 @@ export function OnboardingWizard() {
                           onClick={() => {
                             const nextType = opt.value as AdapterType;
                             setAdapterType(nextType);
-                            if (nextType === "codex_local" && !model) {
-                              setModel(DEFAULT_CODEX_LOCAL_MODEL);
-                            }
                             if (nextType !== "codex_local") {
                               setModel("");
                             }
@@ -865,12 +859,15 @@ export function OnboardingWizard() {
                         <label className="text-xs text-muted-foreground mb-1 block">
                           Model
                         </label>
-                        {adapterType === "claude_local" ? (
-                          // A typed id, not a list: any list of Claude models
-                          // is stale by the next release.
+                        {adapterType === "claude_local" ||
+                        (adapterType !== "opencode_local" &&
+                          !adapterModelsLoading &&
+                          (adapterModels ?? []).length === 0) ? (
+                          // A typed id when nothing is discovered: any written
+                          // list of models is stale by the next release.
                           <input
                             className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
-                            placeholder="Claude CLI default (or e.g. claude-opus-5-5)"
+                            placeholder={adapterType === "claude_local" ? "Claude CLI default (or e.g. claude-opus-5-5)" : "CLI default"}
                             value={model}
                             onChange={(e) => setModel(e.target.value.trim())}
                             spellCheck={false}

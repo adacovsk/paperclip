@@ -1,5 +1,4 @@
 import type { AdapterModel } from "./types.js";
-import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local";
 import { readConfigFile } from "../config-file.js";
 
 const OPENAI_MODELS_ENDPOINT = "https://api.openai.com/v1/models";
@@ -24,11 +23,8 @@ function dedupeModels(models: AdapterModel[]): AdapterModel[] {
   return deduped;
 }
 
-function mergedWithFallback(models: AdapterModel[]): AdapterModel[] {
-  return dedupeModels([
-    ...models,
-    ...codexFallbackModels,
-  ]).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true, sensitivity: "base" }));
+function sortedModels(models: AdapterModel[]): AdapterModel[] {
+  return dedupeModels(models).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true, sensitivity: "base" }));
 }
 
 function resolveOpenAiApiKey(): string | null {
@@ -72,8 +68,7 @@ async function fetchOpenAiModels(apiKey: string): Promise<AdapterModel[]> {
 
 export async function listCodexModels(): Promise<AdapterModel[]> {
   const apiKey = resolveOpenAiApiKey();
-  const fallback = dedupeModels(codexFallbackModels);
-  if (!apiKey) return fallback;
+  if (!apiKey) return [];
 
   const now = Date.now();
   const keyFingerprint = fingerprint(apiKey);
@@ -83,7 +78,7 @@ export async function listCodexModels(): Promise<AdapterModel[]> {
 
   const fetched = await fetchOpenAiModels(apiKey);
   if (fetched.length > 0) {
-    const merged = mergedWithFallback(fetched);
+    const merged = sortedModels(fetched);
     cached = {
       keyFingerprint,
       expiresAt: now + OPENAI_MODELS_CACHE_TTL_MS,
@@ -96,7 +91,7 @@ export async function listCodexModels(): Promise<AdapterModel[]> {
     return cached.models;
   }
 
-  return fallback;
+  return [];
 }
 
 export function resetCodexModelsCacheForTests() {

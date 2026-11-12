@@ -1,7 +1,6 @@
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
 } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
@@ -72,7 +71,7 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
-  ac.model = v.model || DEFAULT_CODEX_LOCAL_MODEL;
+  if (v.model) ac.model = v.model;
   if (v.thinkingEffort) ac.modelReasoningEffort = v.thinkingEffort;
   ac.timeoutSec = 0;
   ac.graceSec = 15;

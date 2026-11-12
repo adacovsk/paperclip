@@ -13,7 +13,6 @@ import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
@@ -325,6 +324,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => agentsApi.adapterModels(adapterType),
   });
   const models = fetchedModels ?? externalModels ?? [];
+  // OpenCode needs a discovered model and Hermes has its own detect button,
+  // so both keep the picker even when it is empty.
+  const modelIsTyped =
+    adapterType === "claude_local" ||
+    (adapterType !== "opencode_local" &&
+      adapterType !== "hermes_local" &&
+      (fetchedModels !== undefined || externalModels !== undefined) &&
+      models.length === 0);
   const {
     data: detectedModelData,
     refetch: refetchDetectedModel,
@@ -570,7 +577,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     const { adapterType: _at, ...defaults } = defaultCreateValues;
                     const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
                     if (t === "codex_local") {
-                      nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
@@ -589,9 +595,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       adapterType: t,
                       adapterConfig: {
                         model:
-                          t === "codex_local"
-                            ? DEFAULT_CODEX_LOCAL_MODEL
-                            : t === "gemini_local"
+                          t === "gemini_local"
                               ? DEFAULT_GEMINI_LOCAL_MODEL
                             : t === "cursor"
                               ? DEFAULT_CURSOR_LOCAL_MODEL
@@ -719,10 +723,10 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 />
               </Field>
 
-              {adapterType === "claude_local" ? (
-                // A typed id, not a list: any list of Claude models is stale by
-                // the next release.
-                <Field label="Model" hint={help.claudeModel}>
+              {modelIsTyped ? (
+                // A typed id when nothing is discovered: no list is written
+                // here, because any written list is stale by the next release.
+                <Field label="Model" hint={adapterType === "claude_local" ? help.claudeModel : help.model}>
                   <DraftInput
                     value={currentModelId}
                     onCommit={(v) =>
@@ -732,7 +736,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     }
                     immediate
                     className={inputClass}
-                    placeholder="Claude CLI default"
+                    placeholder={adapterType === "claude_local" ? "Claude CLI default" : "CLI default"}
                     spellCheck={false}
                   />
                 </Field>

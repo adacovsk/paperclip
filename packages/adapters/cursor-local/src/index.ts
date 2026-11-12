@@ -2,49 +2,12 @@ export const type = "cursor";
 export const label = "Cursor CLI (local)";
 export const DEFAULT_CURSOR_LOCAL_MODEL = "auto";
 
-const CURSOR_FALLBACK_MODEL_IDS = [
-  "auto",
-  "composer-1.5",
-  "composer-1",
-  "gpt-5.3-codex-low",
-  "gpt-5.3-codex-low-fast",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-fast",
-  "gpt-5.3-codex-high",
-  "gpt-5.3-codex-high-fast",
-  "gpt-5.3-codex-xhigh",
-  "gpt-5.3-codex-xhigh-fast",
-  "gpt-5.3-codex-spark-preview",
-  "gpt-5.2",
-  "gpt-5.2-codex-low",
-  "gpt-5.2-codex-low-fast",
-  "gpt-5.2-codex",
-  "gpt-5.2-codex-fast",
-  "gpt-5.2-codex-high",
-  "gpt-5.2-codex-high-fast",
-  "gpt-5.2-codex-xhigh",
-  "gpt-5.2-codex-xhigh-fast",
-  "gpt-5.1-codex-max",
-  "gpt-5.1-codex-max-high",
-  "gpt-5.2-high",
-  "gpt-5.1-high",
-  "gpt-5.1-codex-mini",
-  "opus-4.6-thinking",
-  "opus-4.6",
-  "opus-4.5",
-  "opus-4.5-thinking",
-  "sonnet-4.6",
-  "sonnet-4.6-thinking",
-  "sonnet-4.5",
-  "sonnet-4.5-thinking",
-  "gemini-3.1-pro",
-  "gemini-3-pro",
-  "gemini-3-flash",
-  "grok",
-  "kimi-k2.5",
-];
 
-export const models = CURSOR_FALLBACK_MODEL_IDS.map((id) => ({ id, label: id }));
+/**
+ * Deliberately empty: models are discovered from the provider at request time
+ * or typed. A list written here is stale by the next model release.
+ */
+export const models: { id: string; label: string }[] = [];
 
 export const agentConfigurationDoc = `# cursor agent configuration
 
