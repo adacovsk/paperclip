@@ -50,7 +50,6 @@ import { logger } from "../middleware/logger.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertOperator, assertInstanceAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { findServerAdapter, listAdapterModels, detectAdapterModel } from "../adapters/index.js";
-import { modelsInUse } from "../services/models-in-use.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
@@ -63,7 +62,6 @@ import {
 import { runClaudeLogin } from "@paperclipai/adapter-claude-local/server";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
@@ -420,9 +418,6 @@ export function agentRoutes(db: Db) {
   ): Record<string, unknown> {
     const next = { ...adapterConfig };
     if (adapterType === "codex_local") {
-      if (!asNonEmptyString(next.model)) {
-        next.model = DEFAULT_CODEX_LOCAL_MODEL;
-      }
       const hasBypassFlag =
         typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
         typeof next.dangerouslyBypassSandbox === "boolean";
@@ -693,7 +688,7 @@ export function agentRoutes(db: Db) {
   router.get("/adapters/:type/models", async (req, res) => {
     assertInstanceAccess(req);
     const type = req.params.type as string;
-    const models = type === "claude_local" ? await modelsInUse(db, type) : await listAdapterModels(type);
+    const models = await listAdapterModels(type);
     res.json(models);
   });
 

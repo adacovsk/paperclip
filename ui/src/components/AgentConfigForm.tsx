@@ -13,7 +13,6 @@ import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
@@ -325,6 +324,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => agentsApi.adapterModels(adapterType),
   });
   const models = fetchedModels ?? externalModels ?? [];
+  // OpenCode needs a discovered model and Hermes has its own detect button,
+  // so both keep the picker even when it is empty.
+  const modelIsTyped =
+    adapterType === "claude_local" ||
+    (adapterType !== "opencode_local" &&
+      adapterType !== "hermes_local" &&
+      (fetchedModels !== undefined || externalModels !== undefined) &&
+      models.length === 0);
   const {
     data: detectedModelData,
     refetch: refetchDetectedModel,
@@ -570,7 +577,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     const { adapterType: _at, ...defaults } = defaultCreateValues;
                     const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
                     if (t === "codex_local") {
-                      nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
@@ -589,9 +595,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       adapterType: t,
                       adapterConfig: {
                         model:
-                          t === "codex_local"
-                            ? DEFAULT_CODEX_LOCAL_MODEL
-                            : t === "gemini_local"
+                          t === "gemini_local"
                               ? DEFAULT_GEMINI_LOCAL_MODEL
                             : t === "cursor"
                               ? DEFAULT_CURSOR_LOCAL_MODEL
@@ -719,29 +723,48 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 />
               </Field>
 
-              <ModelDropdown
-                models={models}
-                value={currentModelId}
-                onChange={(v) =>
-                  isCreate
-                    ? set!({ model: v })
-                    : mark("adapterConfig", "model", v || undefined)
-                }
-                open={modelOpen}
-                onOpenChange={setModelOpen}
-                allowDefault={adapterType !== "opencode_local" && adapterType !== "hermes_local"}
-                required={adapterType === "opencode_local" || adapterType === "hermes_local"}
-                groupByProvider={adapterType === "opencode_local"}
-                creatable={adapterType === "hermes_local" || adapterType === "claude_local"}
-                detectedModel={adapterType === "hermes_local" ? detectedModel : null}
-                onDetectModel={adapterType === "hermes_local"
-                  ? async () => {
-                      const result = await refetchDetectedModel();
-                      return result.data?.model ?? null;
+              {modelIsTyped ? (
+                // A typed id when nothing is discovered: no list is written
+                // here, because any written list is stale by the next release.
+                <Field label="Model" hint={adapterType === "claude_local" ? help.claudeModel : help.model}>
+                  <DraftInput
+                    value={currentModelId}
+                    onCommit={(v) =>
+                      isCreate
+                        ? set!({ model: v.trim() })
+                        : mark("adapterConfig", "model", v.trim() || undefined)
                     }
-                  : undefined}
-                detectModelLabel={adapterType === "hermes_local" ? "Detect from Hermes config" : undefined}
-              />
+                    immediate
+                    className={inputClass}
+                    placeholder={adapterType === "claude_local" ? "Claude CLI default" : "CLI default"}
+                    spellCheck={false}
+                  />
+                </Field>
+              ) : (
+                <ModelDropdown
+                  models={models}
+                  value={currentModelId}
+                  onChange={(v) =>
+                    isCreate
+                      ? set!({ model: v })
+                      : mark("adapterConfig", "model", v || undefined)
+                  }
+                  open={modelOpen}
+                  onOpenChange={setModelOpen}
+                  allowDefault={adapterType !== "opencode_local" && adapterType !== "hermes_local"}
+                  required={adapterType === "opencode_local" || adapterType === "hermes_local"}
+                  groupByProvider={adapterType === "opencode_local"}
+                  creatable={adapterType === "hermes_local"}
+                  detectedModel={adapterType === "hermes_local" ? detectedModel : null}
+                  onDetectModel={adapterType === "hermes_local"
+                    ? async () => {
+                        const result = await refetchDetectedModel();
+                        return result.data?.model ?? null;
+                      }
+                    : undefined}
+                  detectModelLabel={adapterType === "hermes_local" ? "Detect from Hermes config" : undefined}
+                />
+              )}
               {fetchedModelsError && (
                 <p className="text-xs text-destructive">
                   {fetchedModelsError instanceof Error

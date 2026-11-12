@@ -31,7 +31,6 @@ import {
 } from "../lib/onboarding-launch";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
@@ -286,9 +285,7 @@ export function OnboardingWizard() {
       ...defaultCreateValues,
       adapterType,
       model:
-        adapterType === "codex_local"
-          ? model || DEFAULT_CODEX_LOCAL_MODEL
-          : adapterType === "gemini_local"
+        adapterType === "gemini_local"
             ? model || DEFAULT_GEMINI_LOCAL_MODEL
           : adapterType === "cursor"
           ? model || DEFAULT_CURSOR_LOCAL_MODEL
@@ -729,9 +726,6 @@ export function OnboardingWizard() {
                           onClick={() => {
                             const nextType = opt.value as AdapterType;
                             setAdapterType(nextType);
-                            if (nextType === "codex_local" && !model) {
-                              setModel(DEFAULT_CODEX_LOCAL_MODEL);
-                            }
                             if (nextType !== "codex_local") {
                               setModel("");
                             }
@@ -865,98 +859,113 @@ export function OnboardingWizard() {
                         <label className="text-xs text-muted-foreground mb-1 block">
                           Model
                         </label>
-                        <Popover
-                          open={modelOpen}
-                          onOpenChange={(next) => {
-                            setModelOpen(next);
-                            if (!next) setModelSearch("");
-                          }}
-                        >
-                          <PopoverTrigger asChild>
-                            <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
-                              <span
-                                className={cn(
-                                  !model && "text-muted-foreground"
-                                )}
-                              >
-                                {selectedModel
-                                  ? selectedModel.label
-                                  : model ||
-                                    (adapterType === "opencode_local"
-                                      ? "Select model (required)"
-                                      : "Default")}
-                              </span>
-                              <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            className="w-[var(--radix-popover-trigger-width)] p-1"
-                            align="start"
+                        {adapterType === "claude_local" ||
+                        (adapterType !== "opencode_local" &&
+                          !adapterModelsLoading &&
+                          (adapterModels ?? []).length === 0) ? (
+                          // A typed id when nothing is discovered: any written
+                          // list of models is stale by the next release.
+                          <input
+                            className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+                            placeholder={adapterType === "claude_local" ? "Claude CLI default (or e.g. claude-opus-5-5)" : "CLI default"}
+                            value={model}
+                            onChange={(e) => setModel(e.target.value.trim())}
+                            spellCheck={false}
+                          />
+                        ) : (
+                          <Popover
+                            open={modelOpen}
+                            onOpenChange={(next) => {
+                              setModelOpen(next);
+                              if (!next) setModelSearch("");
+                            }}
                           >
-                            <input
-                              className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-                              placeholder="Search models..."
-                              value={modelSearch}
-                              onChange={(e) => setModelSearch(e.target.value)}
-                              autoFocus
-                            />
-                            {adapterType !== "opencode_local" && (
-                              <button
-                                className={cn(
-                                  "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
-                                  !model && "bg-accent"
-                                )}
-                                onClick={() => {
-                                  setModel("");
-                                  setModelOpen(false);
-                                }}
-                              >
-                                Default
-                              </button>
-                            )}
-                            <div className="max-h-[240px] overflow-y-auto">
-                              {groupedModels.map((group) => (
-                                <div
-                                  key={group.provider}
-                                  className="mb-1 last:mb-0"
-                                >
-                                  {adapterType === "opencode_local" && (
-                                    <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                      {group.provider} ({group.entries.length})
-                                    </div>
+                            <PopoverTrigger asChild>
+                              <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
+                                <span
+                                  className={cn(
+                                    !model && "text-muted-foreground"
                                   )}
-                                  {group.entries.map((m) => (
-                                    <button
-                                      key={m.id}
-                                      className={cn(
-                                        "flex items-center w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
-                                        m.id === model && "bg-accent"
-                                      )}
-                                      onClick={() => {
-                                        setModel(m.id);
-                                        setModelOpen(false);
-                                      }}
-                                    >
-                                      <span
-                                        className="block w-full text-left truncate"
-                                        title={m.id}
+                                >
+                                  {selectedModel
+                                    ? selectedModel.label
+                                    : model ||
+                                      (adapterType === "opencode_local"
+                                        ? "Select model (required)"
+                                        : "Default")}
+                                </span>
+                                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              className="w-[var(--radix-popover-trigger-width)] p-1"
+                              align="start"
+                            >
+                              <input
+                                className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+                                placeholder="Search models..."
+                                value={modelSearch}
+                                onChange={(e) => setModelSearch(e.target.value)}
+                                autoFocus
+                              />
+                              {adapterType !== "opencode_local" && (
+                                <button
+                                  className={cn(
+                                    "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                                    !model && "bg-accent"
+                                  )}
+                                  onClick={() => {
+                                    setModel("");
+                                    setModelOpen(false);
+                                  }}
+                                >
+                                  Default
+                                </button>
+                              )}
+                              <div className="max-h-[240px] overflow-y-auto">
+                                {groupedModels.map((group) => (
+                                  <div
+                                    key={group.provider}
+                                    className="mb-1 last:mb-0"
+                                  >
+                                    {adapterType === "opencode_local" && (
+                                      <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                        {group.provider} ({group.entries.length})
+                                      </div>
+                                    )}
+                                    {group.entries.map((m) => (
+                                      <button
+                                        key={m.id}
+                                        className={cn(
+                                          "flex items-center w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                                          m.id === model && "bg-accent"
+                                        )}
+                                        onClick={() => {
+                                          setModel(m.id);
+                                          setModelOpen(false);
+                                        }}
                                       >
-                                        {adapterType === "opencode_local"
-                                          ? extractModelName(m.id)
-                                          : m.label}
-                                      </span>
-                                    </button>
-                                  ))}
-                                </div>
-                              ))}
-                            </div>
-                            {filteredModels.length === 0 && (
-                              <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                                No models discovered.
-                              </p>
-                            )}
-                          </PopoverContent>
-                        </Popover>
+                                        <span
+                                          className="block w-full text-left truncate"
+                                          title={m.id}
+                                        >
+                                          {adapterType === "opencode_local"
+                                            ? extractModelName(m.id)
+                                            : m.label}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                              {filteredModels.length === 0 && (
+                                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                                  No models discovered.
+                                </p>
+                              )}
+                            </PopoverContent>
+                          </Popover>
+                        )}
                       </div>
                     </div>
                   )}

@@ -2,10 +2,10 @@ export const type = "claude_local";
 export const label = "Claude Code (local)";
 
 /**
- * No built-in list. The server offers the models this instance's agents have
- * actually run recently (`modelsInUse`), and any other id can be typed. A list
- * written here is stale from the next model release: the last one topped out
- * two generations behind the models in use.
+ * Deliberately empty: the model is a typed id, never picked from a list. Any
+ * list goes stale at the next release - the hard-coded one this replaced topped
+ * out two generations behind the models in use, and a list built from recent
+ * runs still offered retired ones.
  */
 export const models: { id: string; label: string }[] = [];
 
@@ -16,7 +16,7 @@ Adapter: claude_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
-- model (string, optional): full Claude model id, e.g. claude-opus-5-5. The picker lists the models agents here ran in the last 30 days; type any other id.
+- model (string, optional): full Claude model id, e.g. claude-opus-5-5. Omit to use the Claude CLI's default.
 - effort (string, optional): reasoning effort passed via --effort (low|medium|high)
 - chrome (boolean, optional): pass --chrome when running Claude
 - promptTemplate (string, optional): run prompt template
