@@ -80,8 +80,6 @@ Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite,
 | Doc | Purpose |
 |-----|---------|
 | `doc/SPEC-implementation.md` | V1 build contract (authoritative) |
-| `doc/PRODUCT.md` | Core concepts, design goals |
-| `doc/GOAL.md` | Vision |
 | `doc/DEVELOPING.md` | Dev setup, worktrees, secrets, CLI |
 | `doc/DATABASE.md` | DB modes, backups, secrets |
 | `doc/CLI.md` | CLI reference |
