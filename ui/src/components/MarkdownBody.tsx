@@ -52,6 +52,13 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
           startOnLoad: false,
           securityLevel: "strict",
           theme: darkMode ? "dark" : "default",
+          // Mermaid 12 switched the defaults to ELK layout and the "neo" look,
+          // and widened short flowchart labels to a minimum, which re-lays out
+          // and restyles every existing diagram. These three keep diagrams
+          // rendering exactly as they did on 11.
+          layout: "dagre",
+          look: "classic",
+          flowchart: { minNodeWidth: 0 },
           fontFamily: "inherit",
           suppressErrorRendering: true,
         });
