@@ -1114,7 +1114,13 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     let issue;
     try {
-      issue = await svc.update(id, updateFields);
+      // The `issue.updated` row below records the requested status with its
+      // `_previous`, so the status helper does not write a second one for it.
+      issue = await svc.update(id, updateFields, {
+        actor: getActorInfo(req),
+        source: "issue_patch",
+        statusLoggedByCaller: true,
+      });
     } catch (err) {
       if (err instanceof HttpError && err.status === 422) {
         logger.warn(
@@ -1426,8 +1432,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     const checkoutRunId = requireAgentRunId(req, res);
     if (req.actor.type === "agent" && !checkoutRunId) return;
-    const updated = await svc.checkout(id, req.body.agentId, req.body.expectedStatuses, checkoutRunId);
     const actor = getActorInfo(req);
+    const updated = await svc.checkout(id, req.body.agentId, req.body.expectedStatuses, checkoutRunId, {
+      actor,
+      source: "checkout",
+    });
 
     await logActivity(db, {
       actorType: actor.actorType,
@@ -1480,6 +1489,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       id,
       req.actor.type === "agent" ? req.actor.agentId : undefined,
       actorRunId,
+      { actor: getActorInfo(req), source: "release" },
     );
     if (!released) {
       res.status(404).json({ error: "Issue not found" });
@@ -1571,7 +1581,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
     let currentIssue = issue;
 
     if (reopenRequested && isClosed) {
-      const reopenedIssue = await svc.update(id, { status: "todo" });
+      const reopenedIssue = await svc.update(
+        id,
+        { status: "todo" },
+        { actor, source: "comment_reopen", statusLoggedByCaller: true },
+      );
       if (!reopenedIssue) {
         res.status(404).json({ error: "Issue not found" });
         return;
@@ -1659,7 +1673,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       if (hold) {
         const placement = holdPlacement(hold.kind, currentIssue, {});
         if (placement.status === currentIssue.status && !(placement.status === "blocked" && placement.assigned)) {
-          await svc.update(id, { hold });
+          await svc.update(id, { hold }, { actor, source: "hold_comment" });
         }
       }
     }

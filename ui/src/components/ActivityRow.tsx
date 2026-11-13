@@ -7,6 +7,7 @@ import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@paperclipa
 const ACTION_VERBS: Record<string, string> = {
   "issue.created": "created",
   "issue.updated": "updated",
+  "issue.status_changed": "changed status of",
   "issue.checked_out": "checked out",
   "issue.released": "released",
   "issue.comment_added": "commented on",
@@ -49,7 +50,7 @@ function humanizeValue(value: unknown): string {
 }
 
 function formatVerb(action: string, details?: Record<string, unknown> | null): string {
-  if (action === "issue.updated" && details) {
+  if ((action === "issue.updated" || action === "issue.status_changed") && details) {
     const previous = (details._previous ?? {}) as Record<string, unknown>;
     if (details.status !== undefined) {
       const from = previous.status;

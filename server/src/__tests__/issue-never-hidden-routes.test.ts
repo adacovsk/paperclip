@@ -132,7 +132,7 @@ describe("issues are never hidden", () => {
       .send({ status: "done" });
 
     expect(res.status).toBe(200);
-    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { status: "done" });
+    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { status: "done" }, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
   });
 
   it("keeps the hide affordances out of the UI and the CLI", () => {

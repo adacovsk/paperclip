@@ -121,7 +121,7 @@ describe("holds on PATCH /issues/:id", () => {
 
     expect(res.status).toBe(200);
     expect(mockIssueService.addComment).toHaveBeenCalledWith(ISSUE_ID, "Held: until AA-7 merges", expect.anything());
-    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { hold: hold() });
+    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { hold: hold() }, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
   });
 
   it("leaves no comment behind when the hold is refused", async () => {
@@ -157,6 +157,7 @@ describe("holds on PATCH /issues/:id", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith(
       ISSUE_ID,
       expect.objectContaining({ status: "blocked", hold: hold() }),
+      expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }),
     );
   });
 
@@ -166,7 +167,7 @@ describe("holds on PATCH /issues/:id", () => {
 
     await request(createApp()).patch(`/api/issues/${ISSUE_ID}`).send({ comment: "Held: until AA-7 merges" });
 
-    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, {});
+    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, {}, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
   });
 
   it("does not record a hold from a comment on a blocked task that keeps its assignee", async () => {
@@ -175,7 +176,7 @@ describe("holds on PATCH /issues/:id", () => {
 
     await request(createApp()).patch(`/api/issues/${ISSUE_ID}`).send({ comment: "Held: operator" });
 
-    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, {});
+    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, {}, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
   });
 });
 
@@ -203,7 +204,7 @@ describe("holds on POST /issues/:id/comments", () => {
       .send({ body: "Held: until AA-7 merges" });
 
     expect(res.status).toBe(201);
-    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { hold: hold() });
+    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { hold: hold() }, expect.objectContaining({ source: "hold_comment" }));
   });
 
   it("leaves a task that is not parked alone", async () => {

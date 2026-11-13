@@ -3131,7 +3131,14 @@ export function heartbeatService(db: Db) {
       if (!agentHasPaperclipSkill && issueId) {
         const runningIssue = await issuesSvc.getById(issueId);
         if (runningIssue && runningIssue.status === "todo") {
-          await issuesSvc.update(issueId, { status: "in_progress" });
+          await issuesSvc.update(
+            issueId,
+            { status: "in_progress" },
+            {
+              actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
+              source: "no_skill_run_start",
+            },
+          );
           logger.info(
             { issueId, agentId: agent.id, runId: run.id },
             "auto-advanced task to in_progress for agent without paperclip skill",
@@ -3613,7 +3620,14 @@ export function heartbeatService(db: Db) {
                 branchMerged,
               });
               if (nextStatus) {
-                await issuesSvc.update(issueId, { status: nextStatus });
+                await issuesSvc.update(
+                  issueId,
+                  { status: nextStatus },
+                  {
+                    actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
+                    source: "no_skill_completion",
+                  },
+                );
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, nextStatus },
                   nextStatus === "done"
@@ -3672,7 +3686,16 @@ export function heartbeatService(db: Db) {
                     },
                   });
                   if (runReport.block) {
-                    await issuesSvc.update(issueId, { status: "blocked" });
+                    // The `issue.updated` row below is this transition's record.
+                    await issuesSvc.update(
+                      issueId,
+                      { status: "blocked" },
+                      {
+                        actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
+                        source: "run_escalation",
+                        statusLoggedByCaller: true,
+                      },
+                    );
                     escalatedToBlocked = true;
                     await logActivity(db, {
                       actorType: "agent",
