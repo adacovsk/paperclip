@@ -229,13 +229,6 @@ export function buildWorktreeConfig(input: {
       localDisk: {
         baseDir: paths.storageDir,
       },
-      s3: {
-        bucket: source?.storage.s3.bucket ?? "paperclip",
-        region: source?.storage.s3.region ?? "us-east-1",
-        endpoint: source?.storage.s3.endpoint,
-        prefix: source?.storage.s3.prefix ?? "",
-        forcePathStyle: source?.storage.s3.forcePathStyle ?? false,
-      },
     },
     secrets: {
       provider: source?.secrets.provider ?? "local_encrypted",

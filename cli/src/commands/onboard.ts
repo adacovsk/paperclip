@@ -64,11 +64,6 @@ const ONBOARD_ENV_KEYS = [
   "BETTER_AUTH_BASE_URL",
   "PAPERCLIP_STORAGE_PROVIDER",
   "PAPERCLIP_STORAGE_LOCAL_DIR",
-  "PAPERCLIP_STORAGE_S3_BUCKET",
-  "PAPERCLIP_STORAGE_S3_REGION",
-  "PAPERCLIP_STORAGE_S3_ENDPOINT",
-  "PAPERCLIP_STORAGE_S3_PREFIX",
-  "PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE",
   "PAPERCLIP_SECRETS_PROVIDER",
   "PAPERCLIP_SECRETS_STRICT_MODE",
   "PAPERCLIP_SECRETS_MASTER_KEY_FILE",
@@ -193,15 +188,6 @@ function quickstartDefaultsFromEnv(): {
       localDisk: {
         baseDir:
           resolvePathFromEnv(process.env.PAPERCLIP_STORAGE_LOCAL_DIR) ?? defaultStorage.localDisk.baseDir,
-      },
-      s3: {
-        bucket: process.env.PAPERCLIP_STORAGE_S3_BUCKET ?? defaultStorage.s3.bucket,
-        region: process.env.PAPERCLIP_STORAGE_S3_REGION ?? defaultStorage.s3.region,
-        endpoint: process.env.PAPERCLIP_STORAGE_S3_ENDPOINT ?? defaultStorage.s3.endpoint,
-        prefix: process.env.PAPERCLIP_STORAGE_S3_PREFIX ?? defaultStorage.s3.prefix,
-        forcePathStyle:
-          parseBooleanFromEnv(process.env.PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE) ??
-          defaultStorage.s3.forcePathStyle,
       },
     },
     secrets: {

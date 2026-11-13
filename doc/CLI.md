@@ -167,7 +167,4 @@ Configure storage provider and settings:
 pnpm paperclipai configure --section storage
 ```
 
-Supported providers:
-
-- `local_disk` (default; local single-user installs)
-- `s3` (S3-compatible object storage)
+Files are stored on local disk (`local_disk`), the only provider; this sets the base directory.

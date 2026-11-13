@@ -336,12 +336,6 @@ describe("realizeExecutionWorkspace", () => {
             localDisk: {
               baseDir: path.join(sharedConfigDir, "storage"),
             },
-            s3: {
-              bucket: "paperclip",
-              region: "us-east-1",
-              prefix: "",
-              forcePathStyle: false,
-            },
           },
           secrets: {
             provider: "local_encrypted",

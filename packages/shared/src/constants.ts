@@ -210,7 +210,12 @@ export const SECRET_PROVIDERS = [
 ] as const;
 export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
 
-export const STORAGE_PROVIDERS = ["local_disk", "s3"] as const;
+// Local disk only. Paperclip is one server, so every user and agent already
+// shares its disk; an object store would only serve several servers sharing
+// files, which the single-instance model rules out. The S3 provider went with
+// the AWS SDK it needed: a dependency tree that size, for a feature the
+// architecture cannot use, is supply-chain exposure with nothing bought.
+export const STORAGE_PROVIDERS = ["local_disk"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];
 
 export const BILLING_TYPES = [

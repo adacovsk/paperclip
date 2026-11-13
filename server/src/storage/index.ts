@@ -10,11 +10,6 @@ function signatureForConfig(config: Config): string {
   return JSON.stringify({
     provider: config.storageProvider,
     localDisk: config.storageLocalDiskBaseDir,
-    s3Bucket: config.storageS3Bucket,
-    s3Region: config.storageS3Region,
-    s3Endpoint: config.storageS3Endpoint,
-    s3Prefix: config.storageS3Prefix,
-    s3ForcePathStyle: config.storageS3ForcePathStyle,
   });
 }
 

@@ -66,11 +66,6 @@ export interface Config {
   secretsMasterKeyFilePath: string;
   storageProvider: StorageProvider;
   storageLocalDiskBaseDir: string;
-  storageS3Bucket: string;
-  storageS3Region: string;
-  storageS3Endpoint: string | undefined;
-  storageS3Prefix: string;
-  storageS3ForcePathStyle: boolean;
   heartbeatSchedulerEnabled: boolean;
   heartbeatSchedulerIntervalMs: number;
 }
@@ -112,14 +107,6 @@ export function loadConfig(): Config {
       fileStorage?.localDisk?.baseDir ??
       resolveDefaultStorageDir(),
   );
-  const storageS3Bucket = process.env.PAPERCLIP_STORAGE_S3_BUCKET ?? fileStorage?.s3?.bucket ?? "paperclip";
-  const storageS3Region = process.env.PAPERCLIP_STORAGE_S3_REGION ?? fileStorage?.s3?.region ?? "us-east-1";
-  const storageS3Endpoint = process.env.PAPERCLIP_STORAGE_S3_ENDPOINT ?? fileStorage?.s3?.endpoint ?? undefined;
-  const storageS3Prefix = process.env.PAPERCLIP_STORAGE_S3_PREFIX ?? fileStorage?.s3?.prefix ?? "";
-  const storageS3ForcePathStyle =
-    process.env.PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE !== undefined
-      ? process.env.PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE === "true"
-      : (fileStorage?.s3?.forcePathStyle ?? false);
 
   const deploymentModeFromEnvRaw = process.env.PAPERCLIP_DEPLOYMENT_MODE;
   const deploymentModeFromEnv =
@@ -250,11 +237,6 @@ export function loadConfig(): Config {
       ),
     storageProvider,
     storageLocalDiskBaseDir,
-    storageS3Bucket,
-    storageS3Region,
-    storageS3Endpoint,
-    storageS3Prefix,
-    storageS3ForcePathStyle,
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
   };

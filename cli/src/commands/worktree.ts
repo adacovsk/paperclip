@@ -15,7 +15,6 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { Readable } from "node:stream";
 import * as p from "@clack/prompts";
 import pc from "@paperclipai/adapter-utils/colors";
 import { findAvailablePort } from "@paperclipai/adapter-utils/ports";
@@ -221,106 +220,16 @@ function resolveLocalStoragePath(baseDir: string, objectKey: string): string {
   return resolved;
 }
 
-async function s3BodyToBuffer(body: unknown): Promise<Buffer> {
-  if (!body) {
-    throw new Error("Object not found.");
-  }
-  if (Buffer.isBuffer(body)) {
-    return body;
-  }
-  if (body instanceof Readable) {
-    return await streamToBuffer(body);
-  }
-
-  const candidate = body as {
-    transformToWebStream?: () => ReadableStream<Uint8Array>;
-    arrayBuffer?: () => Promise<ArrayBuffer>;
-  };
-  if (typeof candidate.transformToWebStream === "function") {
-    const webStream = candidate.transformToWebStream();
-    const reader = webStream.getReader();
-    const chunks: Uint8Array[] = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(value);
-    }
-    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
-  }
-  if (typeof candidate.arrayBuffer === "function") {
-    return Buffer.from(await candidate.arrayBuffer());
-  }
-
-  throw new Error("Unsupported storage response body.");
-}
-
-function normalizeS3Prefix(prefix: string | undefined): string {
-  if (!prefix) return "";
-  return prefix.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-}
-
-function buildS3ObjectKey(prefix: string, objectKey: string): string {
-  return prefix ? `${prefix}/${objectKey}` : objectKey;
-}
-
-const dynamicImport = new Function("specifier", "return import(specifier);") as (specifier: string) => Promise<any>;
-
 function createConfiguredStorageFromPaperclipConfig(config: PaperclipConfig): ConfiguredStorage {
-  if (config.storage.provider === "local_disk") {
-    const baseDir = expandHomePrefix(config.storage.localDisk.baseDir);
-    return {
-      async getObject(objectKey: string) {
-        return await fsPromises.readFile(resolveLocalStoragePath(baseDir, objectKey));
-      },
-      async putObject(objectKey: string, body: Buffer) {
-        const filePath = resolveLocalStoragePath(baseDir, objectKey);
-        await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
-        await fsPromises.writeFile(filePath, body);
-      },
-    };
-  }
-
-  const prefix = normalizeS3Prefix(config.storage.s3.prefix);
-  let s3ClientPromise: Promise<any> | null = null;
-  async function getS3Client() {
-    if (!s3ClientPromise) {
-      s3ClientPromise = (async () => {
-        const sdk = await dynamicImport("@aws-sdk/client-s3");
-        return {
-          sdk,
-          client: new sdk.S3Client({
-            region: config.storage.s3.region,
-            endpoint: config.storage.s3.endpoint,
-            forcePathStyle: config.storage.s3.forcePathStyle,
-          }),
-        };
-      })();
-    }
-    return await s3ClientPromise;
-  }
-  const bucket = config.storage.s3.bucket;
+  const baseDir = expandHomePrefix(config.storage.localDisk.baseDir);
   return {
     async getObject(objectKey: string) {
-      const { sdk, client } = await getS3Client();
-      const response = await client.send(
-        new sdk.GetObjectCommand({
-          Bucket: bucket,
-          Key: buildS3ObjectKey(prefix, objectKey),
-        }),
-      );
-      return await s3BodyToBuffer(response.Body);
+      return await fsPromises.readFile(resolveLocalStoragePath(baseDir, objectKey));
     },
-    async putObject(objectKey: string, body: Buffer, contentType: string) {
-      const { sdk, client } = await getS3Client();
-      await client.send(
-        new sdk.PutObjectCommand({
-          Bucket: bucket,
-          Key: buildS3ObjectKey(prefix, objectKey),
-          Body: body,
-          ContentType: contentType,
-          ContentLength: body.length,
-        }),
-      );
+    async putObject(objectKey: string, body: Buffer) {
+      const filePath = resolveLocalStoragePath(baseDir, objectKey);
+      await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+      await fsPromises.writeFile(filePath, body);
     },
   };
 }
@@ -333,22 +242,9 @@ function openConfiguredStorage(configPath: string): ConfiguredStorage {
   return createConfiguredStorageFromPaperclipConfig(config);
 }
 
-async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
 export function isMissingStorageObjectError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  const candidate = error as { code?: unknown; status?: unknown; name?: unknown; message?: unknown };
-  return candidate.code === "ENOENT"
-    || candidate.status === 404
-    || candidate.name === "NoSuchKey"
-    || candidate.name === "NotFound"
-    || candidate.message === "Object not found.";
+  return (error as { code?: unknown }).code === "ENOENT";
 }
 
 export async function readSourceAttachmentBody(

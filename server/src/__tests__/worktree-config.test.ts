@@ -64,12 +64,6 @@ function buildLegacyConfig(sharedRoot: string) {
       localDisk: {
         baseDir: path.join(sharedRoot, "data", "storage"),
       },
-      s3: {
-        bucket: "paperclip",
-        region: "us-east-1",
-        prefix: "",
-        forcePathStyle: false,
-      },
     },
     secrets: {
       provider: "local_encrypted" as const,
@@ -254,12 +248,6 @@ describe("worktree config repair", () => {
             localDisk: {
               baseDir: path.join(currentInstanceRoot, "data", "storage"),
             },
-            s3: {
-              bucket: "paperclip",
-              region: "us-east-1",
-              prefix: "",
-              forcePathStyle: false,
-            },
           },
           secrets: {
             provider: "local_encrypted",
@@ -369,12 +357,6 @@ describe("worktree config repair", () => {
             provider: "local_disk",
             localDisk: {
               baseDir: path.join(instanceRoot, "data", "storage"),
-            },
-            s3: {
-              bucket: "paperclip",
-              region: "us-east-1",
-              prefix: "",
-              forcePathStyle: false,
             },
           },
           secrets: {
