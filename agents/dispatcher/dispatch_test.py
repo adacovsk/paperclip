@@ -442,6 +442,68 @@ class UnheldEscalations(unittest.TestCase):
     def test_a_stage_with_no_comment_is_left(self):
         self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", [], True, set(), self.STAGE_AGENTS))
 
+    PARKED = {**VERIFY, "assigneeAgentId": "arch"}
+
+    def test_a_stage_parked_on_its_agent_routes_past_an_operator_remark(self):
+        comments = [
+            self.comment("1", "Two lib tests fail outside this task's files.\nDetail follows."),
+            {"createdAt": "2", "body": "Operator: looked at this, not mine to rule on.", "authorAgentId": None,
+             "authorUserId": "op"},
+        ]
+        self.assertEqual(
+            dispatch.unheld_escalation(self.PARKED, "AA-2", comments, True, set(), self.STAGE_AGENTS),
+            "AA-20 escalated: Two lib tests fail outside this task's files.",
+        )
+        # Unassigned, the same thread is no escalation: the stage agent did not park it.
+        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+
+    def test_a_stage_parked_on_its_agent_with_no_comment_is_routed(self):
+        self.assertIn("no `Held:` line",
+                      dispatch.unheld_escalation(self.PARKED, "AA-2", [], True, set(), self.STAGE_AGENTS))
+
+    def test_a_dispatcher_note_after_the_park_still_wins(self):
+        # A relaunch leaves the Verify blocked on the Architect while its build is out.
+        comments = [
+            self.comment("1", "Red on a test outside this task."),
+            self.comment("2", "Relaunched by the Dispatcher, no model run: stale result.", "disp"),
+        ]
+        self.assertIsNone(dispatch.unheld_escalation(self.PARKED, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+
+    def test_a_parked_stage_keeps_its_other_owners(self):
+        comments = [self.comment("1", "main does not compile")]
+        held = {**self.PARKED, "hold": {"kind": "operator", "blockers": []}}
+        self.assertIsNone(dispatch.unheld_escalation(held, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+        self.assertIsNone(dispatch.unheld_escalation(self.PARKED, "AA-2", comments, False, set(), self.STAGE_AGENTS))
+        self.assertIsNone(dispatch.unheld_escalation(self.PARKED, "AA-2", comments, True, {"AA-20"}, self.STAGE_AGENTS))
+
+
+class NothingToLand(unittest.TestCase):
+    """A blocked stage on a branch with no net change goes to the Coordinator to close."""
+
+    EMPTY = GitState(exists=True, ahead=2, head="a" * 40, merges_clean=True)
+
+    def stages(self, last):
+        return [child("Review: T-1", "done", "1", "review"), last]
+
+    def test_a_blocked_verify_with_an_empty_diff_is_handed_off(self):
+        decision = decide(parent(), self.stages(child("Verify: T-1", "blocked", "2", "verify")), self.EMPTY)
+        self.assertEqual(decision.kind, "handoff")
+        self.assertIn("nothing to land", decision.reason)
+
+    def test_so_is_a_blocked_review(self):
+        stages = [child("Review: T-1", "blocked", "1", "review")]
+        self.assertEqual(decide(parent(), stages, GitState(exists=True, merges_clean=True)).kind, "handoff")
+
+    def test_a_held_stage_keeps_its_hold(self):
+        verify = {**child("Verify: T-1", "blocked", "2", "verify"), "hold": {"kind": "until_merge", "blockers": []}}
+        self.assertEqual(decide(parent(), self.stages(verify), self.EMPTY).reason, dispatch.BLOCKED_STAGE)
+
+    def test_a_dirty_tree_or_a_real_diff_is_not_nothing(self):
+        stages = self.stages(child("Verify: T-1", "blocked", "2", "verify"))
+        dirty = GitState(exists=True, ahead=2, dirty=True, merges_clean=True)
+        self.assertEqual(decide(parent(), stages, dirty).reason, dispatch.BLOCKED_STAGE)
+        self.assertEqual(decide(parent(), stages, CLEAN).reason, dispatch.BLOCKED_STAGE)
+
 
 class OrphanStages(unittest.TestCase):
     """An open stage under a closed parent is cancelled, whatever closed the parent."""

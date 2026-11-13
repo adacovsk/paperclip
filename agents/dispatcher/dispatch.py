@@ -340,6 +340,26 @@ def clear_landed_result(identifier: str) -> None:
 BLOCKED_STAGE = "last stage is blocked; its block comment owns it"
 #: The line the Architect ends an escalating final message with.
 ESCALATE_LINE = re.compile(r"^PAPERCLIP-ESCALATE:\s*(.+)$", re.MULTILINE)
+#: `next_stage`'s hand-off reason for a blocked stage whose branch has no net change.
+NOTHING_TO_LAND = "is blocked and the branch has no net change against origin/main: nothing to land; close or cancel it"
+
+
+def nothing_to_land(last: tuple[str, dict], git: GitState) -> bool:
+    """Whether a blocked Verify or Review sits on a branch with nothing to land.
+
+    A branch whose Review reverted its only change, or whose work reached `main`
+    another way, has an empty diff against `main`. "Nothing to land" is a close
+    or cancel decision, which is the Coordinator's, and no build, rebase or
+    `main` repair changes it. Read as an escalation it waited behind the guards
+    that own a red `main`: one such Verify sat `blocked` on the Architect for
+    days because its block comment also mentioned a break on `main`, which was
+    beside the point with nothing to verify. So it is handed off ahead of every
+    owner but a hold. A dirty tree may hold the work uncommitted, so it is not
+    "nothing"; nor is a conflict, which an empty diff cannot have.
+    """
+    stage, issue = last
+    return (stage in ("verify", "review") and not issue.get("hold")
+            and git.exists and git.merges_clean and not git.dirty and not git.changed)
 
 
 def unheld_escalation(stage: dict, parent: str, comments: list[dict], merges_clean: bool,
@@ -361,17 +381,31 @@ def unheld_escalation(stage: dict, parent: str, comments: list[dict], merges_cle
     escalation -- it says the stage was just sent back to work -- and it lands
     while this sweep still holds the stage's `blocked` read, with the base-red
     marker that guarded the stage already deleted by the requeue.
+
+    A stage still assigned to its own agent is an escalation by its shape: a
+    hold write clears the assignee, so `blocked` on the Architect or Reviewer
+    with no hold is that agent parking it, whoever commented last. Reading only
+    the newest comment missed it whenever an operator remark followed the park,
+    or no comment came with it, and the stage sat with no reader. The reason is
+    then that agent's own newest comment. A newer note from another agent still
+    wins: a relaunch can leave a Verify `blocked` while its build is out, and
+    the Dispatcher's note on it says so.
     """
     # A base-red marker names the escalating stage, or its parent when it could not.
-    if not merges_clean or {stage["identifier"], parent} & base_red:
+    if not merges_clean or {stage["identifier"], parent} & base_red or stage.get("hold"):
         return None
-    newest = max(comments, key=lambda c: c["createdAt"], default=None)
-    if stage.get("hold") or newest is None:
+    ordered = sorted(comments, key=lambda c: c["createdAt"], reverse=True)
+    newest = ordered[0] if ordered else None
+    if newest and (ESCALATE_LINE.search(newest.get("body") or "") or newest.get("authorAgentId") in escalators):
+        source = newest
+    elif stage.get("assigneeAgentId") in escalators and not (newest and newest.get("authorAgentId")):
+        source = next((c for c in ordered if c.get("authorAgentId") in escalators), None)
+    else:
         return None
-    body = newest.get("body") or ""
+    if source is None:
+        return f"{stage['identifier']} escalated: parked blocked on its own agent with no `Held:` line or comment"
+    body = source.get("body") or ""
     m = ESCALATE_LINE.search(body)
-    if not m and newest.get("authorAgentId") not in escalators:
-        return None
     reason = m.group(1).strip() if m else body.strip().split("\n", 1)[0]
     return f"{stage['identifier']} escalated: {reason}"
 
@@ -436,6 +470,8 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
     if rebase:
         return rebase
     if stages and stages[-1][1]["status"] == "blocked":
+        if nothing_to_land(stages[-1], git):
+            return Decision("handoff", f"{stages[-1][0]} {stages[-1][1]['identifier']} {NOTHING_TO_LAND}")
         return Decision("skip", BLOCKED_STAGE)
 
     if pr_head:
@@ -1329,7 +1365,9 @@ def sweep(api: Api, project: Path) -> None:
                 blocked = stages[-1][1]
                 hold = unheld_escalation(blocked, parent["identifier"], api.get(f"/issues/{blocked['id']}/comments"),
                                          git_st.merges_clean, base_red_stages, escalators)
-                if hold and still_parked(api, blocked):
+                # A comment wakes the assignee even on a `blocked` task, so a stage
+                # parked on its own agent can have that agent's run on it now.
+                if hold and still_parked(api, blocked) and not being_read(blocked, api.get("/live-runs") or []):
                     route_to_planner(api, blocked, hold, agents["Planner"])
             if decision.kind == "review":
                 create_review(api, agents, parent, git_st)
