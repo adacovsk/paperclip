@@ -1426,7 +1426,7 @@ def sweep(api: Api, project: Path) -> None:
     # and releasing that hold frees its task early, so the release waits a sweep.
     if not deduped.skipped:
         with skip_unreachable("release-holds"):
-            released = release_holds(api, pr_heads, agents.get("Planner"))
+            released = release_holds(api, pr_heads, agents)
     with skip_unreachable("promote"):
         promoted, judged = promotion.promote(api, agents, project, pr_heads)
     in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
@@ -2298,7 +2298,22 @@ def park_stranded_todos(api: Api) -> int:
     return len(parked)
 
 
-def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None) -> int:
+# The agent a released stage goes back to. A stage is never promotion's work:
+# released to `backlog` unassigned, a Verify sat there 2.6 days, counted as the
+# backlog's only ready item, with no step that hands a stage to its agent.
+STAGE_AGENTS = {"review": "Reviewer", "verify": "Architect"}
+
+
+def released_status(issue: dict, agents: dict) -> dict:
+    """Where a released task goes: a stage to `in_review` on its agent, the rest to `backlog`.
+
+    The task is unassigned while held, so the assignee write is the stage's wake.
+    """
+    agent = agents.get(STAGE_AGENTS.get(stage_of(issue) or "", ""))
+    return {"status": "in_review", "assigneeAgentId": agent} if agent else {"status": "backlog"}
+
+
+def release_holds(api: Api, pr_heads: dict[str, str], agents: dict | None = None) -> int:
     """Release the holds whose condition is met. Returns how many.
 
     The hold is the task's `hold` field, so the sweep is one list read: nothing
@@ -2309,6 +2324,8 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
     supply). The routing reads the same hold the release does, so a Planner that
     re-holds on a release condition is never routed back.
     """
+    agents = agents or {}
+    planner = agents.get("Planner")
     state = load_state("holds.json")
     if time.time() - state.get("at", 0) < HOLD_SCAN_INTERVAL:
         return 0
@@ -2357,7 +2374,7 @@ def release_holds(api: Api, pr_heads: dict[str, str], planner: str | None = None
         # one, which is what marks a later copy of it `reheld`.
         api.set_status(
             issue,
-            {"status": "backlog"},
+            released_status(issue, agents),
             f"Released: {why}.\n\n> Held {hold_words(hold)}",
             f"release {issue['identifier']}: {why}",
         )

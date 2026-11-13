@@ -500,14 +500,18 @@ class ReleaseHolds(unittest.TestCase):
     class Api:
         dry_run = False
 
-        def __init__(self, holds, statuses=None):
+        def __init__(self, holds, statuses=None, titles=None):
             self.holds = holds
             self.statuses = statuses or {}
+            self.titles = titles or {}
             self.writes = []
             self.reads = []
 
         def issues(self, **query):
-            return [{"id": i, "identifier": f"AA-{i}", "status": "blocked", "hold": h} for i, h in self.holds.items()]
+            return [
+                {"id": i, "identifier": f"AA-{i}", "title": self.titles.get(i, "Add a thing"), "status": "blocked", "hold": h}
+                for i, h in self.holds.items()
+            ]
 
         def get(self, path):
             self.reads.append(path)
@@ -534,7 +538,7 @@ class ReleaseHolds(unittest.TestCase):
             "1": hold("planner", note="no attacker-side seam"),
             "2": hold("operator", note="paperclip source fix"),
         })
-        self.assertEqual(dispatch.release_holds(api, {}, "planner-id"), 0)
+        self.assertEqual(dispatch.release_holds(api, {}, {"Planner": "planner-id"}), 0)
         self.assertEqual(len(api.writes), 1)
         ident, body, _ = api.writes[0]
         self.assertEqual(ident, "AA-1")
@@ -545,7 +549,7 @@ class ReleaseHolds(unittest.TestCase):
 
     def test_a_planner_re_hold_on_a_release_condition_is_not_routed_back(self):
         api = self.Api({"1": hold("until_merge", "AA-7", note="files the seam")})
-        dispatch.release_holds(api, {}, "planner-id")
+        dispatch.release_holds(api, {}, {"Planner": "planner-id"})
         self.assertEqual(api.writes, [])
 
     def test_a_met_hold_goes_back_to_backlog_and_no_comment_is_read(self):
@@ -556,6 +560,25 @@ class ReleaseHolds(unittest.TestCase):
         self.assertTrue(comment.startswith("Released: AA-7 is done."))
         self.assertIn("> Held until AA-7 merged — builds on its seam", comment)
         self.assertEqual(api.reads, ["/issues/AA-7"])
+
+    def test_a_released_stage_goes_back_to_in_review_on_its_stage_agent(self):
+        api = self.Api(
+            {"1": hold("until_merge", "AA-7"), "2": hold("until_merge", "AA-7"), "3": hold("until_merge", "AA-7")},
+            {"AA-7": "done"},
+            {"1": "Verify: AA-5 x", "2": "Review: AA-6 y", "3": "ci-fix: AA-5 x"},
+        )
+        agents = {"Architect": "architect-id", "Reviewer": "reviewer-id"}
+        self.assertEqual(dispatch.release_holds(api, {}, agents), 3)
+        self.assertEqual([(w[0], w[1]) for w in api.writes], [
+            ("AA-1", {"status": "in_review", "assigneeAgentId": "architect-id"}),
+            ("AA-2", {"status": "in_review", "assigneeAgentId": "reviewer-id"}),
+            ("AA-3", {"status": "in_review", "assigneeAgentId": "architect-id"}),
+        ])
+
+    def test_a_released_stage_with_no_stage_agent_on_the_roster_goes_to_backlog(self):
+        api = self.Api({"1": hold("until_merge", "AA-7")}, {"AA-7": "done"}, {"1": "Verify: AA-5 x"})
+        self.assertEqual(dispatch.release_holds(api, {}, {"Reviewer": "reviewer-id"}), 1)
+        self.assertEqual(api.writes[0][1], {"status": "backlog"})
 
     def test_a_parked_task_with_no_hold_is_left(self):
         api = self.Api({"1": None})
