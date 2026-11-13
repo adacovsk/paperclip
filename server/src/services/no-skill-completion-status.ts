@@ -65,3 +65,28 @@ export function resolveNoSkillCompletionStatus(input: {
 
   return null;
 }
+
+/**
+ * Whether a finished no-skill run still speaks for its task, so the server may
+ * act on the task for it: promote its status, post the run's final message and
+ * wake the next mover.
+ *
+ * Only while the task is still assigned to the run's agent. A stage reassigned
+ * mid-run (the Dispatcher routing a Verify to the Planner on a `planner` hold,
+ * or parking it `blocked` and unassigned) belongs to its new owner from that
+ * write on, and the old run's exit is not news about it. Acting on it anyway
+ * did two kinds of damage. The run's final message landed after the `Held:`
+ * line, burying it for any reader of the newest comment. Worse, a `planner`
+ * hold stands on a `todo` task, `todo` is in the promotion allowlist, so the
+ * old run's exit flipped the Planner's task to `in_review`, which clears the
+ * hold and is a status the Planner never reads; two Verify stages sat there
+ * three days with no run. The run's own record keeps its result either way.
+ */
+export function noSkillRunOwnsTask(input: {
+  /** The agent whose run just finished. */
+  runAgentId: string;
+  /** The task's agent assignee at the moment the run finished. */
+  assigneeAgentId: string | null;
+}): boolean {
+  return input.assigneeAgentId === input.runAgentId;
+}

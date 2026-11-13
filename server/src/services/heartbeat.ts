@@ -32,7 +32,7 @@ import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
-import { resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
+import { noSkillRunOwnsTask, resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { branchAdvancedDuringRun, parseLsRemoteHead, shouldWakeNextMover } from "./stage-completion-wake.js";
 import { extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
 import { renderOperatorNotes } from "./operator-notes.js";
@@ -3491,7 +3491,28 @@ export function heartbeatService(db: Db) {
           const agentHasPaperclipSkill = desiredSkills.some((s: unknown) => s === "paperclip");
           if (!agentHasPaperclipSkill) {
             const existingIssue = await issuesSvc.getById(issueId);
-            if (existingIssue && existingIssue.status !== "done" && existingIssue.status !== "cancelled") {
+            const runOwnsTask =
+              !!existingIssue &&
+              noSkillRunOwnsTask({ runAgentId: agent.id, assigneeAgentId: existingIssue.assigneeAgentId });
+            if (existingIssue && !runOwnsTask) {
+              // Reassigned while the run was in flight; see noSkillRunOwnsTask.
+              logger.info(
+                {
+                  issueId,
+                  agentId: agent.id,
+                  runId: run.id,
+                  assigneeAgentId: existingIssue.assigneeAgentId,
+                  status: existingIssue.status,
+                },
+                "left task alone after a no-skill run: it was reassigned mid-run, so the run no longer speaks for it",
+              );
+            }
+            if (
+              existingIssue &&
+              runOwnsTask &&
+              existingIssue.status !== "done" &&
+              existingIssue.status !== "cancelled"
+            ) {
               // Layer-2 anti-masquerade gate (build agents only). Reviewers carry
               // the paperclip skill and self-manage status, so they never reach
               // this block — only the no-skill Workers and the Architect do.
