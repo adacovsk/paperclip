@@ -71,9 +71,13 @@ test.describe("Onboarding wizard", () => {
       page.locator("h3", { hasText: "Ready to launch" })
     ).toBeVisible({ timeout: 10_000 });
 
-    await expect(page.locator("text=" + INSTANCE_NAME)).toBeVisible();
-    await expect(page.locator("text=" + AGENT_NAME)).toBeVisible();
-    await expect(page.locator("text=" + TASK_TITLE)).toBeVisible();
+    // Scoped to the summary: the instance name is also in the sidebar and the
+    // page heading, and an unscoped text locator fails strict mode on three
+    // matches.
+    const summary = page.getByTestId("launch-summary");
+    await expect(summary.getByText(INSTANCE_NAME, { exact: true })).toBeVisible();
+    await expect(summary.getByText(AGENT_NAME, { exact: true })).toBeVisible();
+    await expect(summary.getByText(TASK_TITLE, { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Create & Open Issue" }).click();
 
