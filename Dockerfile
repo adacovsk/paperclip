@@ -1,4 +1,7 @@
-FROM node:lts-trixie-slim AS base
+# Node major matches .nvmrc, which CI tests. `node:lts` moved past it to a
+# release that no longer bundles corepack, and `corepack enable` below then
+# fails with "not found".
+FROM node:24-trixie-slim AS base
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git \
   && rm -rf /var/lib/apt/lists/*
