@@ -7,7 +7,7 @@
 # This pin is a deliberate exception to that window: 24.22.3 is a Node
 # security release, and the newest image old enough still
 # carries the runtime it fixes. An exception is taken for a security fix only.
-FROM node:24.22.3-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0 AS base
+FROM node:26.12.1-trixie-slim@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0 AS base
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git \
   && rm -rf /var/lib/apt/lists/*
