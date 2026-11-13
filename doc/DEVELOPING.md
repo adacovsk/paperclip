@@ -328,6 +328,27 @@ Environment overrides:
 - `PAPERCLIP_DB_BACKUP_RETENTION_DAYS=<days>`
 - `PAPERCLIP_DB_BACKUP_DIR=/absolute/or/~/path`
 
+### History retention
+
+Two housekeeping passes run on the backup interval. Both are off by default
+(`0`): what they clear is not restored, so an upgrade must not start discarding
+history on its own.
+
+- `PAPERCLIP_RUN_HISTORY_RETENTION_DAYS=<days>` — finished heartbeat runs older
+  than this keep their row (agent, status, timing, error, usage) but lose
+  `stdout_excerpt`, `stderr_excerpt`, `result_json` and `context_snapshot`;
+  their `heartbeat_run_events` are deleted. Queued and running runs are never
+  touched.
+- `PAPERCLIP_ACTIVITY_DETAILS_RETENTION_DAYS=<days>` — `activity_log` rows older
+  than this are **never deleted**; their `details` JSON is reduced to a small
+  allowlist of keys (statuses and `_previous.status`, priority, assignee ids,
+  issue identifiers, `source`/`reopened`/`reopenedFrom`, `commentId`,
+  `agentId`, document `key`/`title`). Every other key — comment snippets,
+  full update payloads, old field values under `_previous` — is dropped, and
+  its name is recorded in `details._trimmed`. Trimming runs in batches of 500
+  rows. The allowlist and its reasons live in
+  `server/src/services/activity-details-retention.ts`.
+
 ## Secrets in Dev
 
 Agent env vars now support secret references. By default, secret values are stored with local encryption and only secret refs are persisted in agent config.

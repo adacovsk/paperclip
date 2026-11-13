@@ -59,6 +59,7 @@ export interface Config {
   databaseBackupRetentionDays: number;
   databaseBackupDir: string;
   runHistoryRetentionDays: number;
+  activityDetailsRetentionDays: number;
   serveUi: boolean;
   uiDevMiddleware: boolean;
   secretsProvider: SecretProvider;
@@ -196,6 +197,12 @@ export function loadConfig(): Config {
     0,
     Number(process.env.PAPERCLIP_RUN_HISTORY_RETENTION_DAYS) || 0,
   );
+  // Off by default for the same reason. Rows are never deleted -- the activity
+  // log is the audit trail -- but the trimmed `details` content is not restored.
+  const activityDetailsRetentionDays = Math.max(
+    0,
+    Number(process.env.PAPERCLIP_ACTIVITY_DETAILS_RETENTION_DAYS) || 0,
+  );
   const databaseBackupDir = resolveHomeAwarePath(
     process.env.PAPERCLIP_DB_BACKUP_DIR ??
       fileDatabaseBackup?.dir ??
@@ -221,6 +228,7 @@ export function loadConfig(): Config {
     databaseBackupIntervalMinutes,
     databaseBackupRetentionDays,
     runHistoryRetentionDays,
+    activityDetailsRetentionDays,
     databaseBackupDir,
     serveUi:
       process.env.SERVE_UI !== undefined

@@ -32,6 +32,11 @@ import {
   pruneRunHistory,
   vacuumRunHistory,
 } from "./services/run-history-retention.js";
+import {
+  formatPruneActivityDetailsResult,
+  pruneActivityDetails,
+  vacuumActivityLog,
+} from "./services/activity-details-retention.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
 import { issueHoldService } from "./services/issue-holds.js";
@@ -710,6 +715,47 @@ export async function startServer(): Promise<StartedServer> {
     setInterval(() => {
       void runScheduledPrune();
     }, pruneIntervalMs);
+  }
+
+  if (config.activityDetailsRetentionDays > 0) {
+    // Same cadence as the run-history prune and the backup, for the same reason.
+    const trimIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
+    let trimInFlight = false;
+
+    const runScheduledTrim = async () => {
+      if (trimInFlight) {
+        logger.warn("Skipping scheduled activity-details trim because a previous trim is still running");
+        return;
+      }
+      trimInFlight = true;
+      try {
+        const result = await pruneActivityDetails(db, { retentionDays: config.activityDetailsRetentionDays });
+        if (result.trimmedRows > 0) {
+          await vacuumActivityLog(db);
+        }
+        logger.info(
+          {
+            trimmedRows: result.trimmedRows,
+            batches: result.batches,
+            cutoff: result.cutoff.toISOString(),
+            retentionDays: config.activityDetailsRetentionDays,
+          },
+          `Activity-details trim complete: ${formatPruneActivityDetailsResult(result)}`,
+        );
+      } catch (err) {
+        logger.error({ err, retentionDays: config.activityDetailsRetentionDays }, "Activity-details trim failed");
+      } finally {
+        trimInFlight = false;
+      }
+    };
+
+    logger.info(
+      { retentionDays: config.activityDetailsRetentionDays, intervalMinutes: config.databaseBackupIntervalMinutes },
+      "Activity-details trimming enabled",
+    );
+    setInterval(() => {
+      void runScheduledTrim();
+    }, trimIntervalMs);
   }
   
   await new Promise<void>((resolveListen, rejectListen) => {

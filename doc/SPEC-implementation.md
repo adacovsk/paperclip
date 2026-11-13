@@ -269,6 +269,8 @@ Invariant: each event must attach to an agent; rollups are aggregation, never ma
 - `details` jsonb null
 - `created_at` timestamptz not null default now()
 
+Rows are never deleted. With `PAPERCLIP_ACTIVITY_DETAILS_RETENTION_DAYS` set, `details` on rows past the window is reduced to an allowlist of small keys and the dropped key names are listed in `details._trimmed` (see `doc/DEVELOPING.md`).
+
 ## 7.12 `secrets` + `secret_versions`
 
 - Secret values are not stored inline in `agents.adapter_config.env`.
