@@ -154,7 +154,7 @@ Only after all six checks pass, proceed to "Verification" below.
 
 ## Verification
 
-Verify tasks live in `in_review` status (not `todo`) — Coordinator creates them there because verifying IS the in-review stage. The server holds your task at `in_review` until the branch merges (you have no paperclip skill); the Dispatcher closes the Verify once the open PR carries the head Landing recorded in `{task-id}.landed`. That is the Dispatcher's rule, not a stop condition for you: the PR head matching `{task-id}.landed` does not mean this Verify is done. A Verify opened after a Rebase stage exists because the worktree HEAD is ahead of the PR head, and the marker predates it. Treat the task as already landed only when the worktree HEAD equals the open PR's head (`git -C "$WORKTREE" rev-parse HEAD` against `gh pr view --json headRefOid`); otherwise build, verify and land the worktree head. Finish and exit.
+Verify tasks live in `in_review` status (not `todo`) — Coordinator creates them there because verifying IS the in-review stage. The server holds your task at `in_review` until the branch merges (you have no paperclip skill); the Dispatcher closes the Verify once a ready (non-draft) PR carries the head Landing recorded in `{task-id}.landed`; the draft the cloud watcher opens at launch never closes it. That is the Dispatcher's rule, not a stop condition for you: the PR head matching `{task-id}.landed` does not mean this Verify is done. A Verify opened after a Rebase stage exists because the worktree HEAD is ahead of the PR head, and the marker predates it. Treat the task as already landed only when the worktree HEAD equals the open PR's head (`git -C "$WORKTREE" rev-parse HEAD` against `gh pr view --json headRefOid`); otherwise build, verify and land the worktree head. Finish and exit.
 
 ### Cargo discipline (read every run)
 
@@ -618,12 +618,19 @@ git push -u origin "task/{task-id}"
     "${VERIFY_NOTE:-cargo clippy + test --lib green, landing gate green}" \
   || echo "WARNING: pipeline/verify not posted on task/{task-id} — the PR cannot merge until it is; say so in your final comment"
 
-# 4. Open the PR — base = main, head = task branch. Idempotent: skip if a
-#    PR for this head already exists (e.g. a re-dispatched run after a
-#    push-only partial landing).
-#    The body is written to a file and checked BEFORE `gh pr create`: no
-#    workflow checks it after. A failing check names the empty or placeholder
-#    section; rewrite it, do not open the PR.
+# 4. Open the PR, or mark the draft ready — base = main, head = task branch.
+#    A cloud verify's watcher opened a DRAFT for this branch when the VM
+#    launched (open-draft.sh), so the work was visible and GitHub reported
+#    conflicts while it built. Landing gives that draft this body and title and
+#    marks it ready; it never opens a second PR. A draft is not a landing: the
+#    Dispatcher's open_pr_heads ignores drafts and GitHub will not merge one, so
+#    leaving it a draft leaves the Verify open. With no PR at all (a local build,
+#    or a draft that failed to open), open it ready as before. A closed or
+#    merged PR is the Coordinator's to record: open nothing.
+#    The body is written to a file and checked BEFORE the PR is opened or
+#    marked ready, without `--draft`: no workflow checks it after, and the
+#    check rejects a body that still says the build is pending. A failing check
+#    names the empty or placeholder section; rewrite it, do not land.
 BODY="$VERIFY_DIR/{task-id}.pr-body.md"
 cat > "$BODY" <<EOF
 ## What changed
@@ -656,10 +663,15 @@ Omit the line when the task body has none — never derive a number from the tas
 EOF
 ( cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/check_pr_body.py \
     --head-ref "task/{task-id}" --title "<task title>" --body-file "$BODY" ) \
-  || { echo "PR BODY CHECK FAILED — rewrite the named sections; no PR opened"; exit 1; }
-if ! gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q .; then
-  gh pr create --base main --head "task/{task-id}" --title "<task title>" --body-file "$BODY"
-fi
+  || { echo "PR BODY CHECK FAILED — rewrite the named sections; no PR opened or marked ready"; exit 1; }
+PR_STATE="$(gh pr list --head "task/{task-id}" --state all --json state,isDraft -q '.[0] | if . == null then "none" elif .isDraft then "draft" else .state end')"
+case "$PR_STATE" in
+  none)  gh pr create --base main --head "task/{task-id}" --title "<task title>" --body-file "$BODY" ;;
+  draft) gh pr edit "task/{task-id}" --title "<task title>" --body-file "$BODY" \
+           && gh pr ready "task/{task-id}" ;;
+  OPEN)  ;;   # already ready: a re-dispatched run after a partial landing
+  *)     echo "a PR for task/{task-id} is $PR_STATE — the Coordinator's to record; landing nothing"; exit 1 ;;
+esac
 
 #    A `Verify: dependency bump PR #<n>` lands nothing: there is no task
 #    branch and no PR to open. On a green sentinel, post step 3.5's status on
@@ -670,9 +682,9 @@ fi
 #    (non-zero exit). Run-success is NOT verification; a PR must exist.
 git ls-remote --exit-code --heads origin "task/{task-id}" >/dev/null \
   || { echo "NO REMOTE BRANCH task/{task-id} — push failed silently"; exit 1; }
-gh pr list --head "task/{task-id}" --state all --json number -q '.[0].number' | grep -q . \
-  || { echo "NO PR CREATED for task/{task-id} — run failed"; exit 1; }
-# The Dispatcher closes this Verify when the open PR carries this head. Nothing
+gh pr list --head "task/{task-id}" --state open --json isDraft -q '.[] | select(.isDraft | not) | 1' | grep -q . \
+  || { echo "NO READY PR for task/{task-id} (none, or still a draft) — run failed"; exit 1; }
+# The Dispatcher closes this Verify when a ready PR carries this head. Nothing
 # else does: the server holds a no-skill task at in_review until the branch merges.
 git -C "$WORKTREE" rev-parse HEAD > "$VERIFY_DIR/{task-id}.landed"
 rm -f "$VERIFY_DIR/{task-id}.exit" "$VERIFY_DIR/{task-id}.base" "$VERIFY_DIR/{task-id}.head" "$VERIFY_DIR/{task-id}.base-red" "$VERIFY_DIR/{task-id}.freshness" "$VERIFY_DIR/{task-id}.pid" "$VERIFY_DIR/{task-id}".cloud.*

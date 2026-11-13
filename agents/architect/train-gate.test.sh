@@ -42,7 +42,7 @@ cat > "$BIN/gh" <<EOF
 n="\$3"
 head="\$(git -C "$O" rev-parse "refs/pull/\$n/head")"
 case "\$1 \$2" in
-  "pr view") printf '%s %s\n' "\$(cat "$DIR/pr/\$n.state" 2>/dev/null || echo OPEN)" "\$head" ;;
+  "pr view") printf '%s %s %s\n' "\$(cat "$DIR/pr/\$n.state" 2>/dev/null || echo OPEN)" "\$head" "\$(cat "$DIR/pr/\$n.draft" 2>/dev/null || echo false)" ;;
   "pr merge")
     match="\$(printf '%s\n' "\$@" | grep -A1 -x -- --match-head-commit | tail -1)"
     [ "\$match" = "\$head" ] || exit 1
@@ -116,6 +116,10 @@ setup
 tg check 2 1;                                 check "stack listed top-down -> 4" "$?" 4
 echo CLOSED > "$DIR/pr/1.state"
 tg check 1 2;                                 check "a PR not open -> 4" "$?" 4
+setup; echo true > "$DIR/pr/2.draft"
+tg check 1 2;                                 check "a draft in the stack -> 4" "$?" 4
+check "  ...says it is a draft" "$(said 'is a draft')" 1
+rm -f "$DIR/pr/2.draft"
 setup
 g checkout -q main; echo conflict > "$W/c.rs"; g add c.rs; g commit -qm clash; g push -q origin main
 tg verify 1 2;                                check "stack conflicts with main -> 4" "$?" 4

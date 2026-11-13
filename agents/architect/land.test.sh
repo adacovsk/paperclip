@@ -27,12 +27,16 @@ stub gate "echo \"gate \$*\" >> $CALLS; exit \${GATE_RC:-0}"
 stub body 'printf "## What changed\n- work\n\n## Verification\n- cargo sentinel: 0\n"'
 stub check 'exit 0'
 stub local 'echo "local-landable $1: ${LOCAL_SAYS:-commit abc is stamped architect}"; exit ${LOCAL_RC:-1}'
+# $DIR/draft marks the open PR a draft: the open-PR listing (which selects
+# non-drafts) prints nothing while it exists, and `pr ready` removes it.
 stub gh "case \"\$1 \$2\" in
   'auth switch') exit 0 ;;
   'pr create') echo \"pr-create \$*\" >> $CALLS; echo https://example/pr/1 > $DIR/open-pr ;;
+  'pr edit') echo \"pr-edit \$*\" >> $CALLS ;;
+  'pr ready') echo \"pr-ready \$*\" >> $CALLS; rm -f $DIR/draft ;;
   'pr list') case \"\$*\" in
       *'--state all'*) printf '%s' \"\${PRS:-}\"; [ -z \"\${PRS:-}\" ] || echo ;;
-      *) cat $DIR/open-pr 2>/dev/null ;;
+      *) [ -e $DIR/draft ] || cat $DIR/open-pr 2>/dev/null ;;
     esac ;;
 esac"
 export LAND_RELAUNCH="$DIR/relaunch" LAND_FRESHNESS="$DIR/fresh" LAND_CV="$DIR/cv" LAND_STATUS="$DIR/status" \
@@ -69,7 +73,7 @@ green; sed -i 's/PASS/FAIL/' "$S/T-1.cloud.verdict"
 check "verdict not PASS -> 1" "$(run)" 1
 green; rm "$S/T-1.base"
 check "no recorded base -> 1" "$(run)" 1
-green; r=$(PRS="7 CLOSED" run)
+green; r=$(PRS="7 CLOSED false" run)
 check "closed PR -> 1" "$r" 1
 green; echo dirty >> "$WT/work.txt"
 check "dirty tree -> 1" "$(run)" 1
@@ -109,9 +113,21 @@ check "  PR created" "$(called pr-create)" 1
 check "  body says it was a local build" "$(grep -c '^- local build: .*no Architect fix' "$S/T-1.pr-body.md")" 1
 check "  no out-of-scope or skip token" "$(grep -cE 'out-of-scope|skip-schema-regen' "$S/T-1.pr-body.md")" 0
 green not-relevant; echo https://example/pr/1 > "$DIR/open-pr"
-r=$(PRS="1 OPEN" run)
+r=$(PRS="1 OPEN false" run)
 check "open PR -> 0 without a second" "$r" 0
 check "  no pr create" "$(called pr-create)" 0
+green not-relevant; echo https://example/pr/1 > "$DIR/open-pr"; : > "$DIR/draft"
+r=$(PRS="1 OPEN true" run)
+check "draft PR -> 0, marked ready" "$r" 0
+check "  no second PR" "$(called pr-create)" 0
+check "  the draft got the real body" "$(called 'pr-edit pr edit task/T-1 --title Do the thing --body-file')" 1
+check "  marked ready" "$(called 'pr-ready pr ready task/T-1')" 1
+check "  verify status posted first" "$(head -n "$(grep -n '^pr-ready' "$CALLS" | cut -d: -f1)" "$CALLS" | grep -c '^status cargo')" 1
+green not-relevant; echo https://example/pr/1 > "$DIR/open-pr"; : > "$DIR/draft"
+r=$(GATE_RC=1 PRS="1 OPEN true" run)
+check "draft with a red landing gate -> 1" "$r" 1
+check "  left a draft" "$(called pr-ready)" 0
+rm -f "$DIR/draft"
 advance base.txt
 green regenerated; git -C "$PAPERCLIP_PROJECT" rev-parse origin/main~1 > "$S/T-1.base"
 r=$(CODE_MOVED=0 run)
@@ -136,7 +152,7 @@ chmod +x "$DIR/hooks/pre-push"
 git -C "$WT" config core.hooksPath "$DIR/hooks"
 newhead() { (cd "$WT" && echo "$RANDOM" >> work.txt && git commit -qam more); }
 newhead; green; echo https://example/pr/1 > "$DIR/open-pr"
-r=$(PRS="1 OPEN" run)
+r=$(PRS="1 OPEN false" run)
 check "new head with a hook -> 0" "$r" 0
 check "  the hook ran on the head" "$(called "hook $(git -C "$WT" rev-parse HEAD)")" 1
 check "  the explicit gate did not" "$(called gate)" 0
@@ -147,7 +163,7 @@ check "  said it was the gate" "$(grep -c 'LANDING GATE FAILED' "$DIR/out")" 1
 check "  no PR" "$(called pr-create)" 0
 git -C "$WT" push -q --no-verify origin task/T-1
 green; echo https://example/pr/1 > "$DIR/open-pr"
-r=$(PRS="1 OPEN" run)
+r=$(PRS="1 OPEN false" run)
 check "head already on origin -> explicit gate, 0" "$r" 0
 check "  the explicit gate ran" "$(called gate)" 1
 git -C "$WT" config --unset core.hooksPath

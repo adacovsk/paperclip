@@ -19,6 +19,9 @@ export PATH="$BIN:$PATH"
 # Never space launches under test, and never let poll reach the real sessions
 # API: the default session stub reports an empty event log, i.e. "pending".
 export CLOUD_VERIFY_LAUNCH_SPACING=0 CLOUD_VERIFY_START_BACKOFF=0
+# The draft opener talks to GitHub; record the calls instead.
+printf '#!/usr/bin/env bash\necho "$*" >> %s\n' "$DIR/open-draft.log" > "$BIN/open-draft"; chmod +x "$BIN/open-draft"
+export CLOUD_VERIFY_OPEN_DRAFT="$BIN/open-draft"
 printf '#!/usr/bin/env bash\necho "{}"\n' > "$BIN/session-default"; chmod +x "$BIN/session-default"
 export CLOUD_SESSION="$BIN/session-default"
 
@@ -181,6 +184,7 @@ chmod +x "$BIN/git"
 rm -f "$CLOUD_VERIFY_DIR/AA-3.exit"
 "$CV" watch AA-3 task/AA-3 >/dev/null 2>&1
 check "launch failure still writes .exit" "$(cat "$CLOUD_VERIFY_DIR/AA-3.exit" 2>/dev/null)" 98
+check "a failed launch opens no draft" "$(grep -c '^AA-3$' "$DIR/open-draft.log" 2>/dev/null || echo 0)" 0
 check "watch records its pid for liveness probes" "$([ -s "$CLOUD_VERIFY_DIR/AA-3.pid" ] && echo yes)" yes
 
 # Terminal verdict path: launch succeeds, first poll is already conclusive.
@@ -206,6 +210,7 @@ rm -f "$CLOUD_VERIFY_DIR/AA-4.exit"
 # The stub git cannot show the work descends from anything, so acceptance must
 # refuse it: an unverifiable verdict never reaches a green or red sentinel.
 check "unverifiable cloud work -> .exit=95" "$(cat "$CLOUD_VERIFY_DIR/AA-4.exit" 2>/dev/null)" 95
+check "a launched task verify opens its draft" "$(grep -c '^AA-4$' "$DIR/open-draft.log")" 1
 
 echo "offload gate:"
 # setsid is where the detached watch starts; stubbing it keeps the gate under

@@ -887,13 +887,34 @@ def by_head(prs: list[dict], field: str) -> dict[str, object]:
     return out
 
 
-def open_pr_heads(project: Path) -> dict[str, str]:
-    """Open PRs as {head branch: head commit}."""
+def open_prs(project: Path) -> list[dict]:
+    """Every open PR, drafts included, with its head branch, head commit and draft flag."""
     out = subprocess.run(
-        ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName,headRefOid"],
+        ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName,headRefOid,isDraft"],
         cwd=project, capture_output=True, text=True, timeout=60, check=True,
     ).stdout
-    return by_head(json.loads(out), "headRefOid")
+    return json.loads(out)
+
+
+def open_pr_heads(project: Path, *, drafts: bool = False, prs: list[dict] | None = None) -> dict[str, str]:
+    """Open PRs as {head branch: head commit}; ready for review only, unless `drafts`.
+
+    Drafts are left out by default. A task PR opens as a draft when its verify is
+    launched, before anything is built, and is marked ready only on a green build.
+    The landing readers take an open PR to mean the work landed: they close the
+    Verify (`close_landed_verifies`), release holds and steer the parent's next
+    stage, so a draft counted there would close a Verify whose build never ran.
+    A reader asking only whether a branch is still in use (the branch sweep, which
+    must never delete a draft's branch) passes `drafts=True`. `prs` reuses one
+    `gh` listing for both.
+    """
+    prs = open_prs(project) if prs is None else prs
+    return by_head(prs if drafts else ready_prs(prs), "headRefOid")
+
+
+def ready_prs(prs: list[dict]) -> list[dict]:
+    """The PRs in `prs` that are not drafts."""
+    return [pr for pr in prs if not pr.get("isDraft")]
 
 
 def merged_pr_numbers(project: Path) -> dict[str, int]:
@@ -1216,7 +1237,10 @@ def sweep(api: Api, project: Path) -> None:
 
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         loaded = list(pool.map(load, parents))
-    pr_heads = open_pr_heads(project)
+    prs = open_prs(project)
+    pr_heads = open_pr_heads(project, prs=prs)
+    # Branch protection counts drafts too: a draft's branch is live work.
+    branch_heads = open_pr_heads(project, prs=prs, drafts=True)
     merged: dict[str, int] | None = None  # a `gh` call; read on first use
 
     def pr_merged(branch: str) -> bool:
@@ -1389,7 +1413,7 @@ def sweep(api: Api, project: Path) -> None:
         file_main_repair(api, agents, project)
     # After route_sentinels: a sentinel it just routed is a wake it just sent, not a missed one.
     with skip_unreachable("facilitator-checks"):
-        facilitator_checks(api, project, roster, pr_heads)
+        facilitator_checks(api, project, roster, branch_heads)
     # Before release_holds: a hold on a cancelled duplicate reads as released, so it
     # must move to the surviving copy first or the waiting task is freed early.
     with skip_unreachable("dedupe") as deduped:
@@ -2223,11 +2247,12 @@ def verify_quiet_since(api: Api):
     return quiet_since
 
 
-def facilitator_checks(api: Api, project: Path, roster: list[dict], pr_heads: dict[str, str]) -> None:
+def facilitator_checks(api: Api, project: Path, roster: list[dict], branch_heads: dict[str, str]) -> None:
+    """`branch_heads` holds every open PR, drafts included: the sweep spares their branches."""
     state = load_state("facilitator-run.json")
     if time.time() - state.get("at", 0) < FACILITATOR_SCAN_INTERVAL:
         return
-    facilitator.sweep(api, project, set(pr_heads), roster, verify_quiet_since(api))
+    facilitator.sweep(api, project, set(branch_heads), roster, verify_quiet_since(api))
     save_state("facilitator-run.json", {"at": time.time()}, api.dry_run)
 
 

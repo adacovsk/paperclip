@@ -34,7 +34,7 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$DIR/$1"; chmod +x "$DIR/$1"
 # `gh pr view` answers from PR_*; `gh api .../status` from STATUS (re-read from a
 # file so a stubbed landing can turn it green mid-run).
 stub gh "case \"\$1 \$2\" in
-  'pr view') printf '%s\t%s\t%s\t%s\t%s\n' \"\${PR_STATE:-OPEN}\" \"\${PR_HEAD:-task/T-1}\" \"$SHA\" \"\${PR_MERGEABLE:-MERGEABLE}\" 'T-1 title' ;;
+  'pr view') printf '%s\t%s\t%s\t%s\t%s\t%s\n' \"\${PR_STATE:-OPEN}\" \"\${PR_HEAD:-task/T-1}\" \"$SHA\" \"\${PR_MERGEABLE:-MERGEABLE}\" \"\${PR_DRAFT:-false}\" 'T-1 title' ;;
   'pr merge') echo \"merge \$*\" >> $CALLS; exit \${MERGE_RC:-0} ;;
   api*) cat $DIR/status 2>/dev/null ;;
 esac"
@@ -50,6 +50,17 @@ echo "a green head merges, pinned to the SHA that was built"
 reset; echo success > "$DIR/status"
 run; check "exit" "$RC" 0
 check "merge call" "$(cat "$CALLS")" "merge pr merge 7 --repo $DIR/origin --merge --match-head-commit $SHA"
+
+echo "a green draft is not merged; landing never marked it ready"
+reset; echo success > "$DIR/status"
+run PR_DRAFT=true; check "exit" "$RC" 1
+check "no merge" "$(grep -c '^merge' "$CALLS")" 0
+has "says it is still a draft" "still a draft"
+
+echo "a draft with no status is built like any other head"
+reset
+run PR_DRAFT=true; check "exit" "$RC" 3
+check "launched" "$(cut -d' ' -f1 "$CALLS")" "relaunch"
 
 echo "a head with no status is built, not merged"
 reset

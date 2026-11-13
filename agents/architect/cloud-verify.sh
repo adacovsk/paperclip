@@ -440,6 +440,14 @@ cmd_watch() {
     printf '%s\n' "$rc" > "$exit_file"
     wake; return 0
   fi
+  # The VM is building; open the task's draft PR while it does, so the work is
+  # visible and GitHub reports conflicts with main before landing. Here, not in
+  # `offload`: this watcher has its own cgroup, and the Architect's run that
+  # called offload can end and kill a child mid-command. Best effort: it always
+  # exits 0, and land.sh opens the PR when no draft exists.
+  if [ "$branch" = "task/$task" ]; then
+    "${CLOUD_VERIFY_OPEN_DRAFT:-$(dirname "$0")/open-draft.sh}" "$task" >> "$STATE_DIR/$task.cloud.log" 2>&1 || true
+  fi
   await_verdict "$task" "$branch"
 }
 

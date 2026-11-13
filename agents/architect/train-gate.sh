@@ -50,8 +50,10 @@ resolve_stack() {
   for n in "$@"; do refs+=("+refs/pull/$n/head:refs/train-gate/pr/$n"); done
   git fetch -q origin main "${refs[@]}" || die "cannot fetch main and the PR heads"
   for n in "$@"; do
-    read -r state oid < <(gh pr view "$n" --repo "$REPO" --json state,headRefOid --jq '.state + " " + .headRefOid')
+    read -r state oid draft < <(gh pr view "$n" --repo "$REPO" --json state,headRefOid,isDraft --jq '.state + " " + .headRefOid + " " + (.isDraft | tostring)')
     [ "$state" = OPEN ] || die "PR #$n is ${state:-unreadable}, not OPEN"
+    # GitHub refuses to merge a draft; land.sh marks a PR ready on its green build.
+    [ "${draft:-false}" != true ] || die "PR #$n is a draft: its build has not landed it"
     [ "$(git rev-parse -q --verify "refs/train-gate/pr/$n")" = "$oid" ] \
       || die "PR #$n head $oid does not match what was fetched — it moved; run again"
     if [ -n "$prev" ]; then

@@ -701,7 +701,7 @@ def main() -> int:
     spec.loader.exec_module(dispatch)
     project = Path(os.environ["PAPERCLIP_PROJECT"])
     api = dispatch.Api(args.dry_run)
-    report = sweep(api, project, set(dispatch.open_pr_heads(project)),
+    report = sweep(api, project, set(dispatch.open_pr_heads(project, drafts=True)),
                    api.get("/agents"), dispatch.verify_quiet_since(api))
     print(json.dumps(report, indent=1))
     return 0

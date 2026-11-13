@@ -51,10 +51,10 @@ cd "$PROJECT" || { echo "op-merge: no project at $PROJECT" >&2; exit 2; }
 REPO="$(git remote get-url origin 2>/dev/null | sed -E 's#^(git@|https://)github\.com[:/]##; s#\.git$##')"
 [ -n "$REPO" ] || { echo "op-merge: cannot read the project's origin" >&2; exit 2; }
 
-# state, head branch, head sha, mergeable and title of a PR, tab-separated.
+# state, head branch, head sha, mergeable, draft flag and title of a PR, tab-separated.
 pr_fields() {
-  "$GH" pr view "$1" --repo "$REPO" --json state,headRefName,headRefOid,mergeable,title \
-    --jq '[.state, .headRefName, .headRefOid, .mergeable, .title] | @tsv'
+  "$GH" pr view "$1" --repo "$REPO" --json state,headRefName,headRefOid,mergeable,isDraft,title \
+    --jq '[.state, .headRefName, .headRefOid, .mergeable, .isDraft, .title] | @tsv'
 }
 
 # The newest pipeline/verify state on a SHA, or nothing.
@@ -74,8 +74,8 @@ build_out() {
 
 # 0 merged, 3 not yet, 1 someone has to look. `$2` stops a second landing.
 one() {
-  local pr="$1" landed="${2:-}" state branch sha mergeable title task wt sentinel out rc foreign
-  IFS=$'\t' read -r state branch sha mergeable title < <(pr_fields "$pr")
+  local pr="$1" landed="${2:-}" state branch sha mergeable draft title task wt sentinel out rc foreign
+  IFS=$'\t' read -r state branch sha mergeable draft title < <(pr_fields "$pr")
   say() { echo "op-merge #$pr: $*"; }
   [ "${state:-}" = OPEN ] || { say "is ${state:-unreadable}, not OPEN"; return 1; }
   case "$branch" in
@@ -84,6 +84,14 @@ one() {
   esac
 
   if [ "$(verify_state "$sha")" = success ]; then
+    # A draft is marked ready by land.sh, after the landing gate and with the
+    # real body; GitHub refuses to merge one. Green and still a draft means that
+    # step failed after the status was posted, so say which step rather than
+    # report a refused merge.
+    if [ "$draft" = true ]; then
+      say "$CONTEXT is green on ${sha:0:9} but the PR is still a draft: land.sh did not mark it ready (read its output)"
+      return 1
+    fi
     # GitHub computes mergeability lazily; UNKNOWN right after a push is not a conflict.
     case "$mergeable" in
       MERGEABLE)
