@@ -150,7 +150,7 @@ pnpm dev
 This serves the API and UI at `http://localhost:3100`, with an embedded PostgreSQL
 under `~/.paperclip/instances/default/db/`. No other setup is needed.
 
-> **Requirements:** Node.js 20+ (CI uses the version in `.nvmrc`), pnpm 10.16+ (the version in `packageManager`)
+> **Requirements:** Node.js 22.22+ or 24.15+ (CI uses the version in `.nvmrc`), pnpm 10.16+ (the version in `packageManager`)
 
 **To run a live pipeline, use a built server, not `pnpm dev`.** `pnpm dev` runs the
 server under `tsx watch`, and every reload kills every in-flight agent run.
