@@ -51,12 +51,6 @@ function createTempConfig(): string {
       localDisk: {
         baseDir: path.join(runtimeRoot, "storage"),
       },
-      s3: {
-        bucket: "paperclip",
-        region: "us-east-1",
-        prefix: "",
-        forcePathStyle: false,
-      },
     },
     secrets: {
       provider: "local_encrypted",

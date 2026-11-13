@@ -163,25 +163,6 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
     process.env.PAPERCLIP_STORAGE_LOCAL_DIR ??
     config?.storage?.localDisk?.baseDir ??
     defaultStorageBaseDir();
-  const storageS3Bucket =
-    process.env.PAPERCLIP_STORAGE_S3_BUCKET ??
-    config?.storage?.s3?.bucket ??
-    "paperclip";
-  const storageS3Region =
-    process.env.PAPERCLIP_STORAGE_S3_REGION ??
-    config?.storage?.s3?.region ??
-    "us-east-1";
-  const storageS3Endpoint =
-    process.env.PAPERCLIP_STORAGE_S3_ENDPOINT ??
-    config?.storage?.s3?.endpoint ??
-    "";
-  const storageS3Prefix =
-    process.env.PAPERCLIP_STORAGE_S3_PREFIX ??
-    config?.storage?.s3?.prefix ??
-    "";
-  const storageS3ForcePathStyle =
-    process.env.PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE ??
-    String(config?.storage?.s3?.forcePathStyle ?? false);
 
   const rows: EnvVarRow[] = [
     {
@@ -310,7 +291,7 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
           ? "config"
           : "default",
       required: false,
-      note: "Storage provider (local_disk or s3)",
+      note: "Storage provider (local_disk)",
     },
     {
       key: "PAPERCLIP_STORAGE_LOCAL_DIR",
@@ -322,61 +303,6 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
           : "default",
       required: false,
       note: "Local storage base directory for local_disk provider",
-    },
-    {
-      key: "PAPERCLIP_STORAGE_S3_BUCKET",
-      value: storageS3Bucket,
-      source: process.env.PAPERCLIP_STORAGE_S3_BUCKET
-        ? "env"
-        : config?.storage?.s3?.bucket
-          ? "config"
-          : "default",
-      required: false,
-      note: "S3 bucket name for s3 provider",
-    },
-    {
-      key: "PAPERCLIP_STORAGE_S3_REGION",
-      value: storageS3Region,
-      source: process.env.PAPERCLIP_STORAGE_S3_REGION
-        ? "env"
-        : config?.storage?.s3?.region
-          ? "config"
-          : "default",
-      required: false,
-      note: "S3 region for s3 provider",
-    },
-    {
-      key: "PAPERCLIP_STORAGE_S3_ENDPOINT",
-      value: storageS3Endpoint,
-      source: process.env.PAPERCLIP_STORAGE_S3_ENDPOINT
-        ? "env"
-        : config?.storage?.s3?.endpoint
-          ? "config"
-          : "default",
-      required: false,
-      note: "Optional custom endpoint for S3-compatible providers",
-    },
-    {
-      key: "PAPERCLIP_STORAGE_S3_PREFIX",
-      value: storageS3Prefix,
-      source: process.env.PAPERCLIP_STORAGE_S3_PREFIX
-        ? "env"
-        : config?.storage?.s3?.prefix
-          ? "config"
-          : "default",
-      required: false,
-      note: "Optional object key prefix",
-    },
-    {
-      key: "PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE",
-      value: storageS3ForcePathStyle,
-      source: process.env.PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE
-        ? "env"
-        : config?.storage?.s3?.forcePathStyle !== undefined
-          ? "config"
-          : "default",
-      required: false,
-      note: "Set true for path-style access on compatible providers",
     },
   ];
 

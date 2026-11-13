@@ -80,12 +80,6 @@ function buildSourceConfig(): PaperclipConfig {
       localDisk: {
         baseDir: "/tmp/main/storage",
       },
-      s3: {
-        bucket: "paperclip",
-        region: "us-east-1",
-        prefix: "",
-        forcePathStyle: false,
-      },
     },
     secrets: {
       provider: "local_encrypted",
@@ -223,7 +217,7 @@ describe("worktree helpers", () => {
             getObject: vi.fn().mockRejectedValue(missingErr),
           },
           {
-            getObject: vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { status: 404 })),
+            getObject: vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" })),
           },
         ],
         "issues/issue-1/missing.png",
@@ -384,12 +378,6 @@ describe("worktree helpers", () => {
               provider: "local_disk",
               localDisk: {
                 baseDir: path.join(siblingInstanceRoot, "storage"),
-              },
-              s3: {
-                bucket: "paperclip",
-                region: "us-east-1",
-                prefix: "",
-                forcePathStyle: false,
               },
             },
             secrets: {

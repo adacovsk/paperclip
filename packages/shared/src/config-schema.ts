@@ -62,24 +62,10 @@ export const storageLocalDiskConfigSchema = z.object({
   baseDir: z.string().default("~/.paperclip/instances/default/data/storage"),
 });
 
-export const storageS3ConfigSchema = z.object({
-  bucket: z.string().min(1).default("paperclip"),
-  region: z.string().min(1).default("us-east-1"),
-  endpoint: z.string().optional(),
-  prefix: z.string().default(""),
-  forcePathStyle: z.boolean().default(false),
-});
-
 export const storageConfigSchema = z.object({
   provider: z.enum(STORAGE_PROVIDERS).default("local_disk"),
   localDisk: storageLocalDiskConfigSchema.default({
     baseDir: "~/.paperclip/instances/default/data/storage",
-  }),
-  s3: storageS3ConfigSchema.default({
-    bucket: "paperclip",
-    region: "us-east-1",
-    prefix: "",
-    forcePathStyle: false,
   }),
 });
 
@@ -110,12 +96,6 @@ export const paperclipConfigSchema = z
       provider: "local_disk",
       localDisk: {
         baseDir: "~/.paperclip/instances/default/data/storage",
-      },
-      s3: {
-        bucket: "paperclip",
-        region: "us-east-1",
-        prefix: "",
-        forcePathStyle: false,
       },
     }),
     secrets: secretsConfigSchema.default({
@@ -170,7 +150,6 @@ export type LoggingConfig = z.infer<typeof loggingConfigSchema>;
 export type ServerConfig = z.infer<typeof serverConfigSchema>;
 export type StorageConfig = z.infer<typeof storageConfigSchema>;
 export type StorageLocalDiskConfig = z.infer<typeof storageLocalDiskConfigSchema>;
-export type StorageS3Config = z.infer<typeof storageS3ConfigSchema>;
 export type SecretsConfig = z.infer<typeof secretsConfigSchema>;
 export type SecretsLocalEncryptedConfig = z.infer<typeof secretsLocalEncryptedConfigSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;

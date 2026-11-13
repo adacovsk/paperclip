@@ -231,13 +231,6 @@ async function main() {
       localDisk: {
         baseDir: path.resolve(instanceRoot, "data", "storage"),
       },
-      s3: {
-        bucket: sourceConfig?.storage?.s3?.bucket ?? "paperclip",
-        region: sourceConfig?.storage?.s3?.region ?? "us-east-1",
-        endpoint: sourceConfig?.storage?.s3?.endpoint,
-        prefix: sourceConfig?.storage?.s3?.prefix ?? "",
-        forcePathStyle: sourceConfig?.storage?.s3?.forcePathStyle ?? false,
-      },
     },
     secrets: {
       provider: sourceConfig?.secrets?.provider ?? "local_encrypted",
