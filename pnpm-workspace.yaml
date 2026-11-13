@@ -4,3 +4,25 @@ packages:
   - server
   - ui
   - cli
+
+# Supply-chain cooldown: resolve no version, direct or transitive, published
+# less than 14 days ago (in minutes). A hijacked release is usually caught and
+# unpublished within days; this keeps one out of the lockfile until then.
+minimumReleaseAge: 20160
+
+# Dependency install scripts are blocked by default (pnpm 10): a script runs
+# with the installing user's full access, and a hijacked release's payload
+# usually sits in one. Only these may run, each for a reason that was read:
+#   @embedded-postgres/*  postinstall recreates the bundled libpq/postgres
+#                         symlinks npm cannot ship
+#   esbuild               postinstall installs and verifies its native binary
+onlyBuiltDependencies:
+  - "@embedded-postgres/darwin-arm64"
+  - "@embedded-postgres/darwin-x64"
+  - "@embedded-postgres/linux-arm"
+  - "@embedded-postgres/linux-arm64"
+  - "@embedded-postgres/linux-ia32"
+  - "@embedded-postgres/linux-ppc64"
+  - "@embedded-postgres/linux-x64"
+  - "@embedded-postgres/windows-x64"
+  - esbuild

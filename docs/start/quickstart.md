@@ -7,7 +7,7 @@ Get Paperclip running locally in under 5 minutes.
 
 ## Run from source
 
-This build is not published to npm; `npx paperclipai` installs a different project's package. Run it from a clone. Prerequisites: Node.js 20+ and pnpm 9+.
+This build is not published to npm; `npx paperclipai` installs a different project's package. Run it from a clone. Prerequisites: Node.js 20+ and pnpm 10.16+.
 
 ```sh
 git clone https://github.com/adacovsk/paperclip.git

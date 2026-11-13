@@ -20,6 +20,15 @@ version: 2
 # these bumps are typechecked, tested and built before they land.
 #
 # Grouping below keeps the PR count down.
+#
+# COOLDOWN. Every ecosystem waits 14 days after a release before proposing it,
+# the same age `minimumReleaseAge` in pnpm-workspace.yaml demands of every
+# resolved version. A hijacked release is usually caught and unpublished within
+# days; a bump proposed sooner would fail that gate anyway. Security updates
+# ignore this cooldown and open at once, but their install still meets the
+# pnpm gate: a fix younger than 14 days lands only after its package is named
+# under `minimumReleaseAgeExclude` in pnpm-workspace.yaml, a deliberate
+# exception taken for that one fix and removed once it ages past the window.
 
 updates:
   # Node dependencies. `directory: "/"` covers every pnpm workspace member —
@@ -29,6 +38,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 14
     open-pull-requests-limit: 5
     groups:
       # These move as a set; ungrouped they arrive as a dozen PRs per release,
@@ -58,9 +69,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 14
 
   # Base image for the Dockerfile.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 14
