@@ -41,6 +41,14 @@ updates:
     cooldown:
       default-days: 14
     open-pull-requests-limit: 5
+    ignore:
+      # lexical's version is whatever @mdxeditor/editor's peer range allows
+      # (^0.48.0 through mdxeditor 4.5.0). On 0.x a minor is breaking: 0.53
+      # fails MarkdownEditor.tsx's typecheck. Move them when mdxeditor does.
+      - dependency-name: "lexical"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@lexical/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       # These move as a set; ungrouped they arrive as a dozen PRs per release,
       # each needing its own lockfile sync.
