@@ -23,11 +23,6 @@ overrides:
   postcss-selector-parser@<7.1.6: ^7.1.6
   katex@>=0.11.0 <0.18.2: ^0.18.2
 
-patchedDependencies:
-  embedded-postgres@18.1.0-beta.16:
-    hash: 55uhvnotpqyiy37rn3pqpukhei
-    path: patches/embedded-postgres@18.1.0-beta.16.patch
-
 importers:
 
   .:
@@ -94,10 +89,10 @@ importers:
         version: 17.3.1
       drizzle-orm:
         specifier: 0.45.3
-        version: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9)
+        version: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9)
       embedded-postgres:
-        specifier: ^18.1.0-beta.16
-        version: 18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei)
+        specifier: ^18.6.0-beta.19
+        version: 18.6.0-beta.19
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -246,10 +241,10 @@ importers:
         version: link:../shared
       drizzle-orm:
         specifier: ^0.45.3
-        version: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9)
+        version: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9)
       embedded-postgres:
-        specifier: ^18.1.0-beta.16
-        version: 18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei)
+        specifier: ^18.6.0-beta.19
+        version: 18.6.0-beta.19
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -320,7 +315,7 @@ importers:
         version: link:../packages/shared
       better-auth:
         specifier: 1.7.7
-        version: 1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9))(pg@8.18.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@5.0.3(@types/node@26.6.4)(jsdom@28.1.0(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+        version: 1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9))(pg@8.23.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@5.0.3(@types/node@26.6.4)(jsdom@28.1.0(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       detect-port:
         specifier: ^2.1.0
         version: 2.1.0
@@ -332,10 +327,10 @@ importers:
         version: 17.3.1
       drizzle-orm:
         specifier: ^0.45.3
-        version: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9)
+        version: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9)
       embedded-postgres:
-        specifier: ^18.1.0-beta.16
-        version: 18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei)
+        specifier: ^18.6.0-beta.19
+        version: 18.6.0-beta.19
       express:
         specifier: ^5.1.0
         version: 5.2.1
@@ -1099,50 +1094,50 @@ packages:
   '@electric-sql/pglite@0.3.15':
     resolution: {integrity: sha512-Cj++n1Mekf9ETfdc16TlDi+cDDQF0W7EcbyRHYOAeZdsAe8M/FJg18itDTSwyHfar2WIezawM9o0EKaRGVKygQ==}
 
-  '@embedded-postgres/darwin-arm64@18.1.0-beta.16':
-    resolution: {integrity: sha512-tU/syLOamFZdXMC+p7AYczmFKIiolFlZ8y3Qb7KonX37O07ezc/OSDiQ641sheV3X0WPf9V10qyK8c81rleDdw==}
+  '@embedded-postgres/darwin-arm64@18.6.0-beta.19':
+    resolution: {integrity: sha512-FHuiAR1sQUw8J6M+UVFlzd1D8oP4rlL+16Zgd1STqCCzWmO6dFjXBCEQ2I1JaGVQKOE85NlCjNNKuy8RiIrsqw==}
     engines: {node: '>=16'}
     cpu: [arm64]
     os: [darwin]
 
-  '@embedded-postgres/darwin-x64@18.1.0-beta.16':
-    resolution: {integrity: sha512-4zHNCscGJt/3pmkpLCuU/IpMJzwENM6OqSHE+WWkOoNqYid49ZnmgB1ltOelgZgRoPRIy/HDEnrMeuVxQHBhEw==}
+  '@embedded-postgres/darwin-x64@18.6.0-beta.19':
+    resolution: {integrity: sha512-ipQDDcoc72moknp3QHP3sgj90/ZG6IqBhN9mdd1eOfBEwJUJXESfuoyNiTwUc4PoNDmnx51nRqQwzxoKMUwSTw==}
     engines: {node: '>=16'}
     cpu: [x64]
     os: [darwin]
 
-  '@embedded-postgres/linux-arm64@18.1.0-beta.16':
-    resolution: {integrity: sha512-G0f/reVFc7svqncDQL7blwKulzYIYsz+o/3TEtAJOaGMXYkD8Swzv9RFKfEJOr9+IVRwCmoFFppMeBnUwMoGZg==}
+  '@embedded-postgres/linux-arm64@18.6.0-beta.19':
+    resolution: {integrity: sha512-mDNZiZkT+Wyxh+BD8HH1n603ircuVLSbQT2bVQeC0D7vk7zPO+54RNRUuC7H0RyTlU6l4FxOxjE6D1Yun1JgMg==}
     engines: {node: '>=16'}
     cpu: [arm64]
     os: [linux]
 
-  '@embedded-postgres/linux-arm@18.1.0-beta.16':
-    resolution: {integrity: sha512-aB1t95YGnqay8swh70s7zo587Nog90UL9yUYrzMMNMq40Qfrq9aWiBn0+6vCxp1rSFaPyJMPvW62/rIKLFBkKg==}
+  '@embedded-postgres/linux-arm@18.6.0-beta.19':
+    resolution: {integrity: sha512-rA1uII2C1Z9WW4ArxhY0lTfexdS0HGDHn6VwrYA8/ZIPiVsi1I0f9PG+2FS0fH0tjwRGgQ4RNoeWENx9eyCc8w==}
     engines: {node: '>=16'}
     cpu: [arm]
     os: [linux]
 
-  '@embedded-postgres/linux-ia32@18.1.0-beta.16':
-    resolution: {integrity: sha512-gMTIryUMnwyLancs34gXqaiuXIFMgn8RGYZ2wJZEuXpW0SQ/cE07kFINmoQO1sN+5T/IR0KvMXPzxo867wO3ew==}
+  '@embedded-postgres/linux-ia32@18.6.0-beta.19':
+    resolution: {integrity: sha512-QdncW2uOfZLIgZqhl7VH8DCW4EJNNMA1xUrEpFP3k1vZ+jrjmj2f7KN0cakUZiCjIlMGx3VoBqfqEANWj63GCQ==}
     engines: {node: '>=16'}
     cpu: [ia32]
     os: [linux]
 
-  '@embedded-postgres/linux-ppc64@18.1.0-beta.16':
-    resolution: {integrity: sha512-wTglX0bZVBretiUJrZUO/EmEP8w7jC+i8ZAEKesHHIqIDXEV2F9l+6aTjWt2wRu5SAJ6gpe2RbcKvJ6x+6m1Qw==}
+  '@embedded-postgres/linux-ppc64@18.6.0-beta.19':
+    resolution: {integrity: sha512-vi8Gk01tgDboOdsoWtWHou6TABrj3zec7ORmz0yefTCED5J4PtvRpx3wdG3K6Emg2VCMVjG7JuF/fUlsehw5gA==}
     engines: {node: '>=16'}
     cpu: [ppc64]
     os: [linux]
 
-  '@embedded-postgres/linux-x64@18.1.0-beta.16':
-    resolution: {integrity: sha512-+GIabpHh7QV2AcYBuzyQC41AYczSFphxfHy4ccTPIPrp6OSthZXH+A9fymjQzOiDHg9+1UeYET00Aj7sScjXrg==}
+  '@embedded-postgres/linux-x64@18.6.0-beta.19':
+    resolution: {integrity: sha512-U7sqNsI2M5OPAClnptT05bGSnos4IESgUesNytwvgXQ9L4GKY1mnJciXab6CE1pWm3Kes4/UrsZVJJZKBMFZbw==}
     engines: {node: '>=16'}
     cpu: [x64]
     os: [linux]
 
-  '@embedded-postgres/windows-x64@18.1.0-beta.16':
-    resolution: {integrity: sha512-v6AXH1zi6YyoqPM6U7mX08prJ33yD9gqsbo3YdtPi8FDx0C/y9sYa3aQVf/3blPJvHyERYbY8fZnYXbb79Lo0Q==}
+  '@embedded-postgres/windows-x64@18.6.0-beta.19':
+    resolution: {integrity: sha512-fp8d8f+6WfJQftX0D+l1vUTLPwCN5hlhV/g/KI5zDBwHURmta6ph3/kJeEOVirtbczO/pKQlqM4cELB2c7Sp7Q==}
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
@@ -3889,10 +3884,6 @@ packages:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
 
-  async-exit-hook@2.0.1:
-    resolution: {integrity: sha512-NW2cX8m1Q7KPA7a5M2ULQeZ2wR5qI5PAbw5L0UOMxdioVk9PMZ0h1TmyZEkPYrCvYjDlFICusOu1dlEKAAeXBw==}
-    engines: {node: '>=0.12.0'}
-
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 
@@ -4511,8 +4502,8 @@ packages:
   electron-to-chromium@1.5.439:
     resolution: {integrity: sha512-qu6QIPXhsb+CRcAiTMNjR4A1y/7tCYKkKjr5CZXRVih6qkDf79peZ2BpEU3qoDBNCRrcy3Mra3X9nG5oruuA7Q==}
 
-  embedded-postgres@18.1.0-beta.16:
-    resolution: {integrity: sha512-TDp7Ld0h84x5fzIIZFyreYWqZrxUNjuXB6OxqJCmV6PodB2vzQ+1hlL6n4uK1de7bIAxYt5OkDykwcuIONQdQg==}
+  embedded-postgres@18.6.0-beta.19:
+    resolution: {integrity: sha512-EInqEn8wqfzbP0+mpdPNdu4CrzgMEzU6dg/mYsjgGXpXqf9oqtwq7CRXDV8295+tN7ONecrsaOm3knWk+xtRsg==}
     engines: {node: '>=16'}
 
   encodeurl@2.0.0:
@@ -4585,6 +4576,10 @@ packages:
   etag@1.8.1:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
+
+  exit-hook@5.1.0:
+    resolution: {integrity: sha512-INjr2xyxHo7bhAqf5ong++GZPPnpcuBcaXUKt03yf7Fie9yWD7FapL4teOU0+awQazGs5ucBh7xWs/AD+6nhog==}
+    engines: {node: '>=20'}
 
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
@@ -5373,30 +5368,30 @@ packages:
   path-to-regexp@8.4.2:
     resolution: {integrity: sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==}
 
-  pg-cloudflare@1.3.0:
-    resolution: {integrity: sha512-6lswVVSztmHiRtD6I8hw4qP/nDm1EJbKMRhf3HCYaqud7frGysPv7FYJ5noZQdhQtN2xJnimfMtvQq21pdbzyQ==}
+  pg-cloudflare@1.4.1:
+    resolution: {integrity: sha512-6PQbsFWZcp9EmJEwy5cGQ2La+AMWpP46lgbb8X+U/XsHIUweYDNCpeuKck5RxL2MdVFi7krbbEi5nX4Zh7JhrQ==}
 
-  pg-connection-string@2.11.0:
-    resolution: {integrity: sha512-kecgoJwhOpxYU21rZjULrmrBJ698U2RxXofKVzOn5UDj61BPj/qMb7diYUR1nLScCDbrztQFl1TaQZT0t1EtzQ==}
+  pg-connection-string@2.14.1:
+    resolution: {integrity: sha512-qR3kGNPBLpCNtz0evbKA0Y/MRFXwSSdT+pTJvYp/bXTcReZbvX1kzF0IyTc1QnxqF7AZbOeBhNL8R5mYQZV/MA==}
 
   pg-int8@1.0.1:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
     engines: {node: '>=4.0.0'}
 
-  pg-pool@3.11.0:
-    resolution: {integrity: sha512-MJYfvHwtGp870aeusDh+hg9apvOe2zmpZJpyt+BMtzUWlVqbhFmMK6bOBXLBUPd7iRtIF9fZplDc7KrPN3PN7w==}
+  pg-pool@3.14.0:
+    resolution: {integrity: sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==}
     peerDependencies:
       pg: '>=8.0'
 
-  pg-protocol@1.11.0:
-    resolution: {integrity: sha512-pfsxk2M9M3BuGgDOfuy37VNRRX3jmKgMjcvAcWqNDpZSf4cUmv8HSOl5ViRQFsfARFn0KuUQTgLxVMbNq5NW3g==}
+  pg-protocol@1.16.1:
+    resolution: {integrity: sha512-p9VOFMiHB/ZbJATetbg+99PxssTVSQRnyuPSQ67mN1+1KBOjZaZ83ZQzltnxPhJwSsC3nwVjJ10DVJlerbFzLg==}
 
   pg-types@2.2.0:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
     engines: {node: '>=4'}
 
-  pg@8.18.0:
-    resolution: {integrity: sha512-xqrUDL1b9MbkydY/s+VZ6v+xiMUmOUk7SS9d/1kpyQxoJ6U9AO1oIJyUWVZojbfe5Cc/oluutcgFG4L9RDP1iQ==}
+  pg@8.23.1:
+    resolution: {integrity: sha512-aL96AHANtWjPLDOLqnhx+ngp9+UK7ETEU8VJrDCGvsSSi/mGLcWYsS6Herg7lmaBJe4uwrfqsa7gTEFaSizDoQ==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -6802,12 +6797,12 @@ snapshots:
       nanostores: 1.5.5
       zod: 4.6.7
 
-  '@better-auth/drizzle-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9))':
+  '@better-auth/drizzle-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9))':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
     optionalDependencies:
-      drizzle-orm: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9)
+      drizzle-orm: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9)
 
   '@better-auth/kysely-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(kysely@0.29.6)':
     dependencies:
@@ -7230,28 +7225,28 @@ snapshots:
   '@electric-sql/pglite@0.3.15':
     optional: true
 
-  '@embedded-postgres/darwin-arm64@18.1.0-beta.16':
+  '@embedded-postgres/darwin-arm64@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/darwin-x64@18.1.0-beta.16':
+  '@embedded-postgres/darwin-x64@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/linux-arm64@18.1.0-beta.16':
+  '@embedded-postgres/linux-arm64@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/linux-arm@18.1.0-beta.16':
+  '@embedded-postgres/linux-arm@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/linux-ia32@18.1.0-beta.16':
+  '@embedded-postgres/linux-ia32@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/linux-ppc64@18.1.0-beta.16':
+  '@embedded-postgres/linux-ppc64@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/linux-x64@18.1.0-beta.16':
+  '@embedded-postgres/linux-x64@18.6.0-beta.19':
     optional: true
 
-  '@embedded-postgres/windows-x64@18.1.0-beta.16':
+  '@embedded-postgres/windows-x64@18.6.0-beta.19':
     optional: true
 
   '@emnapi/runtime@1.11.3':
@@ -10017,8 +10012,6 @@ snapshots:
 
   assertion-error@2.0.1: {}
 
-  async-exit-hook@2.0.1: {}
-
   asynckit@0.4.0: {}
 
   atomic-sleep@1.0.0: {}
@@ -10027,10 +10020,10 @@ snapshots:
 
   baseline-browser-mapping@2.11.26: {}
 
-  better-auth@1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9))(pg@8.18.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@5.0.3(@types/node@26.6.4)(jsdom@28.1.0(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))):
+  better-auth@1.7.7(drizzle-kit@0.31.11)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9))(pg@8.23.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@5.0.3(@types/node@26.6.4)(jsdom@28.1.0(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))):
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
-      '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9))
+      '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9))
       '@better-auth/kysely-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(kysely@0.29.6)
       '@better-auth/memory-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)
       '@better-auth/mongo-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-call@1.4.0(zod@4.6.7))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)
@@ -10048,8 +10041,8 @@ snapshots:
       zod: 4.6.7
     optionalDependencies:
       drizzle-kit: 0.31.11
-      drizzle-orm: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9)
-      pg: 8.18.0
+      drizzle-orm: 0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9)
+      pg: 8.23.1
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
       vitest: 5.0.3(@types/node@26.6.4)(jsdom@28.1.0(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
@@ -10506,11 +10499,11 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.15
 
-  drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.18.0)(postgres@3.4.9):
+  drizzle-orm@0.45.3(@electric-sql/pglite@0.3.15)(kysely@0.29.6)(pg@8.23.1)(postgres@3.4.9):
     optionalDependencies:
       '@electric-sql/pglite': 0.3.15
       kysely: 0.29.6
-      pg: 8.18.0
+      pg: 8.23.1
       postgres: 3.4.9
 
   dunder-proto@1.0.1:
@@ -10523,19 +10516,19 @@ snapshots:
 
   electron-to-chromium@1.5.439: {}
 
-  embedded-postgres@18.1.0-beta.16(patch_hash=55uhvnotpqyiy37rn3pqpukhei):
+  embedded-postgres@18.6.0-beta.19:
     dependencies:
-      async-exit-hook: 2.0.1
-      pg: 8.18.0
+      exit-hook: 5.1.0
+      pg: 8.23.1
     optionalDependencies:
-      '@embedded-postgres/darwin-arm64': 18.1.0-beta.16
-      '@embedded-postgres/darwin-x64': 18.1.0-beta.16
-      '@embedded-postgres/linux-arm': 18.1.0-beta.16
-      '@embedded-postgres/linux-arm64': 18.1.0-beta.16
-      '@embedded-postgres/linux-ia32': 18.1.0-beta.16
-      '@embedded-postgres/linux-ppc64': 18.1.0-beta.16
-      '@embedded-postgres/linux-x64': 18.1.0-beta.16
-      '@embedded-postgres/windows-x64': 18.1.0-beta.16
+      '@embedded-postgres/darwin-arm64': 18.6.0-beta.19
+      '@embedded-postgres/darwin-x64': 18.6.0-beta.19
+      '@embedded-postgres/linux-arm': 18.6.0-beta.19
+      '@embedded-postgres/linux-arm64': 18.6.0-beta.19
+      '@embedded-postgres/linux-ia32': 18.6.0-beta.19
+      '@embedded-postgres/linux-ppc64': 18.6.0-beta.19
+      '@embedded-postgres/linux-x64': 18.6.0-beta.19
+      '@embedded-postgres/windows-x64': 18.6.0-beta.19
     transitivePeerDependencies:
       - pg-native
 
@@ -10647,6 +10640,8 @@ snapshots:
       '@types/estree': 1.0.9
 
   etag@1.8.1: {}
+
+  exit-hook@5.1.0: {}
 
   expect-type@1.4.0: {}
 
@@ -11719,18 +11714,18 @@ snapshots:
 
   path-to-regexp@8.4.2: {}
 
-  pg-cloudflare@1.3.0:
+  pg-cloudflare@1.4.1:
     optional: true
 
-  pg-connection-string@2.11.0: {}
+  pg-connection-string@2.14.1: {}
 
   pg-int8@1.0.1: {}
 
-  pg-pool@3.11.0(pg@8.18.0):
+  pg-pool@3.14.0(pg@8.23.1):
     dependencies:
-      pg: 8.18.0
+      pg: 8.23.1
 
-  pg-protocol@1.11.0: {}
+  pg-protocol@1.16.1: {}
 
   pg-types@2.2.0:
     dependencies:
@@ -11740,15 +11735,15 @@ snapshots:
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
 
-  pg@8.18.0:
+  pg@8.23.1:
     dependencies:
-      pg-connection-string: 2.11.0
-      pg-pool: 3.11.0(pg@8.18.0)
-      pg-protocol: 1.11.0
+      pg-connection-string: 2.14.1
+      pg-pool: 3.14.0(pg@8.23.1)
+      pg-protocol: 1.16.1
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
-      pg-cloudflare: 1.3.0
+      pg-cloudflare: 1.4.1
 
   pgpass@1.0.5:
     dependencies:
