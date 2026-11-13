@@ -1,7 +1,13 @@
 # Node major matches .nvmrc, which CI tests. `node:lts` moved past it to a
 # release that no longer bundles corepack, and `corepack enable` below then
 # fails with "not found".
-FROM node:24-trixie-slim AS base
+#
+# Pinned by digest: a tag can be re-pointed, a digest cannot. Dependabot's
+# docker updates move tag and digest together after the 14-day cooldown.
+# This pin is a deliberate exception to that window: 24.22.3 is a Node
+# security release, and the newest image old enough still
+# carries the runtime it fixes. An exception is taken for a security fix only.
+FROM node:24.22.3-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0 AS base
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git \
   && rm -rf /var/lib/apt/lists/*
