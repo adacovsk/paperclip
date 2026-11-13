@@ -15,12 +15,18 @@
 # build did not compile: the launch records the commit it built in
 # `<task>.head`, and a build launched before that record existed has none.
 #
+# A branch that adds a lint or test suppression is not landed either. Its
+# build is green because of the suppression, so the sentinel cannot tell it
+# from a fix. The cloud lane rejects the same lines on the VM's commits, and
+# this is the other path that lands without a model reading the diff.
+#
 # Usage:  local-landable.sh <task-id>
 # Exit:   0  landable; 1 not, and the last line of output says why
 # Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME
 set -uo pipefail
 
 task="${1:?task id}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 PROJECT="${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}"
 S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"
 
@@ -44,4 +50,6 @@ while read -r sha stage; do
     *) no "commit ${sha:0:9} is stamped '${stage:-nothing}', not worker or reviewer" ;;
   esac
 done <<< "$stages"
+added="$(bash "$HERE/suppressions.sh" "$base" "$built")"
+[ -z "$added" ] || no "the branch adds a lint or test suppression: $(printf '%s' "$added" | head -1 | cut -c1-120)"
 echo "local-landable $task: yes"

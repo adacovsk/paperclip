@@ -42,7 +42,21 @@ fresh; (cd "$PAPERCLIP_PROJECT" && echo m >> base.txt && git commit -qam "main m
 (cd "$WT" && git merge -q --no-edit main); built
 check "the launch's merge onto main is not counted -> 0" "$(run)" 0
 
+fresh; (cd "$WT" && printf 'fn a() {}\n' > lib.rs && git add lib.rs && git commit -qm code -m "Stage: worker"); built
+check "Rust without a suppression -> 0" "$(run)" 0
+fresh; (cd "$PAPERCLIP_PROJECT" && printf '#[allow(dead_code)]\nfn m() {}\n' > main.rs && git add main.rs && git commit -qm "main's own allow")
+(cd "$WT" && git merge -q --no-edit main); built
+check "a suppression main already had is not charged -> 0" "$(run)" 0
+
+fresh; (cd "$WT" && printf '#[allow(x)]\n' > notes.txt && git add notes.txt && git commit -qm doc -m "Stage: reviewer"); built
+check "the same text outside a .rs file -> 0" "$(run)" 0
+
 echo "not landable"
+for attr in '#[allow(dead_code)]' '#![allow(unused)]' '#[expect(clippy::all)]' '#[ignore]'; do
+  fresh; (cd "$WT" && printf '%s\nfn a() {}\n' "$attr" > lib.rs && git add lib.rs && git commit -qm sup -m "Stage: worker"); built
+  check "adds $attr -> 1" "$(run)" 1
+  check "  says why" "$(grep -c 'adds a lint or test suppression' "$DIR/out")" 1
+done
 fresh; commit "fix clippy" "Stage: architect"; built
 check "an Architect commit -> 1" "$(run)" 1
 check "  says which commit" "$(grep -c "stamped 'architect'" "$DIR/out")" 1

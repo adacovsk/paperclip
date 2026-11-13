@@ -759,7 +759,7 @@ accept_superseded() {
 }
 
 suppressions() {  # lines adding a lint or test suppression in $1..$2
-  git diff -U0 "$1" "$2" -- '*.rs' | grep -E '^\+.*(#!?\[(allow|expect)\(|#\[ignore)' | grep -v '^+++' | sort -u
+  bash "$(dirname "$0")/suppressions.sh" "$1" "$2"
 }
 
 # The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
