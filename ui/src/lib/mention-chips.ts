@@ -132,30 +132,25 @@ function buildAgentIconMask(iconName: string | null): string | null {
   return url;
 }
 
-function resolveLucideIconNode(
-  icon: unknown,
-): Array<[string, Record<string, string>]> | null {
-  const staticIconNode = (
-    icon as {
-      iconNode?: Array<[string, Record<string, string>]>;
-    }
-  ).iconNode;
-  if (Array.isArray(staticIconNode) && staticIconNode.length > 0) {
-    return staticIconNode;
-  }
+type LucideIconNode = Array<[string, Record<string, string>]>;
 
+/**
+ * The paths of a lucide icon component. lucide-react exports no accessor, so
+ * this reads what the component renders: lucide-react 1.x renders
+ * `<Icon icon={{ node }} />`. 0.x rendered `<Icon iconNode={...} />`, and
+ * reading only that left every agent mention chip without its icon.
+ */
+function resolveLucideIconNode(icon: unknown): LucideIconNode | null {
   const render = (
     icon as {
       render?: (props: Record<string, unknown>, ref: unknown) => {
-        props?: { iconNode?: Array<[string, Record<string, string>]> };
+        props?: { icon?: { node?: LucideIconNode } };
       } | null;
     }
   ).render;
   const rendered = typeof render === "function" ? render({}, null) : null;
-  const renderedIconNode = rendered?.props?.iconNode;
-  return Array.isArray(renderedIconNode) && renderedIconNode.length > 0
-    ? renderedIconNode
-    : null;
+  const node = rendered?.props?.icon?.node;
+  return Array.isArray(node) && node.length > 0 ? node : null;
 }
 
 function escapeAttribute(value: string): string {
