@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { promptText } from "./text.js";
 import type { LoggingConfig } from "../config/schema.js";
 import { resolveDefaultLogsDir, resolvePaperclipInstanceId } from "../config/home.js";
 
@@ -18,7 +19,7 @@ export async function promptLogging(): Promise<LoggingConfig> {
   }
 
   if (mode === "file") {
-    const logDir = await p.text({
+    const logDir = await promptText({
       message: "Log directory",
       defaultValue: defaultLogDir,
       placeholder: defaultLogDir,
