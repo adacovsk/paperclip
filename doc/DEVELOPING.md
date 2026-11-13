@@ -13,15 +13,28 @@ Current implementation status:
 ## Prerequisites
 
 - Node.js 20+
-- pnpm 9+
+- pnpm 10.16+ (`minimumReleaseAge` needs it)
 
-## Dependency Lockfile Policy
+## Dependency Policy
 
-GitHub Actions owns `pnpm-lock.yaml`.
+**Versions are exact.** Every manifest entry is a pinned version, never a `^`/`~`
+range, and `.npmrc` sets `save-exact=true` so `pnpm add` keeps it that way.
 
-- Do not commit `pnpm-lock.yaml` in pull requests.
-- Pull request CI validates dependency resolution when manifests change.
-- Pushes to `master` regenerate `pnpm-lock.yaml` with `pnpm install --lockfile-only --no-frozen-lockfile`, commit it back if needed, and then run verification with `--frozen-lockfile`.
+**Nothing younger than 14 days.** `minimumReleaseAge` in `pnpm-workspace.yaml`
+makes pnpm refuse to resolve any version, direct or transitive, published in the
+last 14 days. A hijacked release is usually caught and unpublished within days;
+this keeps one out of the lockfile until then. Dependabot's version updates wait
+the same 14 days (`cooldown` in `.github/dependabot.yml`). An urgent security fix
+younger than that lands by naming its package under `minimumReleaseAgeExclude`,
+and the entry is removed once the version ages past the window.
+
+**Install scripts are off.** pnpm 10 runs no dependency `preinstall`/`postinstall`
+script unless the package is listed in `onlyBuiltDependencies`. Adding one there
+means reading what the script does first.
+
+**Lockfile.** Commit `pnpm-lock.yaml` only in the same PR as the manifest change
+that moved it. A lockfile-only edit is rejected by `pr.yml`'s `policy` job;
+regenerate it with `refresh-lockfile.yml` rather than resolving a conflict by hand.
 
 ## Start Dev
 

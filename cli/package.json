@@ -36,7 +36,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clack/prompts": "^0.10.0",
+    "@clack/prompts": "0.11.0",
     "@paperclipai/adapter-claude-local": "workspace:*",
     "@paperclipai/adapter-codex-local": "workspace:*",
     "@paperclipai/adapter-cursor-local": "workspace:*",
@@ -48,15 +48,15 @@
     "@paperclipai/db": "workspace:*",
     "@paperclipai/server": "workspace:*",
     "@paperclipai/shared": "workspace:*",
-    "drizzle-orm": "0.45.3",
-    "dotenv": "^17.0.1",
-    "commander": "^13.1.0",
+    "drizzle-orm": "0.45.4",
+    "dotenv": "17.4.2",
+    "commander": "13.1.0",
     "embedded-postgres": "18.4.0-beta.17",
-    "picocolors": "^1.1.1"
+    "picocolors": "1.1.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
   }
 }

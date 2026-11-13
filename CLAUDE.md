@@ -59,7 +59,7 @@ the whole context load. So:
 
 ## Stack
 
-Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite, Tailwind v4, shadcn/ui, Radix, PGlite (dev) / Postgres (prod), pnpm 9.15+, Vitest, Playwright.
+Node.js 20+, Express, TypeScript (ES2023/NodeNext), Drizzle ORM, React 19, Vite, Tailwind v4, shadcn/ui, Radix, PGlite (dev) / Postgres (prod), pnpm 10.16+, Vitest, Playwright.
 
 ## Rules
 
