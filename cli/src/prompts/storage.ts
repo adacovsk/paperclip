@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { promptText } from "./text.js";
 import type { StorageConfig } from "../config/schema.js";
 import { resolveDefaultStorageDir, resolvePaperclipInstanceId } from "../config/home.js";
 
@@ -48,7 +49,7 @@ export async function promptStorage(current?: StorageConfig): Promise<StorageCon
   }
 
   if (provider === "local_disk") {
-    const baseDir = await p.text({
+    const baseDir = await promptText({
       message: "Local storage base directory",
       defaultValue: base.localDisk.baseDir || defaultStorageBaseDir(),
       placeholder: defaultStorageBaseDir(),
@@ -71,7 +72,7 @@ export async function promptStorage(current?: StorageConfig): Promise<StorageCon
     };
   }
 
-  const bucket = await p.text({
+  const bucket = await promptText({
     message: "S3 bucket",
     defaultValue: base.s3.bucket || "paperclip",
     placeholder: "paperclip",
@@ -85,7 +86,7 @@ export async function promptStorage(current?: StorageConfig): Promise<StorageCon
     process.exit(0);
   }
 
-  const region = await p.text({
+  const region = await promptText({
     message: "S3 region",
     defaultValue: base.s3.region || "us-east-1",
     placeholder: "us-east-1",
@@ -99,7 +100,7 @@ export async function promptStorage(current?: StorageConfig): Promise<StorageCon
     process.exit(0);
   }
 
-  const endpoint = await p.text({
+  const endpoint = await promptText({
     message: "S3 endpoint (optional for compatible backends)",
     defaultValue: base.s3.endpoint ?? "",
     placeholder: "https://s3.amazonaws.com",
@@ -110,7 +111,7 @@ export async function promptStorage(current?: StorageConfig): Promise<StorageCon
     process.exit(0);
   }
 
-  const prefix = await p.text({
+  const prefix = await promptText({
     message: "Object key prefix (optional)",
     defaultValue: base.s3.prefix ?? "",
     placeholder: "paperclip/",

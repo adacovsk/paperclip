@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { promptText } from "./text.js";
 import type { DatabaseConfig } from "../config/schema.js";
 import {
   resolveDefaultBackupDir,
@@ -41,7 +42,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
   let embeddedPostgresPort = base.embeddedPostgresPort || 54329;
 
   if (mode === "postgres") {
-    const value = await p.text({
+    const value = await promptText({
       message: "PostgreSQL connection string",
       defaultValue: base.connectionString ?? "",
       placeholder: "postgres://user:pass@localhost:5432/paperclip",
@@ -58,7 +59,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
 
     connectionString = value;
   } else {
-    const dataDir = await p.text({
+    const dataDir = await promptText({
       message: "Embedded PostgreSQL data directory",
       defaultValue: base.embeddedPostgresDataDir || defaultEmbeddedDir,
       placeholder: defaultEmbeddedDir,
@@ -71,7 +72,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
 
     embeddedPostgresDataDir = dataDir || defaultEmbeddedDir;
 
-    const portValue = await p.text({
+    const portValue = await promptText({
       message: "Embedded PostgreSQL port",
       defaultValue: String(base.embeddedPostgresPort || 54329),
       placeholder: "54329",
@@ -99,7 +100,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
     process.exit(0);
   }
 
-  const backupDirInput = await p.text({
+  const backupDirInput = await promptText({
     message: "Backup directory",
     defaultValue: base.backup.dir || defaultBackupDir,
     placeholder: defaultBackupDir,
@@ -110,7 +111,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
     process.exit(0);
   }
 
-  const backupIntervalInput = await p.text({
+  const backupIntervalInput = await promptText({
     message: "Backup interval (minutes)",
     defaultValue: String(base.backup.intervalMinutes || 60),
     placeholder: "60",
@@ -126,7 +127,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
     process.exit(0);
   }
 
-  const backupRetentionInput = await p.text({
+  const backupRetentionInput = await promptText({
     message: "Backup retention (days)",
     defaultValue: String(base.backup.retentionDays || 30),
     placeholder: "30",

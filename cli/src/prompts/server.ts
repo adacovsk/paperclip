@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { promptText } from "./text.js";
 import type { AuthConfig, ServerConfig } from "../config/schema.js";
 import { parseHostnameCsv } from "../config/hostnames.js";
 
@@ -58,7 +59,7 @@ export async function promptServer(opts?: {
   }
 
   const hostDefault = deploymentMode === "local_trusted" ? "127.0.0.1" : "0.0.0.0";
-  const hostStr = await p.text({
+  const hostStr = await promptText({
     message: "Bind host",
     defaultValue: currentServer?.host ?? hostDefault,
     placeholder: hostDefault,
@@ -72,7 +73,7 @@ export async function promptServer(opts?: {
     process.exit(0);
   }
 
-  const portStr = await p.text({
+  const portStr = await promptText({
     message: "Server port",
     defaultValue: String(currentServer?.port ?? 3100),
     placeholder: "3100",
@@ -91,7 +92,7 @@ export async function promptServer(opts?: {
 
   let allowedHostnames: string[] = [];
   if (deploymentMode === "authenticated" && exposure === "private") {
-    const allowedHostnamesInput = await p.text({
+    const allowedHostnamesInput = await promptText({
       message: "Allowed hostnames (comma-separated, optional)",
       defaultValue: (currentServer?.allowedHostnames ?? []).join(", "),
       placeholder: "dotta-macbook-pro, your-host.tailnet.ts.net",
@@ -115,7 +116,7 @@ export async function promptServer(opts?: {
   const port = Number(portStr) || 3100;
   let auth: AuthConfig = { baseUrlMode: "auto", disableSignUp: false };
   if (deploymentMode === "authenticated" && exposure === "public") {
-    const urlInput = await p.text({
+    const urlInput = await promptText({
       message: "Public base URL",
       defaultValue: currentAuth?.publicBaseUrl ?? "",
       placeholder: "https://paperclip.example.com",

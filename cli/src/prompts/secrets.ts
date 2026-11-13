@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { promptText } from "./text.js";
 import type { SecretProvider } from "@paperclipai/shared";
 import type { SecretsConfig } from "../config/schema.js";
 import { resolveDefaultSecretsKeyFilePath, resolvePaperclipInstanceId } from "../config/home.js";
@@ -66,7 +67,7 @@ export async function promptSecrets(current?: SecretsConfig): Promise<SecretsCon
   const fallbackDefault = defaultKeyFilePath();
   let keyFilePath = base.localEncrypted.keyFilePath || fallbackDefault;
   if (provider === "local_encrypted") {
-    const keyPath = await p.text({
+    const keyPath = await promptText({
       message: "Local encrypted key file path",
       defaultValue: keyFilePath,
       placeholder: fallbackDefault,
