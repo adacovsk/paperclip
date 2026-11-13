@@ -7,7 +7,8 @@ nearly nine in ten Coordinator runs, and most of them resolved through the
 mechanical rows of the Coordinator's stage table at the cost of re-reading its
 whole instruction set. This script runs those rows directly:
 
-  Worker done, committed, clean tree      -> Review subtask
+  Worker done, committed, clean tree      -> Review subtask, and push the branch with
+                                             a draft PR (publish-draft.sh, detached)
   Reviewer done, needs-build              -> Verify subtask
   Reviewer done, data-only, data touched  -> Verify subtask
   rebase finished, merge-tree clean       -> close it, re-Verify the parent
@@ -1385,6 +1386,7 @@ def sweep(api: Api, project: Path) -> None:
                     route_to_planner(api, blocked, hold, agents["Planner"])
             if decision.kind == "review":
                 create_review(api, agents, parent, git_st)
+                start_publish(api, parent)
             elif decision.kind == "verify":
                 # The stage this Verify answers: the Review that passed, or the
                 # Verify that was closed without landing anything.
@@ -1398,6 +1400,10 @@ def sweep(api: Api, project: Path) -> None:
                                         launcher[0] if launcher else None)
                 if launcher and created:
                     launch_verify(api, agents, created, launcher[1])
+                else:
+                    # A launch publishes the head itself (the cloud lane's push); two
+                    # pushes of one branch at once would race each other's lease.
+                    start_publish(api, parent)
             elif decision.kind == "rebase":
                 if rebase_slots <= 0:
                     continue
@@ -2022,6 +2028,40 @@ def local_landable(parent: str) -> bool:
         ).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def start_publish(api: Api, parent: dict) -> None:
+    """Push the task branch and open its draft PR, detached (`architect/publish-draft.sh`).
+
+    Run when a stage hands the work on, so the change is readable on GitHub
+    from the Worker's last commit rather than from the build's launch. Best
+    effort: the script never fails, and its last line is in `<task>.publish.log`.
+    """
+    identifier = parent["identifier"]
+    if api.dry_run:
+        print(f"publish {identifier}: would push the branch and open its draft", flush=True)
+        return
+    pid_f = VERIFY_DIR / f"{identifier}.publish.pid"
+    try:
+        pid = int(pid_f.read_text())
+        if b"publish-draft" in Path(f"/proc/{pid}/cmdline").read_bytes():
+            return  # the last one is still running; the next stage publishes again
+    except (OSError, ValueError):
+        pass
+    VERIFY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(VERIFY_DIR / f"{identifier}.publish.log", "w") as log:
+            proc = subprocess.Popen(
+                [str(HERE.parent / "architect" / "publish-draft.sh"), identifier],
+                env={**os.environ, "PAPERCLIP_PROJECT": project_root()},
+                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True,  # outlives the sweep
+            )
+    except OSError as exc:
+        print(f"publish {identifier}: publish-draft.sh did not start ({exc})", flush=True)
+        return
+    pid_f.write_text(str(proc.pid))
+    print(f"publish {identifier}: started publish-draft.sh (pid {proc.pid})", flush=True)
 
 
 def start_landing(api: Api, verify: dict, parent: dict) -> bool:

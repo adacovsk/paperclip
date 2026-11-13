@@ -89,6 +89,7 @@ backlog, unassigned                     ← Planner files it from the roadmap's 
   → blocked, unassigned, `hold` set     ← when it can't be dispatched yet
   → in_progress                         ← server, on the Worker's wake
   → in_review                           ← server, when the Worker exits
+      branch pushed, draft PR opened         ← Dispatcher (publish-draft.sh), so the diff is readable from here on
       Review subtask (in_review, Reviewer)   ← Dispatcher
         → done                               ← Reviewer
       Verify subtask (in_review, Architect)  ← Dispatcher, for needs-build work or data changes
