@@ -12,7 +12,7 @@ Current implementation status:
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22.22+ or 24.15+
 - pnpm 10.16+ (`minimumReleaseAge` needs it)
 
 ## Dependency Policy
