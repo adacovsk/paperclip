@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import {
   readContext,
   resolveContextPath,

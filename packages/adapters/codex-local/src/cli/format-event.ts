@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;

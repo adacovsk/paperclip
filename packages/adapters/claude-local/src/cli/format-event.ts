@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 
 function asErrorText(value: unknown): string {
   if (typeof value === "string") return value;

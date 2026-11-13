@@ -1,5 +1,5 @@
 import * as p from "@clack/prompts";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import type { PaperclipConfig } from "../config/schema.js";
 import { configExists, readConfig, resolveConfigPath } from "../config/store.js";
 import {

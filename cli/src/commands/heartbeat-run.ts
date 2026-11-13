@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import type { Agent, HeartbeatRun, HeartbeatRunEvent, HeartbeatRunStatus } from "@paperclipai/shared";
 import { getCLIAdapter } from "../adapters/index.js";
 import { resolveCommandContext } from "./client/common.js";

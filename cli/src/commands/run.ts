@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as p from "@clack/prompts";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import { bootstrapCoordinatorInvite } from "./auth-bootstrap-coordinator.js";
 import { onboard } from "./onboard.js";
 import { doctor } from "./doctor.js";

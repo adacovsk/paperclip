@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import path from "node:path";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import {
   AUTH_BASE_URL_MODES,
   DEPLOYMENT_EXPOSURES,

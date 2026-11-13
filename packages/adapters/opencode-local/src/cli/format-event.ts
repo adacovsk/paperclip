@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 
 function safeJsonParse(text: string): unknown {
   try {

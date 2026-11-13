@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import type { Command } from "commander";
 import { getStoredOperatorCredential, loginOperatorCli } from "../../client/operator-auth.js";
 import { buildCliCommandLabel } from "../../client/command-label.js";

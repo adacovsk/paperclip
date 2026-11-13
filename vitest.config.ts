@@ -4,6 +4,6 @@ export default defineConfig({
   test: {
     // Timeouts are not inherited by projects — see vitest.shared.ts, which each
     // project config spreads in.
-    projects: ["packages/db", "packages/shared", "packages/adapters/opencode-local", "server", "ui", "cli"],
+    projects: ["packages/db", "packages/shared", "packages/adapter-utils", "packages/adapters/opencode-local", "server", "ui", "cli"],
   },
 });

@@ -22,7 +22,8 @@ import {
   instanceUserRoles,
   memberships,
 } from "@paperclipai/db";
-import detectPort from "detect-port";
+import { openUrl } from "@paperclipai/adapter-utils/open-url";
+import { findAvailablePort } from "@paperclipai/adapter-utils/ports";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
@@ -346,7 +347,7 @@ export async function startServer(): Promise<StartedServer> {
           `Embedded PostgreSQL appears to already be reachable without a pid file; reusing existing server on configured port ${configuredPort}`,
         );
       } catch {
-        const detectedPort = await detectPort(configuredPort);
+        const detectedPort = await findAvailablePort(configuredPort);
         if (detectedPort !== configuredPort) {
           logger.warn(`Embedded PostgreSQL port is in use; using next free port (requestedPort=${configuredPort}, selectedPort=${detectedPort})`);
         }
@@ -486,7 +487,7 @@ export async function startServer(): Promise<StartedServer> {
     authReady = true;
   }
   
-  const listenPort = await detectPort(config.port);
+  const listenPort = await findAvailablePort(config.port);
   if (listenPort !== config.port) {
     config.port = listenPort;
   }
@@ -724,8 +725,7 @@ export async function startServer(): Promise<StartedServer> {
       if (process.env.PAPERCLIP_OPEN_ON_LISTEN === "true") {
         const openHost = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host;
         const url = `http://${openHost}:${listenPort}`;
-        void import("open")
-          .then((mod) => mod.default(url))
+        void openUrl(url)
           .then(() => {
             logger.info(`Opened browser at ${url}`);
           })
