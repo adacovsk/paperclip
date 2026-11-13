@@ -761,6 +761,60 @@ class OpenPrHeads(unittest.TestCase):
         self.assertEqual(dispatch.by_head(dispatch.ready_prs(prs), "headRefOid"), {})
 
 
+class MergeMainRepairs(unittest.TestCase):
+    """A green, mergeable main-repair PR merges without the operator."""
+
+    def pr(self, **kw):
+        return {"number": 7, "title": "ci-fix: abc1234 — main is red", "body": "", "headRefName": "task/AA-9",
+                "headRefOid": "f" * 40, "isDraft": False, "mergeable": "MERGEABLE", **kw}
+
+    def test_candidates_are_ready_mergeable_task_prs_reading_as_main_repair(self):
+        prs = [
+            self.pr(),
+            self.pr(number=8, title="Add a spell", body="## Why\nMain-repair: origin/main x is red"),
+            self.pr(number=9, isDraft=True),
+            self.pr(number=10, mergeable="CONFLICTING"),
+            self.pr(number=11, title="Add a spell"),
+            self.pr(number=12, headRefName="planner/roadmap"),
+        ]
+        self.assertEqual([p["number"] for p, _ in dispatch.main_repair_candidates(prs)], [7, 8])
+
+    def run_merge(self, issue, green=True, rc=0):
+        api = mock.Mock(dry_run=False)
+        api.get.return_value = issue
+        done = mock.Mock(returncode=rc, stdout="op-merge #7: merged fffffffff\n", stderr="")
+        with mock.patch.object(dispatch, "verify_green", return_value=green), \
+                mock.patch.object(dispatch.subprocess, "run", return_value=done) as run:
+            dispatch.merge_main_repairs(api, Path("."), [self.pr()])
+        return api, run
+
+    def issue(self, **kw):
+        return {"id": "u-9", "identifier": "AA-9", "status": "in_review", "title": "ci-fix: abc1234 — main is red",
+                "labels": [{"name": "ci-failure"}], "description": "", **kw}
+
+    def test_green_main_repair_merges_through_op_merge(self):
+        api, run = self.run_merge(self.issue())
+        self.assertTrue(run.call_args.args[0][0].endswith("architect/op-merge.sh"))
+        self.assertEqual(run.call_args.args[0][1:], ["7"])
+        api.write.assert_called_once()
+
+    def test_no_green_status_no_merge(self):
+        api, run = self.run_merge(self.issue(), green=False)
+        run.assert_not_called()
+
+    def test_a_task_that_is_not_main_repair_is_left_to_the_operator(self):
+        api, run = self.run_merge(self.issue(title="Add a spell", labels=[]))
+        run.assert_not_called()
+
+    def test_a_closed_task_is_not_merged(self):
+        api, run = self.run_merge(self.issue(status="cancelled"))
+        run.assert_not_called()
+
+    def test_a_refused_merge_writes_nothing(self):
+        api, run = self.run_merge(self.issue(), rc=1)
+        api.write.assert_not_called()
+
+
 class VerifyLanded(unittest.TestCase):
     VERIFY = {"status": "in_review", "createdAt": "2026-01-01T00:00:00.000Z"}
     HEAD = "b" * 40

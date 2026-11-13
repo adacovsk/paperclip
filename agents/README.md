@@ -58,7 +58,7 @@ left in the week.
 | Run cargo | — | — | ✓ | via scripts ⁴ | — | — | ✓ ⁵ | — |
 | Commit to `task/{id}` | ✓ | ✓ | ✓ | — | merge commit only ⁶ | — | — | — |
 | Push `task/{id}` and open its PR | — | — | ✓ | ✓ (`land.sh`) | ✓ (landing sweep) | — | — | — |
-| Merge a task PR | — | — | — | — | — | — | — | — |
+| Merge a task PR | — | — | — | main-repair only ¹⁰ | — | — | — | — |
 | Merge `planner/roadmap` | — | — | — | — | — | ✓ | — | — |
 | Delete a remote `task/*` branch | — | — | — | — | ✓ (after merge) | — | — | ✓ ⁷ |
 | `git worktree add` / `remove` | — | — | — | ✓ (`promote.py`) | ✓ | own worktree | own worktree | — | <!-- privacy-ok: the pipeline's own scripts, not project source -->
@@ -68,7 +68,7 @@ left in the week.
 | `gh` | — | — | ✓ | ✓ | ✓ | ✓ | issues only | ✓ |
 | Network | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-Only the operator merges task PRs, and nobody commits to `main` directly.
+Only the operator merges task PRs, except a main-repair the Dispatcher merges (¹⁰), and nobody commits to `main` directly.
 
 1. Only to fix errors its own task caused, or anything on `main` for a main-repair task.
 2. The roadmap has exactly one writer, the `planner/roadmap` branch. The target project's guards fail any task branch, or any other `planner/*` branch, that touches it. The Planner merges its own roadmap PR once the landing gate passes, because the Coordinator promotes from `main` and an unmerged roadmap restocks nothing. This is the only self-merge, and it never extends to a branch carrying code.
@@ -79,6 +79,7 @@ Only the operator merges task PRs, and nobody commits to `main` directly.
 7. Only branches that are already merged, or have no diff against `main`.
 8. Review and Verify subtasks, rebase tasks, one main-repair task when several verifies see the same red `main`, and the cancellation of tasks filed twice.
 9. The Architect has no API access. It escalates by ending its run with `PAPERCLIP-ESCALATE: <reason>`, which the server turns into `blocked`.
+10. A ready `task/*` PR whose task is a main-repair (`ci-failure` label, `ci-fix:` title, or `Main-repair:` body line), once `pipeline/verify` is green on its head and GitHub reports it mergeable, through `architect/op-merge.sh`. A red `main` gates every other merge, and the repair's scope rules leave nothing for a reader to add to the green build.
 
 ## Task lifecycle
 
@@ -96,7 +97,7 @@ backlog, unassigned                     ← Planner files it from the roadmap's 
         → green: land.sh in the background, or the Architect's Landing block, or the Coordinator's landing sweep
              push (pre-push hook is the gate) → PR → {parent}.landed
         → Verify done once the open PR carries the landed head
-  → operator merges the PR
+  → operator merges the PR (a main-repair: the Dispatcher, on a green head)
   → done                                ← merge-sweep.py, gated on every branch commit being on origin/main; reaps the build, removes worktree and branches <!-- privacy-ok: the pipeline's own scripts, not project source -->
 ```
 

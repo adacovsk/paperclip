@@ -25,6 +25,8 @@ whole instruction set. This script runs those rows directly:
   base-red marker, main touched the break -> requeue the verify (requeue-base-red.sh)
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task,
                                              unless a live one already exists
+  main-repair PR ready, pipeline/verify     -> merge it (architect/op-merge.sh): a red
+    green on its head, mergeable               `main` gates every other merge
   free Worker slots, promotion open         -> promote backlog (promote.py); candidates
                                              needing judgment go to the Coordinator
   verify sentinel not yet routed            -> settle it without a model, or wake the
@@ -924,9 +926,10 @@ def by_head(prs: list[dict], field: str) -> dict[str, object]:
 
 
 def open_prs(project: Path) -> list[dict]:
-    """Every open PR, drafts included, with its head branch, head commit and draft flag."""
+    """Every open PR, drafts included: number, title, body, head branch and commit, draft flag, mergeability."""
     out = subprocess.run(
-        ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName,headRefOid,isDraft"],
+        ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json",
+         "number,title,body,headRefName,headRefOid,isDraft,mergeable"],
         cwd=project, capture_output=True, text=True, timeout=60, check=True,
     ).stdout
     return json.loads(out)
@@ -1460,6 +1463,8 @@ def sweep(api: Api, project: Path) -> None:
         route_sentinels(api, agents, project)
     with skip_unreachable("file-main-repair"):
         file_main_repair(api, agents, project)
+    with skip_unreachable("merge-main-repairs"):
+        merge_main_repairs(api, project, prs)
     # After route_sentinels: a sentinel it just routed is a wake it just sent, not a missed one.
     with skip_unreachable("facilitator-checks"):
         facilitator_checks(api, project, roster, branch_heads)
@@ -2128,6 +2133,81 @@ def existing_main_repair(issues: list[dict], short: str) -> dict | None:
         if short in issue["title"] and issue["status"] != "cancelled":
             return issue
     return None
+
+
+TASK_HEAD = re.compile(r"^task/([A-Z][A-Z0-9]*-\d+)$")
+VERIFY_CONTEXT = "pipeline/verify"
+
+
+def main_repair_candidates(prs: list[dict]) -> list[tuple[dict, str]]:
+    """(PR, task identifier) for each ready, mergeable `task/*` PR that reads as a main-repair.
+
+    The PR's title and body are copied from its task (`land.sh`, the landing
+    sweep), so they narrow the field without an issue read per open PR; the
+    task itself is still read before anything merges.
+    """
+    out = []
+    for pr in ready_prs(prs):
+        m = TASK_HEAD.match(pr.get("headRefName") or "")
+        if not m or pr.get("mergeable") != "MERGEABLE":
+            continue
+        if (pr.get("title") or "").startswith("ci-fix:") or "Main-repair:" in (pr.get("body") or ""):
+            out.append((pr, m.group(1)))
+    return out
+
+
+def verify_green(project: Path, sha: str) -> bool:
+    """`pipeline/verify` is `success` on exactly this commit."""
+    # The clone's own origin, spelled out: a bare `gh` in a fork acts on the parent.
+    origin = git(project, "remote", "get-url", "origin").strip()
+    repo = re.sub(r"\.git$", "", re.sub(r"^(git@|https://)github\.com[:/]", "", origin))
+    out = subprocess.run(
+        ["gh", "api", f"repos/{repo}/commits/{sha}/status",
+         "--jq", f'[.statuses[] | select(.context == "{VERIFY_CONTEXT}")][0].state // empty'],
+        cwd=project, capture_output=True, text=True, timeout=60,
+    )
+    return out.returncode == 0 and out.stdout.strip() == "success"
+
+
+def merge_main_repairs(api: Api, project: Path, prs: list[dict]) -> None:
+    """Merge every ready main-repair PR whose head carries a green `pipeline/verify`.
+
+    A red `main` gates every verify and every merge in the repo, and its repair
+    sat ready and green until an operator happened to read the board. The
+    repair's scope is fixed by the Architect's main-repair rules and the cloud
+    lane's `check_main_repair_edit` (no suppression, no deleted file or test, no
+    weakened assertion), and a green build of a tree rooted on `main` is the
+    whole bar it has to clear, so the merge waits on nothing a reader adds.
+    The merge itself goes through `op-merge.sh`, the operator's gate: it merges
+    only the exact head the status is on (`--match-head-commit`). Only a head
+    already green is handed to it, so this step never starts a build;
+    unbuilt or conflicting repairs stay on the ordinary landing path.
+    """
+    for pr, identifier in main_repair_candidates(prs):
+        issue = api.get(f"/issues/{identifier}")
+        if not issue or issue.get("status") in ("done", "cancelled") or needs_architect(issue) != "main-repair":
+            continue
+        sha = pr["headRefOid"]
+        if not verify_green(project, sha):
+            continue
+        what = f"merge   #{pr['number']} {identifier}: main-repair, {VERIFY_CONTEXT} green on {sha[:9]}"
+        print(("DRY " if api.dry_run else "") + what, flush=True)
+        if api.dry_run:
+            continue
+        out = subprocess.run(
+            [str(HERE.parent / "architect" / "op-merge.sh"), str(pr["number"])],
+            cwd=project, capture_output=True, text=True, timeout=600,
+            env={**os.environ, "PAPERCLIP_PROJECT": str(project)},
+        )
+        said = (out.stdout.strip().splitlines() or [out.stderr.strip() or f"op-merge.sh exit {out.returncode}"])[-1]
+        print(f"  {said}", flush=True)
+        if out.returncode == 0:
+            api.write(
+                "POST", f"/issues/{issue['id']}/comments",
+                {"body": f"Merged by the Dispatcher: main-repair with `{VERIFY_CONTEXT}` green on "
+                         f"`{sha[:9]}` (`op-merge.sh`).\n\n`{said}`"},
+                f"  comment on {identifier}",
+            )
 
 
 def file_main_repair(api: Api, agents: dict, project: Path) -> None:
