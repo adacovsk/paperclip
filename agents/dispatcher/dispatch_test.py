@@ -489,6 +489,40 @@ class OrphanStages(unittest.TestCase):
         dispatch.cancel_orphan_stages(api)
         self.assertEqual(api.reads, ["merged"])
 
+    def test_unanswered_parent_read_skips_only_its_stages(self):
+        api = self.Api([
+            {"id": "a", "identifier": "AA-11", "title": "Verify: AA-1 x", "parentId": "slow"},
+            {"id": "b", "identifier": "AA-12", "title": "Review: AA-1 x", "parentId": "slow"},
+            {"id": "c", "identifier": "AA-13", "title": "Rebase task/AA-2 onto origin/main", "parentId": "dropped"},
+        ], self.PARENTS)
+
+        def get(path, inner=api.get):
+            if path.endswith("/slow"):
+                api.reads.append("slow")
+                raise dispatch.ApiUnreachable("GET /issues/slow: timed out")
+            return inner(path)
+
+        api.get = get
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispatch.cancel_orphan_stages(api), ["AA-13"])
+        # The unanswered parent is not asked again for its second stage.
+        self.assertEqual(api.reads, ["slow", "dropped"])
+
+    def test_unanswered_cancel_skips_that_stage_only(self):
+        api = self.Api([
+            {"id": "a", "identifier": "AA-11", "title": "Verify: AA-1 x", "parentId": "merged"},
+            {"id": "b", "identifier": "AA-12", "title": "Review: AA-1 x", "parentId": "merged"},
+        ], self.PARENTS)
+
+        def set_status(issue, body, comment, what, inner=api.set_status):
+            if issue["identifier"] == "AA-11":
+                raise dispatch.ApiUnreachable("PATCH: timed out")
+            inner(issue, body, comment, what)
+
+        api.set_status = set_status
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispatch.cancel_orphan_stages(api), ["AA-12"])
+
 
 def hold(kind, *blockers, note=None, reheld=False):
     return {"kind": kind, "blockers": [{"id": b, "identifier": b} for b in blockers], "note": note, "reheld": reheld}
