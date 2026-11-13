@@ -15,10 +15,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { createServer } from "node:net";
 import { Readable } from "node:stream";
 import * as p from "@clack/prompts";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
+import { findAvailablePort } from "@paperclipai/adapter-utils/ports";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   applyPendingMigrations,
@@ -434,25 +434,6 @@ function readRunningPostmasterPid(postmasterPidFile: string): number | null {
   } catch {
     return null;
   }
-}
-
-async function isPortAvailable(port: number): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
-    const server = createServer();
-    server.unref();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-async function findAvailablePort(preferredPort: number, reserved = new Set<number>()): Promise<number> {
-  let port = Math.max(1, Math.trunc(preferredPort));
-  while (reserved.has(port) || !(await isPortAvailable(port))) {
-    port += 1;
-  }
-  return port;
 }
 
 function resolveRepoManagedWorktreesRoot(cwd: string): string | null {

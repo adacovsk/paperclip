@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 
 function asRecord(value: unknown): Record<string, unknown> | null {

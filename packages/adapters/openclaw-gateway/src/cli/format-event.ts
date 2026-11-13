@@ -1,4 +1,4 @@
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 
 export function printOpenClawGatewayStreamEvent(raw: string, debug: boolean): void {
   const line = raw.trim();

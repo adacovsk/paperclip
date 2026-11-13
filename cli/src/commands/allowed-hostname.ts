@@ -1,5 +1,5 @@
 import * as p from "@clack/prompts";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import { normalizeHostnameInput } from "../config/hostnames.js";
 import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
 

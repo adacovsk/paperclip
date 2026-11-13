@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import * as p from "@clack/prompts";
-import pc from "picocolors";
+import pc from "@paperclipai/adapter-utils/colors";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createDb, instanceUserRoles, invites } from "@paperclipai/db";
 import { loadPaperclipEnvFile } from "../config/env.js";
