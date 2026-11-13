@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveNoSkillCompletionStatus } from "../services/no-skill-completion-status.js";
+import { noSkillRunOwnsTask, resolveNoSkillCompletionStatus } from "../services/no-skill-completion-status.js";
 
 describe("resolveNoSkillCompletionStatus", () => {
   it("auto-completes only when the branch is merged into the base ref", () => {
@@ -70,5 +70,30 @@ describe("resolveNoSkillCompletionStatus", () => {
     expect(
       resolveNoSkillCompletionStatus({ currentStatus: "some_future_status", branchOnOrigin: false }),
     ).toBeNull();
+  });
+});
+
+describe("noSkillRunOwnsTask", () => {
+  const architect = "architect-agent";
+  const planner = "planner-agent";
+
+  it("speaks for a task still assigned to the run's agent", () => {
+    expect(noSkillRunOwnsTask({ runAgentId: architect, assigneeAgentId: architect })).toBe(true);
+  });
+
+  it("does not speak for a task routed to another agent mid-run", () => {
+    // Regression: a Verify routed to the Planner on a `planner` hold is `todo`,
+    // which the promotion allowlist accepts. The Architect run still in flight
+    // then exited, flipped the Planner's task to `in_review` (clearing the hold)
+    // and posted its final message after the `Held:` line.
+    expect(noSkillRunOwnsTask({ runAgentId: architect, assigneeAgentId: planner })).toBe(false);
+    expect(
+      resolveNoSkillCompletionStatus({ currentStatus: "todo", branchOnOrigin: false, branchMerged: false }),
+    ).toBe("in_review");
+  });
+
+  it("does not speak for a task parked unassigned mid-run", () => {
+    // A hold that parks the task `blocked` clears the assignee.
+    expect(noSkillRunOwnsTask({ runAgentId: architect, assigneeAgentId: null })).toBe(false);
   });
 });
