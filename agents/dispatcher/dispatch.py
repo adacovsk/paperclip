@@ -1179,25 +1179,33 @@ def cancel_orphan_stages(api: Api) -> list[str]:
     release. Each such run finds nothing to do. Patching each writer left the next
     one exposed, so this closes the stage itself, once, whatever closed the
     parent; a cancelled stage is invisible to all of them.
+
+    Each stage is contained like the other per-item loops: a parent read or a
+    cancel with no answer skips that stage, which stays open for the next sweep.
+    A parent that went unanswered is not asked again this sweep, since each ask
+    retries before giving up and one parent can hold many stages.
     """
-    cancelled, parents = [], {}
+    cancelled: list[str] = []
+    parents: dict[str, dict | None] = {}
     for stage in api.issues(status=",".join(sorted(OPEN))):
         if not stage_of(stage) or not stage.get("parentId"):
             continue
         pid = stage["parentId"]
-        if pid not in parents:
-            parents[pid] = api.get(f"/issues/{pid}")
-        parent = parents[pid]
-        if parent.get("status") not in ("done", "cancelled"):
-            continue
-        api.set_status(
-            stage,
-            {"status": "cancelled"},
-            f"Cancelled: parent {parent['identifier']} is `{parent['status']}`, so this stage "
-            "has nothing left to act on.",
-            f"cancel  {stage['identifier']}: parent {parent['identifier']} {parent['status']}",
-        )
-        cancelled.append(stage["identifier"])
+        with skip_unreachable(f"cancel  {stage['identifier']}"):
+            if pid not in parents:
+                parents[pid] = None  # stays None if the read below gets no answer
+                parents[pid] = api.get(f"/issues/{pid}")
+            parent = parents[pid]
+            if parent is None or parent.get("status") not in ("done", "cancelled"):
+                continue
+            api.set_status(
+                stage,
+                {"status": "cancelled"},
+                f"Cancelled: parent {parent['identifier']} is `{parent['status']}`, so this stage "
+                "has nothing left to act on.",
+                f"cancel  {stage['identifier']}: parent {parent['identifier']} {parent['status']}",
+            )
+            cancelled.append(stage["identifier"])
     return cancelled
 
 
@@ -1206,7 +1214,10 @@ def sweep(api: Api, project: Path) -> None:
     inherit_cloud_lane(roster)
     agents = {a["name"]: a["id"] for a in roster}
     # First, so no step below dispatches or re-fires a stage whose parent is closed.
-    cancel_orphan_stages(api)
+    # Contained like every later step: an orphan left open is a wasted run, while
+    # an uncaught `ApiUnreachable` here ended the sweep before any step below ran.
+    with skip_unreachable("cancel-orphan-stages"):
+        cancel_orphan_stages(api)
     worker = next(a for a in roster if a["name"] == "Worker")
 
     owned = api.issues(status="in_review", assigneeAgentId=agents["Worker"])
