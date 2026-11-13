@@ -16,8 +16,13 @@
 # own fixes, which its PR body has to list), a dirty tree, a red landing gate, a conflict a resolve
 # verify already failed on, or a PR already closed or merged for the branch.
 #
+# A PR may already be open for the branch as a draft: open-draft.sh opens one
+# when the verify is launched, so the work is visible and GitHub reports
+# conflicts while it builds. Landing gives that draft the real body and title and
+# marks it ready; it never opens a second PR. A draft is not a landing.
+#
 # Usage:  land.sh <task-id> <verify-task-id> <task-title>
-# Exit:   0  landed: the branch is pushed and a PR for it exists
+# Exit:   0  landed: the branch is pushed and a ready-for-review PR for it exists
 #         2  not landed, a new build is out: a freshness re-verify, or a
 #            resolve-mode verify of a branch that conflicts with main
 #         1  a model has to look; the last line of output says why
@@ -74,11 +79,14 @@ fi
 
 # A closed PR is a decision and a merged one is landed; either is the
 # Coordinator's to record. Pushing onto that branch would publish to nothing.
-prs="$("$GH" pr list --head "$branch" --state all --json number,state -q '.[] | "\(.number) \(.state)"')" \
+prs="$("$GH" pr list --head "$branch" --state all --json number,state,isDraft -q '.[] | "\(.number) \(.state) \(.isDraft)"')" \
   || model "cannot list PRs for $branch"
-if grep -qvE ' OPEN$' <<< "${prs:-x OPEN}"; then
+if grep -qvE ' OPEN (true|false)$' <<< "${prs:-x OPEN false}"; then
   model "a PR for $branch is already closed or merged ($(tr '\n' ' ' <<< "$prs"))"
 fi
+# The draft open-draft.sh opened when the verify launched; landing marks it ready.
+draft=""
+grep -qE ' OPEN true$' <<< "$prs" && draft=1
 
 # Freshness: relaunch-verify.sh owns the re-verify decision so the two cannot
 # disagree. 0 = a re-verify is out; 3 = land; 1 = it could not proceed, which
@@ -158,7 +166,7 @@ fi
 "$STATUS" cargo "$head" "${note:-cargo clippy + test --lib green, landing gate green}" >/dev/null 2>&1 \
   || say "WARNING: pipeline/verify not posted on $head; the PR cannot merge until it is"
 
-if [ -z "$prs" ]; then
+if [ -z "$prs" ] || [ -n "$draft" ]; then
   B="$S/$task.pr-body.md"
   body > "$B" || model "generate_pr_body.py could not build a reviewable body"
   {
@@ -167,17 +175,23 @@ if [ -z "$prs" ]; then
     [ -z "$note" ] || echo "- note: $note"
     [ -z "$skip_schema" ] || echo "- $skip_schema"
   } >> "$B"
+  # Checked as a ready PR's body (no --draft), so it cannot still say "pending".
   body_check "$B" >/dev/null 2>&1 || model "check_pr_body.py rejected the generated body"
-  "$GH" pr create --base main --head "$branch" --title "$title" --body-file "$B" >/dev/null \
-    || model "gh pr create failed"
+  if [ -n "$draft" ]; then
+    "$GH" pr edit "$branch" --title "$title" --body-file "$B" >/dev/null || model "gh pr edit of the draft failed"
+    "$GH" pr ready "$branch" >/dev/null || model "gh pr ready failed; the PR is still a draft"
+  else
+    "$GH" pr create --base main --head "$branch" --title "$title" --body-file "$B" >/dev/null \
+      || model "gh pr create failed"
+  fi
 fi
 
 # The structural postcondition: run success is not a landing, a PR is.
 git ls-remote --exit-code --heads origin "$branch" >/dev/null || model "NO REMOTE BRANCH $branch after the push"
-url="$("$GH" pr list --head "$branch" --state open --json url -q '.[0].url // empty')"
-[ -n "$url" ] || model "NO PR for $branch after landing"
+url="$("$GH" pr list --head "$branch" --state open --json url,isDraft -q '[.[] | select(.isDraft | not)][0].url // empty')"
+[ -n "$url" ] || model "NO ready PR for $branch after landing"
 
-# The Dispatcher closes this Verify when the open PR carries this head.
+# The Dispatcher closes this Verify when a ready (non-draft) PR carries this head.
 echo "$head" > "$S/$task.landed"
 rm -f "$S/$task.exit" "$S/$task.base" "$S/$task.head" "$S/$task.schemas" "$S/$task.base-red" "$S/$task.freshness" "$S/$task.pid" "$S/$task".cloud.*
 git for-each-ref --format='%(refname)' "refs/heads/cloud-verify/$task/" | xargs -r -n1 git update-ref -d

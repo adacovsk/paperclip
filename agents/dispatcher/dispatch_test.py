@@ -3,6 +3,7 @@
 import contextlib
 from datetime import datetime, timezone
 import io
+import json
 import importlib.util
 import os
 import subprocess
@@ -615,6 +616,30 @@ class RoutineFire(unittest.TestCase):
 
     def test_no_task_is_not_a_fire(self):
         self.assertFalse(dispatch.routine_fire(None, "me"))
+
+
+class OpenPrHeads(unittest.TestCase):
+    """A draft opened when the verify launched is not a landing."""
+
+    def test_drafts_are_not_open_prs(self):
+        prs = [
+            {"headRefName": "task/AA-1", "headRefOid": "aaa", "isDraft": True},
+            {"headRefName": "task/AA-2", "headRefOid": "bbb", "isDraft": False},
+        ]
+        out = mock.Mock(stdout=json.dumps(prs))
+        with mock.patch.object(dispatch.subprocess, "run", return_value=out) as run:
+            heads = dispatch.open_pr_heads(Path("."))
+        self.assertEqual(heads, {"task/AA-2": "bbb"})
+        self.assertIn("isDraft", run.call_args.args[0][-1], "the draft flag has to be requested to be filtered")
+
+    def test_branch_protection_counts_drafts(self):
+        prs = [{"headRefName": "task/AA-1", "headRefOid": "aaa", "isDraft": True}]
+        self.assertEqual(dispatch.open_pr_heads(Path("."), prs=prs, drafts=True), {"task/AA-1": "aaa"})
+        self.assertEqual(dispatch.open_pr_heads(Path("."), prs=prs), {})
+
+    def test_a_draft_train_pr_is_no_alias_for_its_task(self):
+        prs = [{"headRefName": "train/3/AA-9", "headRefOid": "ccc", "isDraft": True, "state": "OPEN"}]
+        self.assertEqual(dispatch.by_head(dispatch.ready_prs(prs), "headRefOid"), {})
 
 
 class VerifyLanded(unittest.TestCase):
