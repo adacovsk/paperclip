@@ -103,7 +103,7 @@ describe("issue comment reopen routes", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
       assigneeAgentId: "33333333-3333-4333-8333-333333333333",
-    });
+    }, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -128,7 +128,7 @@ describe("issue comment reopen routes", () => {
     expect(mockIssueService.update).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
       assigneeAgentId: "33333333-3333-4333-8333-333333333333",
       status: "todo",
-    });
+    }, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

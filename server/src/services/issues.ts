@@ -42,8 +42,13 @@ import {
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultInstanceGoal } from "./goals.js";
+import {
+  assertTransition,
+  UNSPECIFIED_ISSUE_WRITE_CONTEXT,
+  writeIssueStatus,
+  type IssueWriteContext,
+} from "./issue-status.js";
 
-const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 // Statuses that count as an "open" subtask for the dedupeKey uniqueness rule —
 // must mirror the WHERE clause of issues_open_subtask_dedupe_uq in the schema.
 const OPEN_SUBTASK_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"] as const;
@@ -82,13 +87,6 @@ function isOpenSubtaskDedupeConflict(error: unknown): boolean {
     current = candidate.cause;
   }
   return false;
-}
-
-function assertTransition(from: string, to: string) {
-  if (from === to) return;
-  if (!ALL_ISSUE_STATUSES.includes(to)) {
-    throw conflict(`Unknown issue status: ${to}`);
-  }
 }
 
 /**
@@ -1108,7 +1106,11 @@ export function issueService(db: Db) {
       }
     },
 
-    update: async (id: string, data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] }) => {
+    update: async (
+      id: string,
+      data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] },
+      context: IssueWriteContext = UNSPECIFIED_ISSUE_WRITE_CONTEXT,
+    ) => {
       const existing = await db
         .select()
         .from(issues)
@@ -1235,12 +1237,14 @@ export function issueService(db: Db) {
           projectGoalId: nextProjectGoalId,
           defaultGoalId: defaultInstanceGoal?.id ?? null,
         });
-        const updated = await tx
-          .update(issues)
-          .set(patch)
-          .where(eq(issues.id, id))
-          .returning()
-          .then((rows) => rows[0] ?? null);
+        const updated = await writeIssueStatus(tx, {
+          issueId: id,
+          set: patch,
+          context,
+          // The caller's own row records only the status it asked for; one this
+          // method derived (a hold parking the task) is logged by the helper.
+          skipActivity: context.statusLoggedByCaller === true && data.status !== undefined,
+        }).then((result) => result?.row ?? null);
         if (!updated) return null;
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, nextLabelIds, tx);
@@ -1284,7 +1288,16 @@ export function issueService(db: Db) {
         return enriched;
       }),
 
-    checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
+    checkout: async (
+      id: string,
+      agentId: string,
+      expectedStatuses: string[],
+      checkoutRunId: string | null,
+      context: IssueWriteContext = {
+        actor: { actorType: "agent", actorId: agentId, agentId, runId: checkoutRunId },
+        source: "checkout",
+      },
+    ) => {
       const issueRow = await db
         .select({ id: issues.id })
         .from(issues)
@@ -1303,9 +1316,9 @@ export function issueService(db: Db) {
       const executionLockCondition = checkoutRunId
         ? or(isNull(issues.executionRunId), eq(issues.executionRunId, checkoutRunId))
         : isNull(issues.executionRunId);
-      const updated = await db
-        .update(issues)
-        .set({
+      const updated = await writeIssueStatus(db, {
+        issueId: id,
+        set: {
           assigneeAgentId: agentId,
           assigneeUserId: null,
           checkoutRunId,
@@ -1314,17 +1327,14 @@ export function issueService(db: Db) {
           ...clearedHold(),
           startedAt: now,
           updatedAt: now,
-        })
-        .where(
-          and(
-            eq(issues.id, id),
-            inArray(issues.status, expectedStatuses),
-            or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
-            executionLockCondition,
-          ),
-        )
-        .returning()
-        .then((rows) => rows[0] ?? null);
+        },
+        where: and(
+          inArray(issues.status, expectedStatuses),
+          or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
+          executionLockCondition,
+        ),
+        context,
+      }).then((result) => result?.row ?? null);
 
       if (updated) {
         const [enriched] = await withIssueLabels(db, [updated]);
@@ -1467,7 +1477,17 @@ export function issueService(db: Db) {
       });
     },
 
-    release: async (id: string, actorAgentId?: string, actorRunId?: string | null) => {
+    release: async (
+      id: string,
+      actorAgentId?: string,
+      actorRunId?: string | null,
+      context: IssueWriteContext = actorAgentId
+        ? {
+          actor: { actorType: "agent", actorId: actorAgentId, agentId: actorAgentId, runId: actorRunId ?? null },
+          source: "release",
+        }
+        : { actor: UNSPECIFIED_ISSUE_WRITE_CONTEXT.actor, source: "release" },
+    ) => {
       const existing = await db
         .select()
         .from(issues)
@@ -1493,18 +1513,17 @@ export function issueService(db: Db) {
         });
       }
 
-      const updated = await db
-        .update(issues)
-        .set({
+      const updated = await writeIssueStatus(db, {
+        issueId: id,
+        set: {
           status: "todo",
           assigneeAgentId: null,
           checkoutRunId: null,
           ...clearedHold(),
           updatedAt: new Date(),
-        })
-        .where(eq(issues.id, id))
-        .returning()
-        .then((rows) => rows[0] ?? null);
+        },
+        context,
+      }).then((result) => result?.row ?? null);
       if (!updated) return null;
       const [enriched] = await withIssueLabels(db, [updated]);
       return enriched;

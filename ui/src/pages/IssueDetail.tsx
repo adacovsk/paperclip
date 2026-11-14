@@ -60,6 +60,7 @@ type CommentReassignment = {
 const ACTION_LABELS: Record<string, string> = {
   "issue.created": "created the issue",
   "issue.updated": "updated the issue",
+  "issue.status_changed": "changed the status",
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
   "issue.comment_added": "added a comment",
@@ -143,7 +144,7 @@ function titleizeFilename(input: string) {
 }
 
 function formatAction(action: string, details?: Record<string, unknown> | null): string {
-  if (action === "issue.updated" && details) {
+  if ((action === "issue.updated" || action === "issue.status_changed") && details) {
     const previous = (details._previous ?? {}) as Record<string, unknown>;
     const parts: string[] = [];
 

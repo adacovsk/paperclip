@@ -155,6 +155,6 @@ describe("PATCH /issues/:id writes the comment before the status", () => {
 
     expect(res.status).toBe(200);
     expect(mockIssueService.addComment).not.toHaveBeenCalled();
-    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { status: "done" });
+    expect(mockIssueService.update).toHaveBeenCalledWith(ISSUE_ID, { status: "done" }, expect.objectContaining({ source: "issue_patch", statusLoggedByCaller: true }));
   });
 });
