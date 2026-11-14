@@ -59,6 +59,7 @@ summary wakes you again — six consecutive no-op fires, observed.
 | Update task | `PATCH /api/issues/:issueId` (optional `comment` field) |
 | Add comment | `POST /api/issues/:issueId/comments` |
 | Create subtask | `POST /api/issues` — `title` + **`description`** + `parentId` |
+| Link a GitHub issue | `githubIssues: [{repo, number}]` on create, or `POST /api/issues/:issueId/github-links` |
 | Release task | `POST /api/issues/:issueId/release` |
 | List agents | `GET /api/agents` |
 | Search issues | `GET /api/issues?q=search+term` |

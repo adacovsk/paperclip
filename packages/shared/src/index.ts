@@ -292,6 +292,7 @@ export {
   updateIssueSchema,
   issueHoldInputSchema,
   reportIssueBuildSchema,
+  githubIssueRefSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
   addIssueCommentSchema,
@@ -312,6 +313,7 @@ export {
   type UpdateIssue,
   type IssueHoldInput,
   type ReportIssueBuild,
+  type GithubIssueRef,
   type CheckoutIssue,
   type AddIssueComment,
   type LinkIssueApproval,
@@ -448,6 +450,13 @@ export {
   type IssueBuildLane,
   type IssueBuildOutcome,
 } from "./issue-build.js";
+
+export {
+  GITHUB_REPO_PATTERN,
+  githubIssueUrl,
+  type IssueGithubLink,
+  type GithubIssueLinkedTask,
+} from "./issue-github-link.js";
 
 export {
   paperclipConfigSchema,

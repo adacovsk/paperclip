@@ -14,6 +14,8 @@ import {
   upsertIssueDocumentSchema,
   updateIssueSchema,
   reportIssueBuildSchema,
+  githubIssueRefSchema,
+  GITHUB_REPO_PATTERN,
   formatHoldLine,
   holdSurvivesStatus,
   isHoldLine,
@@ -47,6 +49,7 @@ import {
 } from "../services/subtask-wake-target.js";
 import { holdPlacement, issueHoldService } from "../services/issue-holds.js";
 import { issueBuildService } from "../services/issue-builds.js";
+import { issueGithubLinkService } from "../services/issue-github-links.js";
 import { stageDispatcherIdFor } from "../services/coordinator-lookup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import {
@@ -65,6 +68,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const svc = issueService(db);
   const holds = issueHoldService(db);
   const builds = issueBuildService(db);
+  const githubLinks = issueGithubLinkService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const agentsSvc = agentService(db);
@@ -384,7 +388,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const currentExecutionWorkspace = issue.executionWorkspaceId
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
-    const workProducts = await workProductsSvc.listForIssue(issue.id);
+    const [workProducts, issueGithubLinks] = await Promise.all([
+      workProductsSvc.listForIssue(issue.id),
+      githubLinks.listForIssue(issue.id),
+    ]);
     res.json({
       ...issue,
       goalId: goal?.id ?? issue.goalId,
@@ -395,6 +402,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       mentionedProjects,
       currentExecutionWorkspace,
       workProducts,
+      githubLinks: issueGithubLinks,
     });
   });
 
@@ -837,6 +845,82 @@ export function issueRoutes(db: Db, storage: StorageService) {
     res.status(201).json(build);
   });
 
+  router.get("/issues/:id/github-links", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertInstanceAccess(req);
+    res.json(await githubLinks.listForIssue(issue.id));
+  });
+
+  router.post("/issues/:id/github-links", validate(githubIssueRefSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertInstanceAccess(req);
+    const actor = getActorInfo(req);
+    const links = await githubLinks.link(issue.id, [req.body], actor.agentId ?? null);
+    await logActivity(db, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.github_linked",
+      entityType: "issue",
+      entityId: issue.id,
+      details: { identifier: issue.identifier, githubIssue: `${req.body.repo}#${req.body.number}` },
+    });
+    res.status(201).json(links);
+  });
+
+  router.delete("/issues/:id/github-links/:linkId", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertInstanceAccess(req);
+    const removed = await githubLinks.unlink(issue.id, req.params.linkId as string);
+    if (!removed) {
+      res.status(404).json({ error: "Link not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.github_unlinked",
+      entityType: "issue",
+      entityId: issue.id,
+      details: { identifier: issue.identifier, githubIssue: `${removed.repo}#${removed.number}` },
+    });
+    res.json(removed);
+  });
+
+  // Reverse lookup: which tasks a repository's issues (or one issue) are waiting on.
+  router.get("/github-links", async (req, res) => {
+    assertInstanceAccess(req);
+    const repo = typeof req.query.repo === "string" ? req.query.repo.trim() : "";
+    if (!GITHUB_REPO_PATTERN.test(repo)) {
+      throw unprocessable("repo is required, as owner/name");
+    }
+    let number: number | undefined;
+    if (req.query.number !== undefined) {
+      number = Number(req.query.number);
+      if (!Number.isInteger(number) || number <= 0) throw unprocessable("number is a positive integer");
+    }
+    res.json(await githubLinks.linkedTasks(repo, number));
+  });
+
   router.get("/issues/:id/approvals", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
@@ -974,12 +1058,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     const status = req.body.status ?? (await resolveCreateStatus(req.body.assigneeAgentId));
 
+    const { githubIssues, ...createBody } = req.body;
     const issue = await svc.create({
-      ...req.body,
+      ...createBody,
       status,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
+    const linked = await githubLinks.linkOnCreate(issue.id, issue.parentId, githubIssues ?? [], actor.agentId ?? null);
 
     await logActivity(db, {
       actorType: actor.actorType,
@@ -989,7 +1075,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
       action: "issue.created",
       entityType: "issue",
       entityId: issue.id,
-      details: { title: issue.title, identifier: issue.identifier },
+      details: {
+        title: issue.title,
+        identifier: issue.identifier,
+        ...(linked.length > 0 ? { githubIssues: linked.map((l) => `${l.repo}#${l.number}`) } : {}),
+      },
     });
 
     void queueIssueAssignmentWakeup({
@@ -1002,7 +1092,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       requestedByActorId: actor.actorId,
     });
 
-    res.status(201).json(issue);
+    res.status(201).json({ ...issue, githubLinks: linked });
   });
 
   router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {

@@ -52,6 +52,9 @@ vi.mock("../services/index.js", () => ({
     listForIssue: vi.fn(async () => []),
   }),
 }));
+vi.mock("../services/issue-github-links.js", () => ({
+  issueGithubLinkService: () => ({ listForIssue: vi.fn(async () => []) }),
+}));
 
 function createApp() {
   const app = express();
