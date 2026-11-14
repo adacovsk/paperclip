@@ -354,6 +354,36 @@ class RunDigest(unittest.TestCase):
         self.assertEqual(got["quotaOut"], ["Architect"])
 
 
+def flag(hours_ago, frm, to, kinds, source, agent_id=None, actor_type="agent", action=None):
+    return {"action": action or m.FLAG_ACTION, "createdAt": iso(hours_ago),
+            "details": {"status": to, "_previous": {"status": frm}, "source": source, "flags": kinds,
+                        "actor": {"actorType": actor_type, **({"agentId": agent_id} if agent_id else {})}}}
+
+
+class StatusFlags(unittest.TestCase):
+    NAMES = {"c": "Coordinator"}
+
+    def test_flags_are_counted_by_kind_pair_and_caller(self):
+        got = m.status_flags([flag(1, "cancelled", "backlog", ["rejected"], "issue_patch", "c"),
+                              flag(2, "cancelled", "backlog", ["rejected"], "issue_patch", "c"),
+                              flag(3, "todo", "in_progress", ["in_progress_without_run"], "unspecified",
+                                   actor_type="system")], self.NAMES, NOW)
+        self.assertEqual(got, {"total": 3,
+                               "byKind": {"rejected": 2, "in_progress_without_run": 1},
+                               "byPair": {"cancelled -> backlog": 2, "todo -> in_progress": 1},
+                               "byCaller": {"Coordinator via issue_patch": 2, "system via unspecified": 1}})
+
+    def test_flags_older_than_the_window_are_not_counted(self):
+        self.assertEqual(m.status_flags([flag(30, "done", "blocked", ["rejected"], "issue_patch", "c")],
+                                        self.NAMES, NOW)["total"], 0)
+
+    def test_a_route_that_ignored_the_filter_is_an_error_not_a_quiet_window(self):
+        got = m.status_flags([flag(1, "todo", "done", [], "issue_patch", "c", action="issue.comment_added")],
+                             self.NAMES, NOW)
+        self.assertIn("error", got)
+        self.assertNotIn("total", got)
+
+
 def commit(oid, hours_ago, state=None, status_hours_ago=None, context=None):
     contexts = [] if state is None else [{"context": context or m.NIGHTLY_CONTEXT, "state": state,
                                           "createdAt": iso(hours_ago if status_hours_ago is None else status_hours_ago)}]

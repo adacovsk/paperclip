@@ -39,6 +39,7 @@ export function activityRoutes(db: Db) {
       agentId: req.query.agentId as string | undefined,
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
+      action: req.query.action as string | undefined,
       limit: limitParam
         ? Math.max(
             1,

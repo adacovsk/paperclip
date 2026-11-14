@@ -71,4 +71,15 @@ describe("activity routes", () => {
     expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("issue-uuid-1");
     expect(res.body).toEqual([{ runId: "run-1" }]);
   });
+
+  it("passes the action filter to the list", async () => {
+    mockActivityService.list.mockResolvedValue([]);
+
+    const res = await request(createApp()).get("/api/activity?action=issue.status_transition_flagged&limit=5");
+
+    expect(res.status).toBe(200);
+    expect(mockActivityService.list).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "issue.status_transition_flagged", limit: 5 }),
+    );
+  });
 });
