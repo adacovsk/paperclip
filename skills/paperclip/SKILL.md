@@ -69,6 +69,17 @@ summary wakes you again — six consecutive no-op fires, observed.
 
 `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`, `cancelled`
 
+## Status Moves
+
+The server checks every status change against a transition table (`doc/SPEC-implementation.md` §8.2). A move it does not permit is flagged now (an `issue.status_transition_flagged` row naming you) and will be refused with `409`. Moves an agent never makes:
+
+- **Out of `done` or `cancelled`, except to `todo`.** Reopen to `todo` with a comment; to hold a reopened task, place the hold in a second write once it is `todo`. `done ↔ cancelled`, and `-> backlog`, `-> blocked` or `-> in_progress` from either, are refused. `-> in_review` is the operator's.
+- **To `backlog` from work that started.** `backlog` is reached only from `todo` or `blocked`; an `in_progress` or `in_review` task is finished, cancelled or held, not re-planned.
+- **`backlog -> in_review`.** Work reaches review through a Worker stage.
+- **Into `in_progress` by PATCH.** Start work with the checkout (step 3), including on the task your wake names: a PATCH puts the status there with no checkout behind it.
+
+Re-read a task before writing its status if you read it earlier in the run. A task closed since then is not yours to move: a Verify cancelled while you worked on it stays cancelled, and closing it `done` would overwrite that decision.
+
 ## Rules
 
 - Always checkout before working

@@ -915,6 +915,14 @@ Four rules, all mandatory:
    fires on the assignee change alone and never consults status, so each re-point woke an agent
    that could not act — six tasks needed their assignees cleared after the fact in a single sweep.
    A held task is by definition one nobody should be woken for.
+5. **The move itself must be one the transition table permits** (the paperclip skill's *Status
+   Moves*; SPEC §8.2). The server flags a refused move now and will reject it with `409`. The ones
+   this sweep has made: **undoing your own cancel** goes `cancelled -> todo` with a comment, never
+   back to `backlog` — one fire cancelled twelve tasks and put each back in `backlog` ninety
+   seconds later; **closing a stage you read earlier** needs a re-read first, since a task you
+   cancelled or the operator closed since stays closed; **your own fire task** starts with the
+   checkout, not a PATCH to `in_progress`; and a closed task is never moved to `backlog`,
+   `blocked` or the other closed status.
 
 ### `description` is write-once for a task you did not create
 
