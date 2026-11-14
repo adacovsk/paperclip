@@ -46,6 +46,9 @@ the whole context load. So:
   installs, rebuilds the UI and restarts only when the change needs each
   (`--wait N` holds the restart until no run is in flight). An `agents/**` change
   needs none of them: those scripts are read from the checkout each time they run.
+  "Needs" is judged against the commit each step last ran at (stamps under
+  `.git/paperclip-deploy/`), so a checkout already pulled by something else still
+  deploys on the next `pnpm deploy:live`; no `--restart` needed.
 - **A script change that depends on a server change must not be pulled before the
   server is restarted** — the scripts take effect at the pull, the server at the
   restart. `deploy.sh` does both in order; a bare `git pull` does only the first.

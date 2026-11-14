@@ -31,7 +31,15 @@ STUB
     && echo a > agents/a && echo s > server/s && echo u > ui/u && echo l > pnpm-lock.yaml \
     && git add -A && git commit -q -m base )
   git clone -q "$TMP/origin" "$TMP/live"
+  stamp_all  # the live checkout starts deployed: every step ran at its HEAD
 }
+
+stamp_all() {
+  local d; d="$TMP/live/.git/paperclip-deploy"; mkdir -p "$d"
+  for s in install ui server; do git -C "$TMP/live" rev-parse HEAD > "$d/$s"; done
+}
+stamp_at() { cat "$TMP/live/.git/paperclip-deploy/$1" 2>/dev/null; }
+external_pull() { git -C "$TMP/live" pull -q --ff-only; }
 
 push() {  # push <path>...: change each path on origin
   ( cd "$TMP/origin" && for p in "$@"; do echo "$RANDOM" >> "$p"; done && git add -A && git commit -q -m change )
@@ -86,5 +94,35 @@ check "another branch is not the live checkout" grep -q "not the live checkout" 
 setup; push server/s; echo 2 > "$TMP/running"; deploy
 check "runs in flight are named, then the restart goes ahead" grep -q "2 agent run(s) in flight will be killed and retried" "$TMP/out"
 check "runs in flight do not stop a deploy without --wait" called "systemctl --user restart"
+
+setup; push server/s; external_pull; deploy
+check "a server change pulled by something else still restarts" called "systemctl --user restart"
+check "it names the step that is behind" grep -q "server: last ran at" "$TMP/out"
+check "the server stamp moves to the deployed commit" test "$(stamp_at server)" = "$(git -C "$TMP/origin" rev-parse HEAD)"
+
+setup; push ui/u; external_pull; deploy
+check "a UI change pulled by something else still rebuilds" called "pnpm --filter @paperclipai/ui build"
+
+setup; push pnpm-lock.yaml; external_pull; deploy
+check "a lockfile change pulled by something else still installs" called "pnpm install --frozen-lockfile"
+
+setup; push agents/a; external_pull; deploy
+check "a pipeline-script change pulled by something else restarts nothing" not_called systemctl
+check "an unaffected step's stamp advances" test "$(stamp_at server)" = "$(git -C "$TMP/origin" rev-parse HEAD)"
+
+setup; push server/s; deploy; : > "$TMP/calls"; deploy
+check "a second deploy of the same commit does nothing" not_called systemctl
+
+setup; rm -rf "$TMP/live/.git/paperclip-deploy"; deploy
+check "no stamps installs" called "pnpm install --frozen-lockfile"
+check "no stamps rebuilds the UI" called "pnpm --filter @paperclipai/ui build"
+check "no stamps restarts" called "systemctl --user restart"
+
+setup; echo 0000000000000000000000000000000000000000 > "$TMP/live/.git/paperclip-deploy/server"; deploy
+check "a stamp naming no commit restarts" called "systemctl --user restart"
+
+setup; push server/s; external_pull; deploy --dry-run
+check "--dry-run writes no stamp" test "$(stamp_at server)" != "$(git -C "$TMP/origin" rev-parse HEAD)"
+check "--dry-run of an externally pulled change says it would restart" grep -q "would run: systemctl" "$TMP/out"
 
 exit $fail
