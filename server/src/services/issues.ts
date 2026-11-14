@@ -1110,6 +1110,15 @@ export function issueService(db: Db) {
       id: string,
       data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] },
       context: IssueWriteContext = UNSPECIFIED_ISSUE_WRITE_CONTEXT,
+      /**
+       * Write only if the task is still in one of these statuses, else return
+       * null. For a server write decided on an earlier read: a status move made
+       * in between (a cancel, a hold that parks the task) stands instead of
+       * being overwritten. Checked against this read before any validation, so
+       * a moved task is skipped rather than failing a check meant for the task
+       * as the caller saw it, and again by the UPDATE itself.
+       */
+      options: { expectedStatuses?: readonly string[] } = {},
     ) => {
       const existing = await db
         .select()
@@ -1117,6 +1126,7 @@ export function issueService(db: Db) {
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
+      if (options.expectedStatuses && !options.expectedStatuses.includes(existing.status)) return null;
 
       const { labelIds: nextLabelIds, ...issueData } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
@@ -1240,6 +1250,7 @@ export function issueService(db: Db) {
         const updated = await writeIssueStatus(tx, {
           issueId: id,
           set: patch,
+          where: options.expectedStatuses ? inArray(issues.status, [...options.expectedStatuses]) : undefined,
           context,
           // The caller's own row records only the status it asked for; one this
           // method derived (a hold parking the task) is logged by the helper.

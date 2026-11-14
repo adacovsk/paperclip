@@ -3131,17 +3131,20 @@ export function heartbeatService(db: Db) {
       if (!agentHasPaperclipSkill && issueId) {
         const runningIssue = await issuesSvc.getById(issueId);
         if (runningIssue && runningIssue.status === "todo") {
-          await issuesSvc.update(
+          const advanced = await issuesSvc.update(
             issueId,
             { status: "in_progress" },
             {
               actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
               source: "no_skill_run_start",
             },
+            { expectedStatuses: ["todo"] },
           );
           logger.info(
             { issueId, agentId: agent.id, runId: run.id },
-            "auto-advanced task to in_progress for agent without paperclip skill",
+            advanced
+              ? "auto-advanced task to in_progress for agent without paperclip skill"
+              : "left task as it is for agent without paperclip skill: it moved off todo, or was deleted, before the run start wrote",
           );
         }
         if (runningIssue && runningIssue.status === "in_review") {
@@ -3620,19 +3623,26 @@ export function heartbeatService(db: Db) {
                 branchMerged,
               });
               if (nextStatus) {
-                await issuesSvc.update(
+                // Guarded on the status read before the git checks above, which
+                // take seconds: a status move made meanwhile (a cancel, a hold
+                // that parks the task) stands. Unguarded, this was the
+                // `cancelled -> in_review` race.
+                const promoted = await issuesSvc.update(
                   issueId,
                   { status: nextStatus },
                   {
                     actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
                     source: "no_skill_completion",
                   },
+                  { expectedStatuses: [existingIssue.status] },
                 );
                 logger.info(
-                  { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, nextStatus },
-                  nextStatus === "done"
-                    ? "auto-marked task done for agent without paperclip skill (branch merged into the base ref)"
-                    : "held task at in_review for agent without paperclip skill (not merged — awaiting next stage / re-dispatch)",
+                  { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, readStatus: existingIssue.status, nextStatus },
+                  !promoted
+                    ? "left task as it is for agent without paperclip skill: it moved, or was deleted, while the run's completion was checked"
+                    : nextStatus === "done"
+                      ? "auto-marked task done for agent without paperclip skill (branch merged into the base ref)"
+                      : "held task at in_review for agent without paperclip skill (not merged — awaiting next stage / re-dispatch)",
                 );
               } else if (existingIssue.status !== "in_review") {
                 logger.info(
