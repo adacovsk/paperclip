@@ -1560,6 +1560,42 @@ class DispatcherLaunch(unittest.TestCase):
     def test_the_architect_s_own_verify_without_a_result_is_not_touched(self):
         self.assertEqual(self.sweep("arch").writes, [])
 
+    def resumes(self, owner, rc=0):
+        launched = dispatch.VERIFY_DIR / "T-1.cloud.launched"
+        launched.write_text("1\n")
+        os.utime(launched, (time.time() - 3600,) * 2)
+        calls, saved = [], dispatch.subprocess.run
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd[1:])
+            return subprocess.CompletedProcess(cmd, rc, "", "")
+        dispatch.subprocess.run = fake_run
+        try:
+            api = self.sweep(owner)
+        finally:
+            dispatch.subprocess.run = saved
+        return api, [c for c in calls if c and c[0] == "resume"]
+
+    def test_the_architect_s_verify_with_a_dead_cloud_watcher_is_resumed(self):
+        api, calls = self.resumes("arch")
+        self.assertEqual(calls, [["resume", "T-1", "V-1"]])
+        self.assertEqual(api.writes, [])  # resumed in place, never reassigned
+
+    def test_a_failed_resume_leaves_the_architect_s_verify_where_it_is(self):
+        api, calls = self.resumes("arch", rc=4)
+        self.assertEqual(calls, [["resume", "T-1", "V-1"]])
+        self.assertEqual(api.writes, [])
+
+    def test_a_dispatcher_held_verify_whose_resume_failed_goes_to_the_architect(self):
+        api, calls = self.resumes("disp", rc=1)
+        self.assertEqual(calls, [["resume", "T-1", "V-1"]])
+        self.assertEqual(self.assignees(api), ["arch"])
+
+    def test_the_architect_s_verify_with_a_live_watcher_is_left_alone(self):
+        dispatch.watcher_alive = lambda parent: True
+        api, calls = self.resumes("arch")
+        self.assertEqual((calls, api.writes), ([], []))
+
 
 class CloudLaneFlag(unittest.TestCase):
     """The Dispatcher offloads under the Architect's switch, not its own env."""
