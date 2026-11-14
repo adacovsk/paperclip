@@ -23,6 +23,8 @@ whole instruction set. This script runs those rows directly:
   hold `planner`, blocked and unassigned   -> todo, assigned to the Planner (its wake)
   `todo`, no assignee, past the grace      -> backlog, so promotion dispatches it
   same work filed twice, copy unstarted     -> cancel it, re-point holds on it (dedupe.py)
+  GitHub issue's linked tasks all finished, -> close it with the landing record; roadmapped
+    no roadmap line names it                   and uncovered -> one Planner task (issue_links.py)
   base-red marker, main touched the break -> requeue the verify (requeue-base-red.sh)
   base-red markers from 2+ tasks on main    -> file one `ci-fix:` main-repair task,
                                              unless a live one already exists
@@ -88,6 +90,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import dedupe  # noqa: E402
+import issue_links  # noqa: E402
 import promote as promotion  # noqa: E402
 from unreachable import ApiUnreachable, skip_unreachable, transport_failure  # noqa: E402
 
@@ -101,6 +104,9 @@ HOLD_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_HOLD_SCAN_SECONDS", 300))
 # The dedupe sweep lists every live and recently done task; duplicates are filed at
 # Planner cadence, so a slower scan than the hold sweep loses nothing.
 DEDUPE_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_DEDUPE_SCAN_SECONDS", 1800))
+#: The issue-link sweep lists every open GitHub issue and every PR; an issue waiting
+#: half an hour to close costs nothing.
+ISSUE_LINKS_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_ISSUE_LINKS_SCAN_SECONDS", 1800))
 #: The Facilitator's mechanical checks (facilitator/mechanical.py) list every live
 #: task and every remote branch; a stall is measured in hours, so half-hourly is enough.
 FACILITATOR_SCAN_INTERVAL = float(os.environ.get("DISPATCHER_FACILITATOR_SCAN_SECONDS", 1800))
@@ -1505,6 +1511,8 @@ def sweep(api: Api, project: Path) -> None:
     # must move to the surviving copy first or the waiting task is freed early.
     with skip_unreachable("dedupe") as deduped:
         dedupe_duplicates(api, project)
+    with skip_unreachable("issue-links"):
+        sweep_issue_links(api, project, agents)
     # Before promotion, so a task parked here is a candidate this same sweep.
     with skip_unreachable("park-stranded-todos"):
         park_stranded_todos(api)
@@ -2472,6 +2480,15 @@ def dedupe_duplicates(api: Api, project: Path) -> int:
     cancelled = dedupe.sweep(api, project)
     save_state("dedupe.json", {"at": time.time()}, api.dry_run)
     return cancelled
+
+
+def sweep_issue_links(api: Api, project: Path, agents: dict) -> None:
+    """Close GitHub issues whose linked work finished; file uncovered ones (issue_links.py)."""
+    state = load_state("issue-links.json")
+    if time.time() - state.get("at", 0) < ISSUE_LINKS_SCAN_INTERVAL:
+        return
+    issue_links.sweep(api, project, agents.get("Planner"))
+    save_state("issue-links.json", {"at": time.time()}, api.dry_run)
 
 
 def stranded_todos(issues: list[dict], now: float, grace: float = STRANDED_TODO_GRACE) -> list[dict]:

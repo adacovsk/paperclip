@@ -3,6 +3,15 @@ import { patchSchema } from "./patch.js";
 import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 import { ISSUE_HOLD_BLOCKER_KINDS, ISSUE_HOLD_KINDS } from "../issue-hold.js";
 import { ISSUE_BUILD_LANES } from "../issue-build.js";
+import { GITHUB_REPO_PATTERN } from "../issue-github-link.js";
+
+/** One GitHub issue a task is linked to: `repo` is `owner/name`. */
+export const githubIssueRefSchema = z.object({
+  repo: z.string().trim().regex(GITHUB_REPO_PATTERN, "repo is owner/name"),
+  number: z.number().int().positive(),
+});
+
+export type GithubIssueRef = z.infer<typeof githubIssueRefSchema>;
 
 const executionWorkspaceStrategySchema = z
   .object({
@@ -68,6 +77,8 @@ export const createIssueSchema = z.object({
   ]).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
+  /** GitHub issues this task is filed from. Added to the links inherited from the parent. */
+  githubIssues: z.array(githubIssueRefSchema).max(20).optional(),
 });
 
 export type CreateIssue = z.infer<typeof createIssueSchema>;
@@ -119,7 +130,8 @@ export const reportIssueBuildSchema = z.object({
 
 export type ReportIssueBuild = z.infer<typeof reportIssueBuildSchema>;
 
-export const updateIssueSchema = patchSchema(createIssueSchema).extend({
+// Links change through /issues/:id/github-links, never as a PATCH field.
+export const updateIssueSchema = patchSchema(createIssueSchema.omit({ githubIssues: true })).extend({
   comment: z.string().min(1).optional(),
   hold: issueHoldInputSchema.nullable().optional(),
   reopen: z.boolean().optional(),

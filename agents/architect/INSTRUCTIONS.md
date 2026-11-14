@@ -653,8 +653,6 @@ than dropping the section, so its absence always means the section was skipped.>
 
 ## Task
 [<task-id>](${PAPERCLIP_PUBLIC_URL:-$PAPERCLIP_API_URL}/AA/issues/<task-id>)
-<Closes #<n>, or Refs #<n>, copied from the task body's "GitHub issue:" line.
-Omit the line when the task body has none — never derive a number from the task id.>
 
 ## Verification
 - cargo clippy --all-targets: <result>
@@ -712,14 +710,12 @@ invites would close whatever unrelated issue or PR happens to hold that number.
 Tracker tasks are not GitHub issues and no keyword links them; a plain link is
 the whole mechanism. Coordinator marks the task, not GitHub.
 
-**A real GitHub issue number is different, and it gets the keyword.** When the
-task body carries `GitHub issue: closes #<n>`, write `Closes #<n>`; for
-`GitHub issue: refs #<n>`, write `Refs #<n>`. The number came from the roadmap
-bullet's `(#<n>)`, so it names the issue the work was filed from, and GitHub
-closes it when the PR merges to `main` — the same moment the work counts as
-landed. Without it the issue stays open until a Planner fire prunes the bullet.
-`Refs` is for a slice that does not finish the issue: `Closes` there would close
-it on the first partial merge.
+**No GitHub issue keyword either.** A task's GitHub issues are links on the
+task, and the Dispatcher's issue-links sweep closes an issue once every task
+linked to it is finished and no roadmap line names it. A `Closes` keyword
+closed a sliced issue on its first partial merge, and the keyword was copied
+from a body line that most tasks never carried, so most issues were never
+closed at all.
 
 **The link is built from the environment, never a literal host.** A hardcoded
 `localhost` port is wrong for anyone whose instance is not on this machine, and

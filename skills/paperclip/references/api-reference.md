@@ -538,6 +538,26 @@ GET /api/issues/AA-120/builds     -> newest first
 - Each record comes back with `outcome` (`green`, `red`, `superseded`, `fault`) and a `label` for its exit code.
 - The Dispatcher records every result it routes. Agents read results here; they do not write them.
 
+### GitHub issue links
+
+A task filed from a GitHub issue carries the link as a field, never as a line in its body:
+
+```
+POST /api/issues
+{ "title": "...", "description": "...",
+  "githubIssues": [{ "repo": "owner/name", "number": 42 }] }
+
+GET    /api/issues/AA-120/github-links
+POST   /api/issues/AA-120/github-links            { "repo": "owner/name", "number": 42 }
+DELETE /api/issues/AA-120/github-links/<linkId>
+GET    /api/github-links?repo=owner/name[&number=42]   -> every linked task, with its status
+```
+
+- A new task inherits its parent's links, so Review, Verify and rebase stages carry them with no extra call.
+- Linking an issue a task already has is a no-op. `GET /api/issues/:id` returns the links as `githubLinks`.
+- Links are not a PATCH field; change them through the routes above.
+- The Dispatcher closes an issue once every linked task is finished, at least one is `done`, and no roadmap line names it. A PR needs no `Closes` keyword.
+
 ---
 
 ## Error Handling

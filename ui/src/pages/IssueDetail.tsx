@@ -51,6 +51,7 @@ import {
 } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
 import type { Agent, IssueAttachment, IssueBuildOutcome } from "@paperclipai/shared";
+import { githubIssueUrl } from "@paperclipai/shared";
 
 type CommentReassignment = {
   assigneeAgentId: string | null;
@@ -1043,6 +1044,23 @@ export function IssueDetail() {
           )}
         </TabsContent>
       </Tabs>
+
+      {issue.githubLinks && issue.githubLinks.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+          <span className="font-medium text-muted-foreground">GitHub issues</span>
+          {issue.githubLinks.map((link) => (
+            <a
+              key={link.id}
+              href={githubIssueUrl(link)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-xs underline-offset-2 hover:underline"
+            >
+              {link.repo}#{link.number}
+            </a>
+          ))}
+        </div>
+      )}
 
       {builds && builds.length > 0 && (
         <Collapsible
