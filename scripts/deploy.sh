@@ -13,6 +13,10 @@
 #   ui/** or a package it uses -> rebuild the UI (served from ui/dist)
 #   server/** or packages/**   -> restart the server; migrations apply on boot
 #
+# "Changed" means since that step last ran, recorded per step under
+# .git/paperclip-deploy/, not since this checkout's HEAD: a checkout pulled by
+# anything else still deploys what the pull brought in.
+#
 # Usage: deploy.sh [--wait MINUTES] [--restart] [--dry-run]
 #   --wait MINUTES  before restarting, wait up to MINUTES for no agent run to be
 #                   in flight. A run a restart kills is retried, but the retry
@@ -66,25 +70,50 @@ if [ "$before" = "$after" ]; then
   say "already at ${before:0:9}"
   changed=""
 else
-  changed="$(git diff --name-only "$before" "$after")"
-  say "${before:0:9} -> ${after:0:9}, $(printf '%s\n' "$changed" | wc -l) file(s)"
+  say "${before:0:9} -> ${after:0:9}, $(git diff --name-only "$before" "$after" | wc -l) file(s)"
   run git merge --quiet --ff-only "origin/$BRANCH"
 fi
 
-touches() { printf '%s\n' "$changed" | grep -qE "$1"; }
+# Each step is decided against the commit that step last ran at, never against
+# this checkout's HEAD before the pull. Anything can move this checkout (an
+# operator's `git pull`, another session's merge) without deploying it, and a
+# HEAD-to-origin diff then reads "nothing new" while the server, the UI build
+# or node_modules is still on older code. That happened twice in one day: once
+# with a schema migration left unapplied. A missing or unreadable stamp means
+# the state is unknown, so the step runs.
+STAMPS="$(git rev-parse --git-dir)/paperclip-deploy"
+stamp_of() { cat "$STAMPS/$1" 2>/dev/null || true; }
+stamp() { [ "$DRY" = 1 ] || { mkdir -p "$STAMPS" && echo "$after" > "$STAMPS/$1"; }; }
+# needs <step> <pattern>: true when the step must run to bring its output to $after.
+needs() {
+  local at; at="$(stamp_of "$1")"
+  [ "$at" = "$after" ] && return 1
+  if [ -z "$at" ] || ! git cat-file -e "$at^{commit}" 2>/dev/null; then
+    say "$1: no record of the commit it last ran at"
+    return 0
+  fi
+  if git diff --name-only "$at" "$after" | grep -qE "$2"; then
+    [ "$at" = "$before" ] || say "$1: last ran at ${at:0:9}, behind this checkout"
+    return 0
+  fi
+  stamp "$1"  # nothing it depends on changed since: its output is current
+  return 1
+}
 
-if touches '^pnpm-lock\.yaml$'; then
+if needs install '^pnpm-lock\.yaml$'; then
   say "dependencies changed"
   run pnpm install --frozen-lockfile
+  stamp install
 fi
 
-if touches '^(ui/|packages/(shared|adapter-utils|adapters)/)'; then
+if needs ui '^(ui/|packages/(shared|adapter-utils|adapters)/)'; then
   say "rebuilding the UI"
   run pnpm --filter @paperclipai/ui build
+  stamp ui
 fi
 
 restart=$FORCE_RESTART
-if touches '^(server/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'; then
+if needs server '^(server/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'; then
   restart=1
 fi
 if [ "$restart" = 0 ]; then
@@ -117,6 +146,7 @@ run systemctl --user restart "$UNIT"
 
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 5 "$API/api/health" >/dev/null 2>&1; then
+    stamp server
     say "server is up at $(git rev-parse --short HEAD)"
     exit 0
   fi
