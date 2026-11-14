@@ -1627,8 +1627,8 @@ def route_sentinels(api: Api, agents: dict, project: Path) -> None:
             try:
                 code, mtime = path.read_text().strip(), path.stat().st_mtime
             except OSError:
-                if mine and not seeding:
-                    tend_launch(api, agents, verify, parent)
+                if not seeding:
+                    tend_launch(api, agents, verify, parent, held=mine)
                 continue  # no result yet: the build is out, or the Architect has not launched it
             key = f"{code}|{mtime}"
             if state.get(verify["identifier"]) == key:
@@ -2120,8 +2120,15 @@ def start_landing(api: Api, verify: dict, parent: dict) -> bool:
     return True
 
 
-def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:
-    """A Dispatcher-held Verify with no result yet: its build must still be out.
+def tend_launch(api: Api, agents: dict, verify: dict, parent: str, held: bool = True) -> None:
+    """A Verify with no result yet: its build must still be out.
+
+    `held` is a Verify the Dispatcher holds. One the Architect holds gets only the
+    dead-watcher resume, the same mechanical step its own state machine takes, and
+    nothing that reassigns it. The Architect takes that step only when woken, and a
+    watcher that dies sends no wake: a reboot killed every watcher at once, their VMs
+    published green verdicts, and those sat unread on origin for hours, a main-repair
+    among them, until someone resumed them by hand.
 
     A live local build is left to finish: its chain writes the sentinel even when
     signalled. A recorded cloud launch whose watcher died is resumed, exactly as
@@ -2136,7 +2143,8 @@ def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:
         return  # a fresh log is a local launch the census may not see yet
     launched = VERIFY_DIR / f"{parent}.cloud.launched"
     if not launched.exists():
-        hand_to_architect(api, agents, verify, "no live local build and no cloud launch is recorded for it")
+        if held:
+            hand_to_architect(api, agents, verify, "no live local build and no cloud launch is recorded for it")
         return
     if watcher_alive(parent) or time.time() - launched.stat().st_mtime < 600:
         return
@@ -2154,8 +2162,12 @@ def tend_launch(api: Api, agents: dict, verify: dict, parent: str) -> None:
         resumed = False
     if resumed:
         print(f"verify  {verify['identifier']}: resumed its dead cloud watcher", flush=True)
-    else:
+    elif held:
         hand_to_architect(api, agents, verify, "its cloud watcher died and `cloud-verify.sh resume` failed")
+    else:
+        # Exit 4 dropped the launch record, so the next sweep leaves it alone; the
+        # Architect offloads afresh on its next wake, as its state machine says.
+        print(f"verify  {verify['identifier']}: resume of its dead cloud watcher did not take", flush=True)
 
 
 def requeue_base_red(dry_run: bool) -> None:
