@@ -34,7 +34,7 @@ import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } fr
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { noSkillRunOwnsTask, resolveNoSkillCompletionStatus } from "./no-skill-completion-status.js";
 import { branchAdvancedDuringRun, parseLsRemoteHead, shouldWakeNextMover } from "./stage-completion-wake.js";
-import { extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
+import { escalationBlockExpectedStatus, extractRunResultText, planNoSkillRunReport } from "./no-skill-run-report.js";
 import { renderOperatorNotes } from "./operator-notes.js";
 import { logActivity } from "./activity-log.js";
 import { resolveSubtaskWakeTarget, summarizeOpenChildren } from "./subtask-wake-target.js";
@@ -3622,12 +3622,13 @@ export function heartbeatService(db: Db) {
                 branchOnOrigin,
                 branchMerged,
               });
+              let promoted = false;
               if (nextStatus) {
                 // Guarded on the status read before the git checks above, which
                 // take seconds: a status move made meanwhile (a cancel, a hold
                 // that parks the task) stands. Unguarded, this was the
                 // `cancelled -> in_review` race.
-                const promoted = await issuesSvc.update(
+                promoted = !!(await issuesSvc.update(
                   issueId,
                   { status: nextStatus },
                   {
@@ -3635,7 +3636,7 @@ export function heartbeatService(db: Db) {
                     source: "no_skill_completion",
                   },
                   { expectedStatuses: [existingIssue.status] },
-                );
+                ));
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, readStatus: existingIssue.status, nextStatus },
                   !promoted
@@ -3670,6 +3671,10 @@ export function heartbeatService(db: Db) {
               // comment goes through the service, not the comment route, so it
               // fires no mention or assignee wakes of its own either.
               let escalatedToBlocked = false;
+              // The escalation reached the task as a comment, blocked or not: a
+              // block skipped because the task moved must still wake the next
+              // mover, or the operator handoff reaches nobody.
+              let escalationPosted = false;
               const runReport = planNoSkillRunReport({
                 role: agent.role,
                 currentStatus: existingIssue.status,
@@ -3695,17 +3700,31 @@ export function heartbeatService(db: Db) {
                       source: "run_result",
                     },
                   });
-                  if (runReport.block) {
-                    // The `issue.updated` row below is this transition's record.
-                    await issuesSvc.update(
+                  escalationPosted = runReport.block;
+                  const statusBeforeBlock = runReport.block
+                    ? escalationBlockExpectedStatus({ readStatus: existingIssue.status, nextStatus, promoted })
+                    : null;
+                  const blocked = statusBeforeBlock
+                    ? await issuesSvc.update(
                       issueId,
                       { status: "blocked" },
                       {
                         actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
                         source: "run_escalation",
+                        // The `issue.updated` row below is this transition's record.
                         statusLoggedByCaller: true,
                       },
+                      { expectedStatuses: [statusBeforeBlock] },
+                    )
+                    : null;
+                  if (runReport.block && !blocked) {
+                    // The escalation's comment is on the task; only the block is lost.
+                    logger.warn(
+                      { issueId, agentId: agent.id, runId: run.id, readStatus: existingIssue.status, reason: runReport.escalationReason },
+                      "did not block task on the Architect's escalation marker: it moved, or was deleted, during the run's completion",
                     );
+                  }
+                  if (blocked) {
                     escalatedToBlocked = true;
                     await logActivity(db, {
                       actorType: "agent",
@@ -3717,7 +3736,7 @@ export function heartbeatService(db: Db) {
                       entityId: issueId,
                       details: {
                         status: "blocked",
-                        _previous: { status: nextStatus ?? existingIssue.status },
+                        _previous: { status: statusBeforeBlock },
                         source: "run_escalation",
                         escalationReason: runReport.escalationReason,
                         identifier: existingIssue.identifier,
@@ -3731,7 +3750,7 @@ export function heartbeatService(db: Db) {
                 } catch (err: unknown) {
                   logger.warn(
                     { err, issueId, agentId: agent.id, runId: run.id },
-                    "failed to post the Architect's run result on its task",
+                    "failed to post the Architect's run result on its task, or to block it on the escalation marker",
                   );
                 }
               }
@@ -3750,7 +3769,7 @@ export function heartbeatService(db: Db) {
                 currentStatus: existingIssue.status,
                 nextStatus,
                 branchAdvanced,
-                escalated: escalatedToBlocked,
+                escalated: escalatedToBlocked || escalationPosted,
               });
               if (!wakeNextMover) {
                 logger.info(

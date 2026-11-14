@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveNoSkillCompletionStatus } from "../services/no-skill-completion-status.js";
 import {
   ARCHITECT_ESCALATION_MARKER,
+  escalationBlockExpectedStatus,
   RUN_REPORT_MAX_CHARS,
   extractRunResultText,
   findEscalationReason,
@@ -121,5 +122,29 @@ describe("extractRunResultText", () => {
     expect(extractRunResultText({ resultJson: { result: " final " }, summary: "s" })).toBe("final");
     expect(extractRunResultText({ resultJson: { result: 3 }, summary: " s " })).toBe("s");
     expect(extractRunResultText({ resultJson: null, summary: null })).toBe("");
+  });
+});
+
+describe("escalationBlockExpectedStatus", () => {
+  it("guards on the read status when the completion wrote nothing", () => {
+    expect(escalationBlockExpectedStatus({ readStatus: "in_review", nextStatus: null, promoted: false })).toBe("in_review");
+  });
+
+  it("guards on the promoted status when the promotion landed", () => {
+    expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "in_review", promoted: true })).toBe("in_review");
+  });
+
+  it("ignores promoted when the completion wrote nothing", () => {
+    expect(escalationBlockExpectedStatus({ readStatus: "in_review", nextStatus: null, promoted: true })).toBe("in_review");
+  });
+
+  it("never blocks merged work", () => {
+    expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "done", promoted: true })).toBeNull();
+    expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "done", promoted: false })).toBeNull();
+  });
+
+  it("skips the block when the promotion found the task moved", () => {
+    // The read status is known stale: guarding on it could only match an ABA return.
+    expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "in_review", promoted: false })).toBeNull();
   });
 });
