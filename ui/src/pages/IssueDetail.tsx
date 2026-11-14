@@ -170,8 +170,12 @@ function formatAction(action: string, details?: Record<string, unknown> | null):
           : "unassigned the issue",
       );
     }
-    if (details.title !== undefined) parts.push("updated the title");
-    if (details.description !== undefined) parts.push("updated the description");
+    // Past the server's activity-details retention window the bulky values are
+    // dropped and their key names listed under `_trimmed`, so a trimmed field
+    // still reads as changed.
+    const trimmed = Array.isArray(details._trimmed) ? details._trimmed : [];
+    if (details.title !== undefined || trimmed.includes("title")) parts.push("updated the title");
+    if (details.description !== undefined || trimmed.includes("description")) parts.push("updated the description");
 
     if (parts.length > 0) return parts.join(", ");
   }

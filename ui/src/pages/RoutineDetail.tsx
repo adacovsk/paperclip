@@ -990,9 +990,10 @@ export function RoutineDetail() {
                 <div key={event.id} className="flex items-center justify-between px-3 py-2 text-xs gap-4">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-medium text-foreground/90 shrink-0">{event.action.replaceAll(".", " ")}</span>
-                    {event.details && Object.keys(event.details).length > 0 && (
+                    {event.details && Object.keys(event.details).some((key) => key !== "_trimmed") && (
                       <span className="text-muted-foreground truncate">
-                        {Object.entries(event.details).slice(0, 3).map(([key, value], i) => (
+                        {/* `_trimmed` is the server's retention bookkeeping, not an event detail. */}
+                        {Object.entries(event.details).filter(([key]) => key !== "_trimmed").slice(0, 3).map(([key, value], i) => (
                           <span key={key}>
                             {i > 0 && <span className="mx-1 text-border">·</span>}
                             <span className="text-muted-foreground/70">{key.replaceAll("_", " ")}:</span>{" "}
