@@ -291,6 +291,9 @@ export async function writeIssueStatus(
     }
 
     // Stage 1: report, never refuse. The write above already stands.
+    // Stage 2 refuses here, after the guarded UPDATE matched, never at the
+    // pre-read: a write whose `where` guard would skip it must return null, not
+    // throw on a move it was never going to make.
     const flags = checkTransition({ from: previous.status, to: row.status, context, issue: previous });
     if (flags.length > 0) {
       logger.warn(

@@ -1112,8 +1112,11 @@ export function issueService(db: Db) {
       context: IssueWriteContext = UNSPECIFIED_ISSUE_WRITE_CONTEXT,
       /**
        * Write only if the task is still in one of these statuses, else return
-       * null. For a server write decided on an earlier read: a move made in
-       * between (a cancel, a hold) stands instead of being overwritten.
+       * null. For a server write decided on an earlier read: a status move made
+       * in between (a cancel, a hold that parks the task) stands instead of
+       * being overwritten. Checked against this read before any validation, so
+       * a moved task is skipped rather than failing a check meant for the task
+       * as the caller saw it, and again by the UPDATE itself.
        */
       options: { expectedStatuses?: readonly string[] } = {},
     ) => {
@@ -1123,6 +1126,7 @@ export function issueService(db: Db) {
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
+      if (options.expectedStatuses && !options.expectedStatuses.includes(existing.status)) return null;
 
       const { labelIds: nextLabelIds, ...issueData } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
