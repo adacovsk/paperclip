@@ -7,7 +7,11 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { issueService } from "../services/issues.ts";
-import { ISSUE_STATUS_CHANGED_ACTION, writeIssueStatus } from "../services/issue-status.ts";
+import {
+  ISSUE_STATUS_CHANGED_ACTION,
+  ISSUE_STATUS_TRANSITION_FLAGGED_ACTION,
+  writeIssueStatus,
+} from "../services/issue-status.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -89,6 +93,62 @@ describeEmbeddedPostgres("writeIssueStatus", () => {
       .where(eq(activityLog.entityId, issueId))
       .then((rows) => rows.filter((row) => row.action === ISSUE_STATUS_CHANGED_ACTION));
   }
+
+  function flagRows(issueId: string) {
+    return db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, issueId))
+      .then((rows) => rows.filter((row) => row.action === ISSUE_STATUS_TRANSITION_FLAGGED_ACTION));
+  }
+
+  it("lets a flagged move through and records the flag as the system", async () => {
+    const agentId = await seedAgent();
+    const runId = await seedRun(agentId);
+    const issueId = await seedIssue({ status: "cancelled" });
+
+    const result = await writeIssueStatus(db, {
+      issueId,
+      set: { status: "done" },
+      context: { actor: agentActor(agentId, runId), source: "issue_patch" },
+    });
+
+    expect(result?.row.status).toBe("done");
+    const flags = await flagRows(issueId);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ actorType: "system", actorId: "issue_status_table", agentId: null, runId: null });
+    expect(flags[0].details).toMatchObject({
+      status: "done",
+      _previous: { status: "cancelled" },
+      source: "issue_patch",
+      flags: ["rejected"],
+      actor: { actorType: "agent", actorId: agentId, runId },
+    });
+    expect(await statusRows(issueId)).toHaveLength(1);
+  });
+
+  it("flags even when the caller logs the transition itself", async () => {
+    const issueId = await seedIssue({ status: "done" });
+
+    await writeIssueStatus(db, {
+      issueId,
+      set: { status: "blocked" },
+      context: { actor: { actorType: "user", actorId: "local-operator" }, source: "issue_patch" },
+      skipActivity: true,
+    });
+
+    expect(await statusRows(issueId)).toHaveLength(0);
+    expect((await flagRows(issueId)).map((row) => (row.details as Record<string, unknown>).flags)).toEqual([["rejected"]]);
+  });
+
+  it("writes no flag for an allowed move", async () => {
+    const agentId = await seedAgent();
+    const issueId = await seedIssue({ assigneeAgentId: agentId });
+
+    await svc.checkout(issueId, agentId, ["todo"], null);
+
+    expect(await flagRows(issueId)).toHaveLength(0);
+  });
 
   it("logs one row with from, to, actor and source when status changes", async () => {
     const agentId = await seedAgent();

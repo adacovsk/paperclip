@@ -69,6 +69,125 @@ export function assertTransition(from: string, to: string) {
   }
 }
 
+export const ISSUE_STATUS_TRANSITION_FLAGGED_ACTION = "issue.status_transition_flagged";
+
+/**
+ * Who may make a status move: `allow` anyone; `operator` only a user actor
+ * (the operator's own sessions), never an agent or the server; `reject` nobody.
+ */
+export type TransitionRule = "allow" | "operator" | "reject";
+
+/**
+ * The status machine: every from -> to pair, ruled.
+ *
+ * Ruled pair by pair against eight months of logged transitions (46k rows).
+ * The table this replaced (SPEC §8.2) disallowed 25 of the 40 pairs actually
+ * in use -- 48% of all traffic, including the Architect's escalation
+ * (`in_review -> blocked`) and every hold the Dispatcher places -- so it was
+ * never enforceable. Every pair here is listed, `allow` included, so a pair
+ * nobody ruled on is a missing key the test catches, not a silent default.
+ *
+ * Two rules shape the rejects:
+ * - `backlog` is reachable only from work that has not started (`todo`,
+ *   `blocked`). Work that ran is finished, cancelled, or held, not re-planned.
+ * - `done` and `cancelled` are left only through `todo` (a reopen), plus
+ *   `in_review` for the operator. `cancelled -> done` was a race: a run already
+ *   working on a task finished seconds after the cancel and overwrote it.
+ *   `-> in_progress` from either would hold the status with no run behind it.
+ */
+export const ISSUE_STATUS_TRANSITIONS: Readonly<Record<string, Readonly<Record<string, TransitionRule>>>> = {
+  backlog: {
+    todo: "allow", in_progress: "allow", in_review: "operator", blocked: "allow", done: "allow", cancelled: "allow",
+  },
+  todo: {
+    backlog: "allow", in_progress: "allow", in_review: "allow", blocked: "allow", done: "allow", cancelled: "allow",
+  },
+  in_progress: {
+    backlog: "reject", todo: "allow", in_review: "allow", blocked: "allow", done: "allow", cancelled: "allow",
+  },
+  in_review: {
+    backlog: "reject", todo: "allow", in_progress: "allow", blocked: "allow", done: "allow", cancelled: "allow",
+  },
+  blocked: {
+    backlog: "allow", todo: "allow", in_progress: "allow", in_review: "allow", done: "allow", cancelled: "allow",
+  },
+  done: {
+    backlog: "reject", todo: "allow", in_progress: "reject", in_review: "operator", blocked: "reject", cancelled: "reject",
+  },
+  cancelled: {
+    backlog: "reject", todo: "allow", in_progress: "reject", in_review: "operator", blocked: "reject", done: "reject",
+  },
+};
+
+/** Titles the pipeline gives its stage subtasks; many predate `dedupeKey`. */
+const STAGE_TITLE_PREFIXES = ["Review:", "Verify:", "ci-fix:", "Rebase "];
+const STAGE_DEDUPE_KEYS = ["review", "verify", "rebase", "ci-fix"];
+/** The two writes that put a run behind `in_progress`. */
+const RUN_ENTRY_SOURCES: readonly IssueStatusSource[] = ["checkout", "no_skill_run_start"];
+
+export type TransitionFlagKind =
+  /** The table says only the operator may make this move. */
+  | "operator_only"
+  /** The table says nobody makes this move. */
+  | "rejected"
+  /** `todo -> in_review` on a task that is not a stage subtask: it skipped its Worker. */
+  | "review_without_work"
+  /** `blocked -> in_review` written by the server at a no-skill run's end: a held task overwritten. */
+  | "completion_over_hold"
+  /** Into `in_progress` other than by checkout or a run start: no run holds the task. */
+  | "in_progress_without_run";
+
+export interface TransitionFlag {
+  kind: TransitionFlagKind;
+  reason: string;
+}
+
+export interface CheckTransitionInput {
+  from: string;
+  to: string;
+  context: IssueWriteContext;
+  issue: { title: string; dedupeKey: string | null };
+}
+
+function isStageSubtask(issue: CheckTransitionInput["issue"]): boolean {
+  return (
+    (issue.dedupeKey !== null && STAGE_DEDUPE_KEYS.includes(issue.dedupeKey)) ||
+    STAGE_TITLE_PREFIXES.some((prefix) => issue.title.startsWith(prefix))
+  );
+}
+
+/**
+ * What is wrong with one transition, if anything: the table's ruling for the
+ * pair, plus three checks a from/to table cannot express. Pure.
+ *
+ * Stage 1 only reports these (`writeIssueStatus` logs them and lets the write
+ * through), so the callers that make a flagged move can be found and fixed
+ * before stage 2 turns `operator_only` and `rejected` into a 409.
+ */
+export function checkTransition({ from, to, context, issue }: CheckTransitionInput): TransitionFlag[] {
+  if (from === to) return [];
+  const flags: TransitionFlag[] = [];
+  const rule = ISSUE_STATUS_TRANSITIONS[from]?.[to];
+  const byOperator = context.actor.actorType === "user";
+
+  if (rule === "reject") {
+    flags.push({ kind: "rejected", reason: `${from} -> ${to} is not a permitted move` });
+  } else if (rule === "operator" && !byOperator) {
+    flags.push({ kind: "operator_only", reason: `${from} -> ${to} is the operator's move, made by ${context.actor.actorType}` });
+  }
+
+  if (from === "todo" && to === "in_review" && !isStageSubtask(issue)) {
+    flags.push({ kind: "review_without_work", reason: "reached review from todo without a Worker stage" });
+  }
+  if (from === "blocked" && to === "in_review" && context.source === "no_skill_completion") {
+    flags.push({ kind: "completion_over_hold", reason: "a run's completion moved a held task to review" });
+  }
+  if (to === "in_progress" && !RUN_ENTRY_SOURCES.includes(context.source)) {
+    flags.push({ kind: "in_progress_without_run", reason: `entered in_progress through ${context.source}, not a checkout` });
+  }
+  return flags;
+}
+
 type IssueRow = typeof issues.$inferSelect;
 // `status` is a plain value, never a SQL expression: the transition check and
 // the from/to log both need to know the target before the write.
@@ -127,7 +246,7 @@ export async function writeIssueStatus(
   // callers that are already inside one.
   return dbOrTx.transaction(async (tx) => {
     const previous = await tx
-      .select({ status: issues.status })
+      .select({ status: issues.status, title: issues.title, dedupeKey: issues.dedupeKey })
       .from(issues)
       .where(eq(issues.id, issueId))
       .for("update")
@@ -144,11 +263,11 @@ export async function writeIssueStatus(
       .then((rows) => rows[0] ?? null);
     if (!row) return null;
 
-    if (row.status !== previous.status && !input.skipActivity) {
-      // In its own savepoint: a log row that cannot be written (a run id with no
-      // heartbeat_runs row trips the foreign key) must not undo the transition,
-      // which was never conditional on being logged.
-      await tx.transaction((logTx) => logActivity(logTx as unknown as Db, {
+    if (row.status === previous.status) return { row, previousStatus: previous.status };
+    const transition = { issueId: row.id, from: previous.status, to: row.status, source: context.source };
+
+    if (!input.skipActivity) {
+      await logInSavepoint(tx, {
         actorType: context.actor.actorType,
         actorId: context.actor.actorId,
         agentId: context.actor.agentId ?? null,
@@ -162,14 +281,56 @@ export async function writeIssueStatus(
           source: context.source,
           identifier: row.identifier,
         },
-      })).catch((err: unknown) => {
-        logger.warn(
-          { err, issueId: row.id, from: previous.status, to: row.status, source: context.source },
-          "failed to log issue status transition",
-        );
-      });
+      }, transition, "failed to log issue status transition");
+    }
+
+    // Stage 1: report, never refuse. The write above already stands.
+    const flags = checkTransition({ from: previous.status, to: row.status, context, issue: previous });
+    if (flags.length > 0) {
+      logger.warn(
+        { ...transition, actor: context.actor, flags },
+        `issue status transition flagged: ${flags.map((flag) => flag.kind).join(", ")}`,
+      );
+      // Written as the system, not as the actor: the actor did not flag anything,
+      // and an agent-attributed row would count toward its participation and cost.
+      await logInSavepoint(tx, {
+        actorType: "system",
+        actorId: "issue_status_table",
+        agentId: null,
+        runId: null,
+        action: ISSUE_STATUS_TRANSITION_FLAGGED_ACTION,
+        entityType: "issue",
+        entityId: row.id,
+        details: {
+          status: row.status,
+          _previous: { status: previous.status },
+          source: context.source,
+          identifier: row.identifier,
+          flags: flags.map((flag) => flag.kind),
+          reasons: flags.map((flag) => flag.reason),
+          actor: context.actor,
+        },
+      }, transition, "failed to log flagged issue status transition");
     }
 
     return { row, previousStatus: previous.status };
   });
+}
+
+/**
+ * Write one activity row in its own savepoint. A log row that cannot be written
+ * (a run id with no heartbeat_runs row trips the foreign key) must not undo the
+ * transition, which was never conditional on being logged.
+ */
+async function logInSavepoint(
+  tx: Parameters<Parameters<DbOrTx["transaction"]>[0]>[0],
+  activity: Parameters<typeof logActivity>[1],
+  transition: Record<string, unknown>,
+  failure: string,
+): Promise<void> {
+  await tx
+    .transaction((logTx) => logActivity(logTx as unknown as Db, activity))
+    .catch((err: unknown) => {
+      logger.warn({ err, ...transition }, failure);
+    });
 }

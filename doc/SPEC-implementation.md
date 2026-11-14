@@ -364,14 +364,27 @@ Allowed transitions:
 
 ## 8.2 Issue Status
 
-Allowed transitions:
+Every write of `issues.status` goes through `writeIssueStatus` (`server/src/services/issue-status.ts`), which checks the move against `ISSUE_STATUS_TRANSITIONS`. Each from -> to pair is ruled one of:
 
-- `backlog -> todo | cancelled`
-- `todo -> in_progress | blocked | cancelled`
-- `in_progress -> in_review | blocked | done | cancelled`
-- `in_review -> in_progress | done | cancelled`
-- `blocked -> todo | in_progress | cancelled`
-- terminal: `done`, `cancelled`
+- **allow**: anyone (agents, the server, the operator)
+- **operator**: only a user actor; an agent or the server making it is a defect
+- **reject**: nobody
+
+| from ↓ · to → | backlog | todo | in_progress | in_review | blocked | done | cancelled |
+|---|---|---|---|---|---|---|---|
+| backlog | | allow | allow | operator | allow | allow | allow |
+| todo | allow | | allow | allow | allow | allow | allow |
+| in_progress | reject | allow | | allow | allow | allow | allow |
+| in_review | reject | allow | allow | | allow | allow | allow |
+| blocked | allow | allow | allow | allow | | allow | allow |
+| done | reject | allow | reject | operator | reject | | reject |
+| cancelled | reject | allow | reject | operator | reject | reject | |
+
+Two rules shape it: `backlog` is reached only from work that has not started, and `done`/`cancelled` are left only through a reopen to `todo` (or to `in_review` by the operator). Three checks the table cannot express are flagged too: `todo -> in_review` on a task that is not a stage subtask (`Review:`, `Verify:`, `ci-fix:`, `Rebase `), `blocked -> in_review` written by a no-skill run's completion, and entering `in_progress` other than by checkout or a run start.
+
+The table was ruled pair by pair against the logged history. The list it replaced allowed 15 pairs and called `done`/`cancelled` terminal; it disallowed 48% of real transitions, so it was never enforced.
+
+**Enforcement is report-only for now.** A flagged move still happens; it writes an `issue.status_transition_flagged` activity row (as the system, with the actor, source and flag kinds in `details`) and a server warning. Once the callers making flagged moves are fixed, `reject` and `operator` become a `409`.
 
 Side effects:
 
