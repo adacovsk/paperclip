@@ -8,6 +8,7 @@ const ACTION_VERBS: Record<string, string> = {
   "issue.created": "created",
   "issue.updated": "updated",
   "issue.status_changed": "changed status of",
+  "issue.status_transition_flagged": "flagged a status change on",
   "issue.checked_out": "checked out",
   "issue.released": "released",
   "issue.comment_added": "commented on",

@@ -61,6 +61,7 @@ const ACTION_LABELS: Record<string, string> = {
   "issue.created": "created the issue",
   "issue.updated": "updated the issue",
   "issue.status_changed": "changed the status",
+  "issue.status_transition_flagged": "flagged a status change the transition table does not permit",
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
   "issue.comment_added": "added a comment",
