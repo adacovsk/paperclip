@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import datetime
@@ -57,6 +58,7 @@ BRANCH_SCAN_SECONDS = float(os.environ.get("FACILITATOR_BRANCH_SCAN_SECONDS", 6 
 #: younger branches are the normal mid-flight queue, which only the Architect pushes.
 STRANDED_AGE = float(os.environ.get("FACILITATOR_STRANDED_AGE_SECONDS", 14 * 24 * 3600))
 STRANDED_GLOB = "refs/heads/task/AA-*"
+TASK_ID = re.compile(r"\b([A-Z]+-\d+)\b")
 #: reap.py's cadence. It runs detached: its first pass over a long backlog takes
 #: longer than the Dispatcher's run is allowed to.
 REAP_SCAN_SECONDS = float(os.environ.get("FACILITATOR_REAP_SCAN_SECONDS", 6 * 3600))
@@ -86,6 +88,12 @@ STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
 
 def ts(stamp: str) -> float:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+
+
+def task_of(ref: str) -> str | None:
+    """The task identifier a branch name carries, as reap.py reads it."""
+    found = TASK_ID.search(ref)
+    return found.group(1) if found else None
 
 
 def is_stage(issue: dict) -> bool:
@@ -526,13 +534,23 @@ def merged_branches(project: Path, open_heads: set[str], dry_run: bool, now: flo
 # --------------------------------------------------------------------------- §7b stranded local branches
 
 
-def stranded_branches(project: Path, dry_run: bool, now: float) -> list[dict]:
-    """Push every local task branch whose commits exist only on this disk.
+def stranded_branches(project: Path, dry_run: bool, now: float,
+                      finished: frozenset[str] = frozenset()) -> list[dict]:
+    """Push every local task branch of a live task whose commits exist only on this disk.
 
     Pushing is the remedy the project guard names, and the only non-destructive one:
     the commits gain a second copy and nothing is rewritten, so unlike §7's deletion it
     needs no opt-in. `--no-verify` because the pre-push hook is a landing gate, and this
     push lands nothing; it only stops the work existing on one disk.
+
+    `finished` names the tasks that are `done`/`cancelled`, whose branches are skipped.
+    Such a branch is superseded work (§7b condition 3), and its copies are reap.py's
+    to manage: reap archives a clean one on origin for REMOTE_GRACE after the task
+    finished, then deletes the remote branch. Pushing it here regardless undid that
+    deletion every cycle: a branch idle 14 days under a task finished more than 7 days
+    ago was pushed by this sweep and deleted by reap, six-hourly, and the report said
+    `pushed: true` for a branch that had no remote copy. Reap keeps the local branch
+    while its worktree is dirty, and reports it as KEPT for the operator.
 
     Run after merged_branches' fetch, so `origin/<branch>` and `origin/main` are current.
     """
@@ -542,6 +560,8 @@ def stranded_branches(project: Path, dry_run: bool, now: float) -> list[dict]:
     for line in out.splitlines():
         branch, _, at = line.partition("\t")
         if not at or now - float(at) < STRANDED_AGE:
+            continue
+        if task_of(branch) in finished:
             continue
         if git(project, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}",
                check=False).returncode == 0:
@@ -649,7 +669,8 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     previous = load(REPORT_FILE)
     if now - previous.get("branchesAt", 0) >= BRANCH_SCAN_SECONDS:
         merged, branches_at = merged_branches(project, open_heads, api.dry_run, now), now
-        stranded = stranded_branches(project, api.dry_run, now)
+        closed = frozenset(i["identifier"] for i in api.issues(status="done,cancelled") or [])
+        stranded = stranded_branches(project, api.dry_run, now, closed)
         main_nightly = nightly(project, now)
     else:
         merged, branches_at = previous.get("branchesOnMain", []), previous["branchesAt"]

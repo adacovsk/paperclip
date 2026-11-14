@@ -465,6 +465,74 @@ class Stranded(unittest.TestCase):
             self.assertIn("refs/heads/task/AA-1", heads)
             self.assertNotIn("refs/heads/other", heads)  # outside the task namespace
 
+    def test_a_finished_tasks_branch_is_never_pushed(self):
+        # reap.py deletes a finished task's remote branch REMOTE_GRACE after it
+        # finished; pushing it back here would undo that every cycle.
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, work = Path(tmp, "origin.git"), Path(tmp, "work")
+
+            def g(*args):
+                return subprocess.run(["git", *args], cwd=work, check=True, capture_output=True, text=True).stdout
+
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True, capture_output=True)
+            g("config", "user.email", "t@t"), g("config", "user.name", "t")
+            g("checkout", "-q", "-b", "main")
+            Path(work, "a").write_text("a\n"), g("add", "a"), g("commit", "-qm", "a")
+            g("push", "-q", "origin", "main")
+            for name in ("task/AA-10", "task/AA-11", "task/AA-12"):
+                g("checkout", "-q", "-b", name, "main")
+                Path(work, name.replace("/", "_")).write_text("x\n"), g("add", "-A"), g("commit", "-qm", name)
+            g("checkout", "-q", "main"), g("fetch", "-q", "origin")
+
+            later = NOW + 365 * 24 * HOUR
+            closed = frozenset({"AA-11", "AA-12"})
+            self.assertEqual(m.stranded_branches(work, True, later, closed),
+                             [{"branch": "task/AA-10", "ahead": 1, "pushed": True}])
+            m.stranded_branches(work, False, later, closed)
+            heads = g("ls-remote", "--heads", "origin")
+            self.assertIn("refs/heads/task/AA-10", heads)
+            self.assertNotIn("refs/heads/task/AA-11", heads)
+            self.assertNotIn("refs/heads/task/AA-12", heads)
+
+    def test_task_of_reads_the_identifier_reap_reads(self):
+        self.assertEqual(m.task_of("task/AA-18"), "AA-18")
+        self.assertEqual(m.task_of("task/AA-18-retry"), "AA-18")
+        self.assertIsNone(m.task_of("task/none"))
+
+
+class SweepStranded(unittest.TestCase):
+    """The sweep hands stranded_branches the done/cancelled tasks it read."""
+
+    class Api:
+        dry_run = True
+
+        def __init__(self):
+            self.queries = []
+
+        def get(self, path):
+            return []
+
+        def issues(self, **query):
+            self.queries.append(query.get("status"))
+            if query.get("status") == "done,cancelled":
+                return [{"identifier": "AA-1"}, {"identifier": "AA-2"}]
+            return []
+
+    def test_closed_tasks_reach_the_push(self):
+        seen = {}
+        saved = (m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE)
+        try:
+            m.merged_branches = lambda *a, **k: []
+            m.nightly = lambda *a, **k: {}
+            m.stranded_branches = lambda project, dry_run, now, finished=frozenset(): seen.setdefault("f", finished) and []
+            with tempfile.TemporaryDirectory() as tmp:
+                m.REPORT_FILE = Path(tmp, "none.json")
+                m.sweep(self.Api(), Path(tmp), set(), [])
+        finally:
+            m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE = saved
+        self.assertEqual(seen["f"], frozenset({"AA-1", "AA-2"}))
+
 
 if __name__ == "__main__":
     unittest.main()
