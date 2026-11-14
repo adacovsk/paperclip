@@ -282,6 +282,7 @@ class SupersededStages(unittest.TestCase):
                 self.writes.append(body)
 
             set_status = dispatch.Api.set_status
+            overtaken = dispatch.Api.overtaken
 
         api = Recorder()
         review = child("Review: T-1", "blocked", "1", "review")
@@ -813,6 +814,49 @@ class MergeMainRepairs(unittest.TestCase):
     def test_a_refused_merge_writes_nothing(self):
         api, run = self.run_merge(self.issue(), rc=1)
         api.write.assert_not_called()
+
+
+class SetStatusOvertaken(unittest.TestCase):
+    """A status write the issue closed out from under is skipped, not applied or retried."""
+
+    def api(self, current: str, refuse: bool = False):
+        api = dispatch.Api(dry_run=False)
+        api.writes = []
+        api.get = lambda path: {"status": current}
+
+        def write(method, path, body, what):
+            api.writes.append((method, body))
+            if refuse:
+                raise urllib.error.HTTPError(path, 409, "Conflict", {}, None)
+        api.write = write
+        return api
+
+    VERIFY = {"id": "v1", "identifier": "AA-1", "status": "in_review"}
+
+    def test_a_verify_cancelled_since_the_read_is_not_closed_as_done(self):
+        api = self.api(current="cancelled")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(api.set_status(self.VERIFY, {"status": "done"}, "Verify complete", "verify AA-1: close"))
+        self.assertEqual(api.writes, [])
+
+    def test_an_issue_still_as_read_is_written(self):
+        api = self.api(current="in_review")
+        self.assertTrue(api.set_status(self.VERIFY, {"status": "done"}, "Verify complete", "verify AA-1: close"))
+        self.assertEqual([m for m, _ in api.writes], ["PATCH"])
+
+    def test_closing_an_issue_already_closed_when_read_is_not_skipped(self):
+        api = self.api(current="done")
+        done = {**self.VERIFY, "status": "done"}
+        self.assertTrue(api.set_status(done, {"status": "todo"}, "Reopen", "reopen AA-1"))
+
+    def test_a_refused_transition_on_a_closed_issue_is_not_retried(self):
+        api = self.api(current="in_review", refuse=True)
+        # Open when the write is attempted; cancelled by the time the 409 comes back.
+        answers = iter([{"status": "in_review"}, {"status": "cancelled"}])
+        api.get = lambda path: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(api.set_status(self.VERIFY, {"status": "done"}, "Verify complete", "verify AA-1: close"))
+        self.assertEqual([m for m, _ in api.writes], ["PATCH"])
 
 
 class StartPublish(unittest.TestCase):

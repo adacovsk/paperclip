@@ -115,6 +115,7 @@ STRANDED_TODO_GRACE = float(os.environ.get("DISPATCHER_STRANDED_TODO_SECONDS", 6
 STAGE_KEYS = {"review": "review", "verify": "verify", "ci-fix": "verify", "rebase": "rebase"}
 STAGE_PREFIXES = {"Review:": "review", "Verify:": "verify", "ci-fix:": "verify", "Rebase ": "rebase"}
 OPEN = {"backlog", "todo", "in_progress", "in_review", "blocked"}
+CLOSED = {"done", "cancelled"}
 DATA_PATH = re.compile(r"^assets/(data|locales)/")
 #: Paths cargo builds or tests: Rust, its manifests, and the data unit tests load.
 CARGO_PATH = re.compile(r"(\.rs$|(^|/)Cargo\.(toml|lock)$|^assets/(data|locales)/)")
@@ -800,13 +801,39 @@ class Api:
         qs = "&".join(f"{k}={v}" for k, v in query.items())
         return self.get(f"/issues?{qs}")
 
-    def set_status(self, issue: dict, body: dict, comment: str, what: str):
-        """Status and its reason in one call; on error, comment first, then PATCH."""
+    def overtaken(self, issue: dict) -> str | None:
+        """The closed status `issue` reached since the sweep read it, else None.
+
+        A sweep reads its issues once and writes to them minutes later. A task
+        cancelled in between was then closed as done anyway: a cancel by the
+        Coordinator, a Verify close by the Dispatcher seconds later, and the cancel
+        was lost. The server's transition table now flags `cancelled -> done`, and
+        will refuse it, so a write the status has moved out from under is skipped.
+        """
+        current = self.get(f"/issues/{issue['id']}")
+        status = current.get("status") if isinstance(current, dict) else None
+        return status if status in CLOSED and status != issue.get("status") else None
+
+    def set_status(self, issue: dict, body: dict, comment: str, what: str) -> bool:
+        """Status and its reason in one call; on error, comment first, then PATCH.
+
+        False when the write was skipped because the issue closed since it was
+        read, or refused (409) because it had.
+        """
+        if "status" in body and (closed := self.overtaken(issue)):
+            print(f"  skip {what}: {issue['identifier']} is {closed} now", flush=True)
+            return False
         try:
             self.write("PATCH", f"/issues/{issue['id']}", {**body, "comment": comment}, what)
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as exc:
+            # A refused transition is not a write that failed for its comment: the
+            # retry below would be refused the same way and abort the sweep.
+            if exc.code == 409 and "status" in body and (closed := self.overtaken(issue)):
+                print(f"  skip {what}: {issue['identifier']} is {closed} now (409)", flush=True)
+                return False
             self.write("POST", f"/issues/{issue['id']}/comments", {"body": comment}, f"  comment on {issue['identifier']}")
             self.write("PATCH", f"/issues/{issue['id']}", body, f"  retry {what}")
+        return True
 
 
     def record_build(self, task_id: str, build: dict, what: str):
