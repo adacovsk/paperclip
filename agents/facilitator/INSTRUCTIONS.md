@@ -84,11 +84,12 @@ Note `usageJson`/`resultJson` are null while a run is `running` and on `cancelle
 
 ### 3a. Status-move flags
 
-**Read `statusFlags` in the report**: the last 24h of status moves the server's transition table flagged (`doc/SPEC-implementation.md` §8.2), counted `byKind`, `byPair` and `byCaller`. A caller is the actor and the call site, `Coordinator via issue_patch` or `system via unspecified`. The table reports these moves and does not refuse them yet. Each caller still making one is a fix owed before refusal is turned on, and a run of quiet sweeps is the evidence it can be.
+**Read `statusFlags` in the report**: the last 24h of status moves the server's transition table flagged (`doc/SPEC-implementation.md` §8.2), counted `byKind` and `byPair`, and split by who owns the fix. The table reports these moves and does not refuse them yet. Each caller still making one is a fix owed before refusal is turned on, and a run of quiet sweeps is the evidence it can be.
 
-- **An agent `via issue_patch`** is that agent's instructions. File it to the Planner under `[class:status-move-<agent>]`, naming the pairs and counts, unless the move is one the skill's *Status Moves* section allows the agent.
-- **`system`, or any other `via`** (`no_skill_completion`, `run_escalation`, `checkout`, `release`, `unspecified`, …) is a server write. File it on an `operator` hold under `[class:status-move-server]`: only a paperclip PR fixes it.
-- **`user`** is the operator's own move, and `operator`-ruled pairs are theirs to make. Report it; do not file it.
+- **`agents`** (`Coordinator via issue_patch`, `Planner via comment_reopen`, …) is an agent's own API call, so the fix is its instructions. File one `[class:status-move-agent]` filing to the Planner; each occurrence's comment names the agent, the pairs and the counts.
+- **`server`** is a write the server makes on its own, keyed by call site, even when it records a run's agent as the actor. File it under `[class:status-move-server]` on an `operator` hold: only a paperclip PR fixes it.
+- **`operator`** is the operator's own moves. Report them; do not file them.
+- **`truncated: true`** means the read hit its row cap, so the counts are a floor. Say so.
 - **`error` set** means the flags were not read. Report step 3a as not evaluated, never as a quiet window.
 
 ### 4. Comment-without-PATCH
@@ -190,7 +191,7 @@ Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fail
 `agents/facilitator/reap.py` <!-- privacy-ok: paperclip's own script, not a project file --> clears what a task leaves behind once it is `done` or `cancelled`. The mechanical sweep launches it detached every 6h. It acts only when `REAP_ACT=1` is set in the Dispatcher's environment; without that, it writes what it would do to `reapLog` in the report. It covers local worktrees and branches (a task branch whose commits exist nowhere else is pushed first), `cloud-verify/*` local and remote refs, remote task branches 7 days after the task finished, merged and clean `op/*` branches in both repos, completed cloud sessions, verify cache files, and cloud watchers still waiting on a finished task. It never touches a live task, an open PR, a running session or a dirty tree. Your part: read `reapLog`. Its `KEPT` lines are what it refused to delete, mostly worktrees with uncommitted changes. Report them, because only the operator can decide what that work is. Also report any `FAIL` or `SKIP` line.
 ### 8. Report
 
-Comment one summary on the routine task: main's nightly check first when it is red or stale (§1a), queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), routine firings re-fired or superseded (§2a), the run digest's failures by cause (§3), `statusFlags.total` with its callers, or "not evaluated" (§3a), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
+Comment one summary on the routine task: main's nightly check first when it is red or stale (§1a), queue depth delta per agent, blocked tasks (with their specific blocker) and which were cleared, missed-wake stalls re-dispatched (§2a, from the report's `toggled`, plus any you toggled by hand), routine firings re-fired or superseded (§2a), the run digest's failures by cause (§3), `statusFlags.total` with its `agents` and `server` callers, or "not evaluated" (§3a), stuck tasks cleared, deletable branches (§7, `branchesOnMain`), followups filed. A report `at` older than ~2h is a finding in its own right. Or `Pipeline healthy` if nothing.
 
 ## Filing
 
