@@ -32,6 +32,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "paperclip-dispatcher"
 REPORT_FILE = STATE_DIR / "facilitator.json"
@@ -59,6 +60,7 @@ BRANCH_SCAN_SECONDS = float(os.environ.get("FACILITATOR_BRANCH_SCAN_SECONDS", 6 
 STRANDED_AGE = float(os.environ.get("FACILITATOR_STRANDED_AGE_SECONDS", 14 * 24 * 3600))
 STRANDED_GLOB = "refs/heads/task/AA-*"
 TASK_ID = re.compile(r"\b([A-Z]+-\d+)\b")
+FINISHED = frozenset({"done", "cancelled"})
 #: reap.py's cadence. It runs detached: its first pass over a long backlog takes
 #: longer than the Dispatcher's run is allowed to.
 REAP_SCAN_SECONDS = float(os.environ.get("FACILITATOR_REAP_SCAN_SECONDS", 6 * 3600))
@@ -94,6 +96,19 @@ def task_of(ref: str) -> str | None:
     """The task identifier a branch name carries, as reap.py reads it."""
     found = TASK_ID.search(ref)
     return found.group(1) if found else None
+
+
+def task_status(api, ident: str) -> str | None:
+    """`ident`'s status, or None when no such task exists. Any other failure raises."""
+    try:
+        issue = api.get(f"/issues/{ident}")
+    except Exception as exc:
+        if getattr(exc, "code", None) == 404:
+            return None
+        raise
+    if not isinstance(issue, dict) or "status" not in issue:
+        raise ValueError(f"/issues/{ident} answered without a status")
+    return issue["status"]
 
 
 def is_stage(issue: dict) -> bool:
@@ -535,7 +550,7 @@ def merged_branches(project: Path, open_heads: set[str], dry_run: bool, now: flo
 
 
 def stranded_branches(project: Path, dry_run: bool, now: float,
-                      finished: frozenset[str] = frozenset()) -> list[dict]:
+                      status_of: Callable[[str], str | None] = lambda _: None) -> list[dict]:
     """Push every local task branch of a live task whose commits exist only on this disk.
 
     Pushing is the remedy the project guard names, and the only non-destructive one:
@@ -543,7 +558,14 @@ def stranded_branches(project: Path, dry_run: bool, now: float,
     needs no opt-in. `--no-verify` because the pre-push hook is a landing gate, and this
     push lands nothing; it only stops the work existing on one disk.
 
-    `finished` names the tasks that are `done`/`cancelled`, whose branches are skipped.
+    `status_of` reads a task's status, and a branch whose task is `done`/`cancelled` is
+    skipped. It is asked only about branches that would otherwise be pushed, a handful a
+    cycle, never for the whole closed-task list: that list is over ten thousand issues
+    and tens of megabytes, inside the Dispatcher's time budget. A task whose status
+    cannot be read is not pushed this cycle and is reported `pushed: false`; pushing it
+    could re-create a branch reap deleted, and waiting costs one cycle. A branch with no
+    task (`None`) is pushed: nothing else owns its copies.
+
     Such a branch is superseded work (§7b condition 3), and its copies are reap.py's
     to manage: reap archives a clean one on origin for REMOTE_GRACE after the task
     finished, then deletes the remote branch. Pushing it here regardless undid that
@@ -561,14 +583,21 @@ def stranded_branches(project: Path, dry_run: bool, now: float,
         branch, _, at = line.partition("\t")
         if not at or now - float(at) < STRANDED_AGE:
             continue
-        if task_of(branch) in finished:
-            continue
         if git(project, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}",
                check=False).returncode == 0:
             continue
         # `git cherry`, so a branch whose patches landed under other SHAs is not work.
         ahead = git(project, "cherry", "origin/main", branch, check=False).stdout.count("+ ")
         if not ahead:
+            continue
+        ident = task_of(branch)
+        try:
+            status = status_of(ident) if ident else None
+        except Exception as exc:  # one unreadable task skips one branch, not the sweep
+            print(f"branch  {branch}: not pushed, task status unread: {exc}", flush=True)
+            found.append({"branch": branch, "ahead": ahead, "pushed": False, "note": "task status unread"})
+            continue
+        if status in FINISHED:
             continue
         print(("DRY " if dry_run else "") + f"branch  {branch}: push, {ahead} commit(s) only here", flush=True)
         pushed = dry_run or git(project, "push", "--quiet", "--no-verify", "origin", branch,
@@ -669,8 +698,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     previous = load(REPORT_FILE)
     if now - previous.get("branchesAt", 0) >= BRANCH_SCAN_SECONDS:
         merged, branches_at = merged_branches(project, open_heads, api.dry_run, now), now
-        closed = frozenset(i["identifier"] for i in api.issues(status="done,cancelled") or [])
-        stranded = stranded_branches(project, api.dry_run, now, closed)
+        stranded = stranded_branches(project, api.dry_run, now, lambda ident: task_status(api, ident))
         main_nightly = nightly(project, now)
     else:
         merged, branches_at = previous.get("branchesOnMain", []), previous["branchesAt"]
