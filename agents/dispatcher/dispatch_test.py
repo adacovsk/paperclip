@@ -815,6 +815,41 @@ class MergeMainRepairs(unittest.TestCase):
         api.write.assert_not_called()
 
 
+class StartPublish(unittest.TestCase):
+    """The draft PR opens when the Worker's stage ends, detached from the sweep."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.object(dispatch, "VERIFY_DIR", Path(self.tmp.name))
+        patcher.start(); self.addCleanup(patcher.stop)
+        env = mock.patch.dict(os.environ, {"PAPERCLIP_PROJECT": "/proj"})
+        env.start(); self.addCleanup(env.stop)
+
+    def test_dry_run_starts_nothing(self):
+        with mock.patch.object(dispatch.subprocess, "Popen") as popen:
+            dispatch.start_publish(mock.Mock(dry_run=True), {"identifier": "AA-1"})
+        popen.assert_not_called()
+
+    def test_starts_publish_draft_for_the_task(self):
+        with mock.patch.object(dispatch.subprocess, "Popen", return_value=mock.Mock(pid=4242)) as popen:
+            dispatch.start_publish(mock.Mock(dry_run=False), {"identifier": "AA-1"})
+        argv = popen.call_args.args[0]
+        self.assertTrue(argv[0].endswith("architect/publish-draft.sh"))
+        self.assertEqual(argv[1:], ["AA-1"])
+        self.assertEqual(popen.call_args.kwargs["env"]["PAPERCLIP_PROJECT"], "/proj")
+        self.assertEqual((Path(self.tmp.name) / "AA-1.publish.pid").read_text(), "4242")
+
+    def test_a_running_publish_is_not_started_twice(self):
+        (Path(self.tmp.name) / "AA-1.publish.pid").write_text("4242")
+        real_read = Path.read_bytes
+        def read_bytes(path):
+            return b"bash\0publish-draft.sh\0AA-1" if str(path) == "/proc/4242/cmdline" else real_read(path)
+        with mock.patch.object(Path, "read_bytes", read_bytes), \
+                mock.patch.object(dispatch.subprocess, "Popen") as popen:
+            dispatch.start_publish(mock.Mock(dry_run=False), {"identifier": "AA-1"})
+        popen.assert_not_called()
+
 class VerifyLanded(unittest.TestCase):
     VERIFY = {"status": "in_review", "createdAt": "2026-01-01T00:00:00.000Z"}
     HEAD = "b" * 40

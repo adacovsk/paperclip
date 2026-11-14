@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Open the draft PR for a task branch the moment its verify is launched.
+# Open the draft PR for a task branch: when the Worker's stage ends
+# (publish-draft.sh, from the Dispatcher), and again when its verify launches.
 #
 # WHY. A PR used to open only at landing, after a green build, so the work was
 # invisible while it built and a conflict with main surfaced only when landing
@@ -9,8 +10,8 @@
 # out, so a draft never closes the Verify. land.sh gives the draft its real body
 # and marks it ready on the green build.
 #
-# Best effort by design. The caller has already pushed the branch and launched
-# the build; a draft that fails to open costs only its early visibility, because
+# Best effort by design. The caller has already pushed the branch (and, from
+# the cloud lane, launched the build); a draft that fails to open costs only its early visibility, because
 # land.sh opens the PR itself when none exists. So every failure exits 0 with a
 # line saying why, and the build is never held for it.
 #
