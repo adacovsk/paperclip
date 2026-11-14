@@ -106,3 +106,25 @@ export function planNoSkillRunReport(input: {
     escalationReason,
   };
 }
+
+/**
+ * The status an escalation's `blocked` write must still find the task in, or
+ * null to skip the block.
+ *
+ * The block is decided on the status read before the run's git checks, which
+ * take seconds; a task cancelled or moved in that window keeps its status
+ * (unguarded, the block un-cancelled it). When the completion attempted a
+ * promotion and its guard found the task moved, the read status is already
+ * known stale, so the block is skipped rather than guarded on it.
+ */
+export function escalationBlockExpectedStatus(input: {
+  /** The task's status read when the run finished, before the git checks. */
+  readStatus: string;
+  /** What `resolveNoSkillCompletionStatus` decided to write, or null. */
+  nextStatus: "done" | "in_review" | null;
+  /** Whether that write landed; ignored when `nextStatus` is null. */
+  promoted: boolean;
+}): string | null {
+  if (input.nextStatus === null) return input.readStatus;
+  return input.promoted ? input.nextStatus : null;
+}
