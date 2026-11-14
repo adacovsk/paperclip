@@ -3671,6 +3671,10 @@ export function heartbeatService(db: Db) {
               // comment goes through the service, not the comment route, so it
               // fires no mention or assignee wakes of its own either.
               let escalatedToBlocked = false;
+              // The escalation reached the task as a comment, blocked or not: a
+              // block skipped because the task moved must still wake the next
+              // mover, or the operator handoff reaches nobody.
+              let escalationPosted = false;
               const runReport = planNoSkillRunReport({
                 role: agent.role,
                 currentStatus: existingIssue.status,
@@ -3696,6 +3700,7 @@ export function heartbeatService(db: Db) {
                       source: "run_result",
                     },
                   });
+                  escalationPosted = runReport.block;
                   const statusBeforeBlock = runReport.block
                     ? escalationBlockExpectedStatus({ readStatus: existingIssue.status, nextStatus, promoted })
                     : null;
@@ -3745,7 +3750,7 @@ export function heartbeatService(db: Db) {
                 } catch (err: unknown) {
                   logger.warn(
                     { err, issueId, agentId: agent.id, runId: run.id },
-                    "failed to post the Architect's run result on its task",
+                    "failed to post the Architect's run result on its task, or to block it on the escalation marker",
                   );
                 }
               }
@@ -3764,7 +3769,7 @@ export function heartbeatService(db: Db) {
                 currentStatus: existingIssue.status,
                 nextStatus,
                 branchAdvanced,
-                escalated: escalatedToBlocked,
+                escalated: escalatedToBlocked || escalationPosted,
               });
               if (!wakeNextMover) {
                 logger.info(

@@ -23,9 +23,10 @@ export function shouldWakeNextMover(input: {
    */
   branchAdvanced: boolean | null;
   /**
-   * Whether the run's own report blocked the task (the Architect's escalation
-   * marker). That is a status change the server wrote after `nextStatus` was
-   * decided, so it is an advance the next mover has to read.
+   * Whether the run's own report escalated the task (the Architect's escalation
+   * marker): posted the escalation and, unless the task moved meanwhile, blocked
+   * it. Either is news written after `nextStatus` was decided, so it is an
+   * advance the next mover has to read.
    */
   escalated: boolean;
 }): boolean {

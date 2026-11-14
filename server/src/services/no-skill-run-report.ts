@@ -125,6 +125,9 @@ export function escalationBlockExpectedStatus(input: {
   /** Whether that write landed; ignored when `nextStatus` is null. */
   promoted: boolean;
 }): string | null {
+  // Merged work is never blocked; `planNoSkillRunReport` already returns no
+  // block for it, and this holds the invariant for any other caller.
+  if (input.nextStatus === "done") return null;
   if (input.nextStatus === null) return input.readStatus;
   return input.promoted ? input.nextStatus : null;
 }

@@ -134,6 +134,15 @@ describe("escalationBlockExpectedStatus", () => {
     expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "in_review", promoted: true })).toBe("in_review");
   });
 
+  it("ignores promoted when the completion wrote nothing", () => {
+    expect(escalationBlockExpectedStatus({ readStatus: "in_review", nextStatus: null, promoted: true })).toBe("in_review");
+  });
+
+  it("never blocks merged work", () => {
+    expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "done", promoted: true })).toBeNull();
+    expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "done", promoted: false })).toBeNull();
+  });
+
   it("skips the block when the promotion found the task moved", () => {
     // The read status is known stale: guarding on it could only match an ABA return.
     expect(escalationBlockExpectedStatus({ readStatus: "in_progress", nextStatus: "in_review", promoted: false })).toBeNull();
