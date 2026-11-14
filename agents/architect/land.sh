@@ -129,6 +129,16 @@ elif [ -z "$verdict" ] && [ "$(cat "$S/$task.schemas" 2>/dev/null)" = proved-emp
 fi
 old="$(cat "$S/$task.base")"
 main="$(git rev-parse origin/main)"
+# The cloud verify runs the project's landing gate (scripts/verify.sh) on the VM as
+# one of its commands, so a PASS verdict that records it at exit 0 already holds the
+# gate's answer. Re-running it here bought nothing and cost the most: every landing
+# queued for the machine's verify slots behind Workers' and the Planner's
+# self-checks, and a main-repair everything else waited on sat behind them. The
+# gate runs locally only when the verdict does not cover it (a local build, or a
+# verdict without the command), or when main advanced past the freshness cap, which
+# lands an advance nobody built.
+cloud_gate=""
+grep -qE '^cmd: .*scripts/verify\.sh( .*)? = 0$' <<< "$verdict" && cloud_gate=1
 if [ "$old" != "$main" ]; then
   { ! git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 && git rebase -q origin/main 2>/dev/null; } \
     || { git rebase --abort >/dev/null 2>&1
@@ -139,6 +149,7 @@ if [ "$old" != "$main" ]; then
   # or past the freshness cap. Say which: the cap lands an unbuilt advance.
   if "$FRESHNESS" "$old" "$main"; then
     note="cargo green on an older main; rebased onto main unbuilt (freshness cap)"
+    cloud_gate=""
     say "FRESHNESS CAP HIT: landing on ${main:0:9} without re-verifying the latest advance"
   else
     note="cargo green; main advanced since, sharing no file, data directory, data reader or symbol with this branch"
@@ -150,9 +161,20 @@ fi
 # the push is the gate; running both doubled the slowest step of a landing.
 # Otherwise (no hook, or a head origin already has, where the hook sees nothing
 # to push and checks nothing) the gate runs explicitly first.
+#
+# A gate that does run here draws on its own slot pool. The shared pool exists to
+# bound machine load, and Workers' and the Planner's self-checks fill it; a landing
+# is the step a merge waits on, so it queues only behind other landings. Both the
+# explicit gate (verify-sem.sh) and the project's own script under the pre-push hook
+# read these two names, and the push hook inherits them through git and pixi.
 head="$(git rev-parse HEAD)"
 hook="$(git rev-parse --git-path hooks/pre-push)"
-if [ -x "$hook" ] && grep -q 'run -e dev verify' "$hook" \
+export VERIFY_SEM_DIR="${LAND_SEM_DIR:-/tmp/verify-sem-$(id -u)-land}" VERIFY_SEM_SLOTS="${LAND_SEM_SLOTS:-1}"
+if [ -n "$cloud_gate" ]; then
+  git push --no-verify -q -u origin "$branch" > "$S/$task.land-gate.log" 2>&1 \
+    || model "push of $branch was rejected (output in $task.land-gate.log)"
+  note="${note:+$note; }landing gate: scripts/verify.sh green in the cloud verify"
+elif [ -x "$hook" ] && grep -q 'run -e dev verify' "$hook" \
    && [ "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" != "$head" ]; then
   git push -u origin "$branch" > "$S/$task.land-gate.log" 2>&1 \
     || { grep -q 'pre-push: verification failed' "$S/$task.land-gate.log" \

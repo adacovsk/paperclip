@@ -166,6 +166,37 @@ green; echo https://example/pr/1 > "$DIR/open-pr"
 r=$(PRS="1 OPEN false" run)
 check "head already on origin -> explicit gate, 0" "$r" 0
 check "  the explicit gate ran" "$(called gate)" 1
+
+echo "a verdict that ran the landing gate stands in for it"
+newhead; green; echo 'cmd: PYTHONPATH=scripts bash scripts/verify.sh = 0' >> "$S/T-1.cloud.verdict"
+echo https://example/pr/1 > "$DIR/open-pr"
+r=$(HOOK_RC=1 PRS="1 OPEN false" run)
+check "cloud verify.sh = 0 -> 0 with a red local hook" "$r" 0
+check "  the hook did not run" "$(called "hook $(git -C "$WT" rev-parse HEAD)")" 0
+check "  the explicit gate did not run" "$(called gate)" 0
+check "  the head is on origin" "$(git -C "$WT" ls-remote origin refs/heads/task/T-1 | cut -f1)" "$(git -C "$WT" rev-parse HEAD)"
+check "  status names the cloud gate" "$(grep -c '^status cargo .*landing gate: scripts/verify.sh green in the cloud verify' "$CALLS")" 1
+newhead; green; echo 'cmd: PYTHONPATH=scripts bash scripts/verify.sh = 1' >> "$S/T-1.cloud.verdict"
+r=$(PRS="1 OPEN false" run)
+check "cloud verify.sh not 0 -> the local hook gates" "$(called "hook $(git -C "$WT" rev-parse HEAD)")" 1
+advance base.txt
+newhead; green; echo 'cmd: PYTHONPATH=scripts bash scripts/verify.sh = 0' >> "$S/T-1.cloud.verdict"
+git -C "$PAPERCLIP_PROJECT" rev-parse origin/main~1 > "$S/T-1.base"
+r=$(CODE_MOVED=0 PRS="1 OPEN false" run)
+check "freshness cap -> the local hook gates despite the verdict" "$(called "hook $(git -C "$WT" rev-parse HEAD)")" 1
+advance base.txt
+newhead; green; echo 'cmd: PYTHONPATH=scripts bash scripts/verify.sh = 0' >> "$S/T-1.cloud.verdict"
+git -C "$PAPERCLIP_PROJECT" rev-parse origin/main~1 > "$S/T-1.base"; echo https://example/pr/1 > "$DIR/open-pr"
+r=$(CODE_MOVED=1 PRS="1 OPEN false" run)
+check "main moved, no interaction -> 0 on the cloud gate" "$r" 0
+check "  no local gate" "$(( $(called hook) + $(called gate) ))" 0
+
+echo "a local gate draws on the landing pool"
+stub gate "echo \"gate \$VERIFY_SEM_DIR \$VERIFY_SEM_SLOTS\" >> $CALLS"
+git -C "$WT" push -q --no-verify origin task/T-1
+green; echo https://example/pr/1 > "$DIR/open-pr"
+r=$(PRS="1 OPEN false" LAND_SEM_DIR=/x/land run)
+check "explicit gate sees the landing pool" "$(called 'gate /x/land 1')" 1
 git -C "$WT" config --unset core.hooksPath
 
 echo

@@ -568,7 +568,8 @@ For each parent `{task-id}`:
 
      ```sh
      # Landing gate first: no workflow runs the per-change checks, so this is them.
-     (cd "$PAPERCLIP_PROJECT" && pixi run -e dev verify --head "$(git -C "$PAPERCLIP_PROJECT/.paperclip/worktrees/{task-id}" rev-parse HEAD)") \
+     # It runs on the landing slot pool, so it does not queue behind self-checks.
+     (cd "$PAPERCLIP_PROJECT" && VERIFY_SEM_DIR="/tmp/verify-sem-$(id -u)-land" VERIFY_SEM_SLOTS=1 pixi run -e dev verify --head "$(git -C "$PAPERCLIP_PROJECT/.paperclip/worktrees/{task-id}" rev-parse HEAD)") \
        || { echo "landing gate red on task/{task-id} — block the parent with the failing stages; no PR"; exit 1; }
      BODY=$(mktemp)
      (cd "$PAPERCLIP_PROJECT" && pixi run -e dev python scripts/generate_pr_body.py {task-id}) > "$BODY" \
