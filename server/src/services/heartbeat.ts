@@ -3622,6 +3622,10 @@ export function heartbeatService(db: Db) {
                 branchOnOrigin,
                 branchMerged,
               });
+              // What the completion actually wrote: `nextStatus` only if the guarded
+              // write landed. Everything after this reads it, not `nextStatus`, so
+              // a task that moved under the run is not reported or woken as advanced.
+              let appliedStatus: typeof nextStatus = null;
               if (nextStatus) {
                 // Guarded on the status read before the git checks above, which
                 // take seconds: a status move made meanwhile (a cancel, a hold
@@ -3636,6 +3640,7 @@ export function heartbeatService(db: Db) {
                   },
                   { expectedStatuses: [existingIssue.status] },
                 );
+                if (promoted) appliedStatus = nextStatus;
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, readStatus: existingIssue.status, nextStatus },
                   !promoted
@@ -3673,7 +3678,7 @@ export function heartbeatService(db: Db) {
               const runReport = planNoSkillRunReport({
                 role: agent.role,
                 currentStatus: existingIssue.status,
-                nextStatus,
+                nextStatus: appliedStatus,
                 resultText: extractRunResultText(adapterResult),
               });
               if (runReport.comment) {
@@ -3695,17 +3700,30 @@ export function heartbeatService(db: Db) {
                       source: "run_result",
                     },
                   });
-                  if (runReport.block) {
-                    // The `issue.updated` row below is this transition's record.
-                    await issuesSvc.update(
+                  // Guarded on the status the task should be in by now: a task
+                  // cancelled or moved since the completion read keeps its status
+                  // (unguarded, this un-cancelled it into `blocked`).
+                  const statusBeforeBlock = appliedStatus ?? existingIssue.status;
+                  const blocked = runReport.block
+                    ? await issuesSvc.update(
                       issueId,
                       { status: "blocked" },
                       {
                         actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
                         source: "run_escalation",
+                        // The `issue.updated` row below is this transition's record.
                         statusLoggedByCaller: true,
                       },
+                      { expectedStatuses: [statusBeforeBlock] },
+                    )
+                    : null;
+                  if (runReport.block && !blocked) {
+                    logger.info(
+                      { issueId, agentId: agent.id, runId: run.id, expectedStatus: statusBeforeBlock },
+                      "left task as it is on the Architect's escalation marker: it moved, or was deleted, before the block wrote",
                     );
+                  }
+                  if (blocked) {
                     escalatedToBlocked = true;
                     await logActivity(db, {
                       actorType: "agent",
@@ -3717,7 +3735,7 @@ export function heartbeatService(db: Db) {
                       entityId: issueId,
                       details: {
                         status: "blocked",
-                        _previous: { status: nextStatus ?? existingIssue.status },
+                        _previous: { status: statusBeforeBlock },
                         source: "run_escalation",
                         escalationReason: runReport.escalationReason,
                         identifier: existingIssue.identifier,
@@ -3748,7 +3766,7 @@ export function heartbeatService(db: Db) {
               const branchAdvanced = branchAdvancedDuringRun(preRunOriginHead, postRunOriginHead);
               const wakeNextMover = shouldWakeNextMover({
                 currentStatus: existingIssue.status,
-                nextStatus,
+                nextStatus: appliedStatus,
                 branchAdvanced,
                 escalated: escalatedToBlocked,
               });
