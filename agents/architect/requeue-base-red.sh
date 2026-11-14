@@ -119,7 +119,11 @@ break_touched() { # marker task sha
   local sites paths idents p hit
   sites="$(sed -n '3,$p' "$1")"
   [ -n "$sites" ] || return 2
-  paths="$(printf '%s\n' "$sites" | sed -n 's/^\([^ :]*\):[0-9].*/\1/p' | sort -u)"
+  # A site is `<path>:<line> ...` for a compile error and `<path>:<key> ...` for a
+  # data guard (`level_01.spells.json:runic_body`). Matching only a numeric suffix
+  # dropped every data-file site, and a fix to the named file never requeued its
+  # verifies: they sat blocked hours after main went green. A path has a `/` or `.`.
+  paths="$(printf '%s\n' "$sites" | sed -n 's/^\([^ :]*[./][^ :]*\):[^ ]*.*/\1/p' | sort -u)"
   idents="$( { printf '%s\n' "$sites"
                sed -n '/^--- errors ---/,$p' "$S/$2.cloud.verdict" 2>/dev/null
              } | grep -o '`[A-Za-z_][A-Za-z0-9_]*`' | tr -d '`' | sort -u)"

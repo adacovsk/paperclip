@@ -176,6 +176,19 @@ printf '%s\nT-1\nsrc/site.rs:1 E0063 missing field `attack_total` in initializer
 out="$(bash "$R")"
 case "$out" in *"requeued T-1"*"naming \`attack_total\`"*) ok "a fix on the definition side requeues";; *) fail "identifier touch did not requeue: $out";; esac
 
+# 9b. A data-guard site (`<path>:<key>`) touched by a fix → requeued.
+reset
+g reset -q --hard "$B"
+mkdir -p "$PAPERCLIP_PROJECT/assets/data"
+printf '{"runic_body": {"condition": null}}\n' > "$PAPERCLIP_PROJECT/assets/data/spells.json"
+g add -A; g commit -q -m "data base"; DB="$(g rev-parse HEAD)"
+printf '{"runic_body": {}}\n' > "$PAPERCLIP_PROJECT/assets/data/spells.json"; g commit -q -am "drop the key"
+g update-ref refs/remotes/origin/main HEAD
+printf '%s\nT-1\nassets/data/spells.json:runic_body check_mechanic_keys abilities.runic_body.mechanics[0].Buff.`condition` is not a field\n' "$DB" > "$V/T-1.base-red"
+echo '[{"identifier":"T-1","id":"u1","status":"blocked","assigneeAgentId":"arch"}]' > "$D/issues.json"
+out="$(bash "$R")"
+case "$out" in *"requeued T-1"*"touches assets/data/spells.json"*) ok "a fix to a data-guard site's file requeues";; *) fail "data site touch did not requeue: $out";; esac
+
 # 10. A pending record left by a killed sweep, verify still unassigned → re-assigned.
 reset
 printf '%s\nT-1\nsrc/site.rs:1 E0063 x\n' "$B" > "$V/T-1.base-red"
