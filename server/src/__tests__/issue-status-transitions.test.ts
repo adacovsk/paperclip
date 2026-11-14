@@ -33,12 +33,13 @@ describe("ISSUE_STATUS_TRANSITIONS", () => {
     }
   });
 
-  it("lets done and cancelled out only through a reopen, or to review for the operator", () => {
-    for (const from of ["done", "cancelled"]) {
-      const exits = ISSUE_STATUS_TRANSITIONS[from];
-      expect(Object.entries(exits).filter(([, rule]) => rule === "allow").map(([to]) => to), from).toEqual(["todo"]);
-      expect(exits.in_review, from).toBe("operator");
-    }
+  it("lets done and cancelled out only through a reopen, or to review", () => {
+    const allowed = (from: string) =>
+      Object.entries(ISSUE_STATUS_TRANSITIONS[from]).filter(([, rule]) => rule === "allow").map(([to]) => to).sort();
+    // done -> in_review is the PR-evidence audit's reopen for a fresh verify.
+    expect(allowed("done")).toEqual(["in_review", "todo"]);
+    expect(allowed("cancelled")).toEqual(["todo"]);
+    expect(ISSUE_STATUS_TRANSITIONS.cancelled.in_review).toBe("operator");
   });
 
   it("reaches backlog only from work that has not started", () => {
@@ -59,9 +60,9 @@ describe("checkTransition", () => {
   });
 
   it("flags an operator-only move made by an agent or the server, not by the operator", () => {
-    expect(kinds({ from: "done", to: "in_review", context: agent("issue_patch"), issue: task })).toEqual(["operator_only"]);
-    expect(kinds({ from: "done", to: "in_review", context: system("unspecified"), issue: task })).toEqual(["operator_only"]);
-    expect(kinds({ from: "done", to: "in_review", context: operator("issue_patch"), issue: task })).toEqual([]);
+    expect(kinds({ from: "cancelled", to: "in_review", context: agent("issue_patch"), issue: task })).toEqual(["operator_only"]);
+    expect(kinds({ from: "cancelled", to: "in_review", context: system("unspecified"), issue: task })).toEqual(["operator_only"]);
+    expect(kinds({ from: "cancelled", to: "in_review", context: operator("issue_patch"), issue: task })).toEqual([]);
   });
 
   it("flags todo -> in_review only on a task that is not a stage subtask", () => {

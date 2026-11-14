@@ -91,9 +91,15 @@ export type TransitionRule = "allow" | "operator" | "reject";
  * - `backlog` is reachable only from work that has not started (`todo`,
  *   `blocked`). Work that ran is finished, cancelled, or held, not re-planned.
  * - `done` and `cancelled` are left only through `todo` (a reopen), plus
- *   `in_review` for the operator. `cancelled -> done` was a race: a run already
- *   working on a task finished seconds after the cancel and overwrote it.
- *   `-> in_progress` from either would hold the status with no run behind it.
+ *   `in_review`: for the operator from `cancelled`, for anyone from `done`.
+ *   `cancelled -> done` was a race: a run already working on a task finished
+ *   seconds after the cancel and overwrote it. `-> in_progress` from either
+ *   would hold the status with no run behind it.
+ *
+ * `done -> in_review` is open to agents for the Coordinator's PR-evidence audit,
+ * which reopens a task closed with no PR and no commit on main for a fresh
+ * verify. It cannot go through `todo` instead: that wakes a Worker to redo work
+ * that exists and only failed to land.
  */
 export const ISSUE_STATUS_TRANSITIONS: Readonly<Record<string, Readonly<Record<string, TransitionRule>>>> = {
   backlog: {
@@ -112,7 +118,7 @@ export const ISSUE_STATUS_TRANSITIONS: Readonly<Record<string, Readonly<Record<s
     backlog: "allow", todo: "allow", in_progress: "allow", in_review: "allow", done: "allow", cancelled: "allow",
   },
   done: {
-    backlog: "reject", todo: "allow", in_progress: "reject", in_review: "operator", blocked: "reject", cancelled: "reject",
+    backlog: "reject", todo: "allow", in_progress: "reject", in_review: "allow", blocked: "reject", cancelled: "reject",
   },
   cancelled: {
     backlog: "reject", todo: "allow", in_progress: "reject", in_review: "operator", blocked: "reject", done: "reject",
