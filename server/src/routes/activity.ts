@@ -7,6 +7,7 @@ import { activityService } from "../services/activity.js";
 import { assertOperator, assertInstanceAccess } from "./authz.js";
 import { heartbeatService, issueService } from "../services/index.js";
 import { sanitizeRecord } from "../redaction.js";
+import { badRequest } from "../errors.js";
 
 const createActivitySchema = z.object({
   actorType: z.enum(["agent", "user", "system"]).optional().default("system"),
@@ -35,10 +36,21 @@ export function activityRoutes(db: Db) {
     assertInstanceAccess(req);
 
     const limitParam = req.query.limit as string | undefined;
+    const action = req.query.action;
+    if (action !== undefined && typeof action !== "string") {
+      throw badRequest("action must be a single string");
+    }
+    const sinceParam = req.query.since;
+    const since = typeof sinceParam === "string" ? new Date(sinceParam) : undefined;
+    if (sinceParam !== undefined && (!since || Number.isNaN(since.getTime()))) {
+      throw badRequest("since must be a single ISO timestamp");
+    }
     const filters = {
       agentId: req.query.agentId as string | undefined,
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
+      action,
+      since,
       limit: limitParam
         ? Math.max(
             1,

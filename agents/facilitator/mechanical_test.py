@@ -354,6 +354,59 @@ class RunDigest(unittest.TestCase):
         self.assertEqual(got["quotaOut"], ["Architect"])
 
 
+def flag(hours_ago, frm, to, kinds, source, agent_id=None, actor_type="agent", action=None):
+    return {"action": action or m.FLAG_ACTION, "createdAt": iso(hours_ago),
+            "details": {"status": to, "_previous": {"status": frm}, "source": source, "flags": kinds,
+                        "actor": {"actorType": actor_type, **({"agentId": agent_id} if agent_id else {})}}}
+
+
+class StatusFlags(unittest.TestCase):
+    NAMES = {"c": "Coordinator", "a": "Architect"}
+
+    def test_flags_are_counted_by_kind_pair_and_owner(self):
+        got = m.status_flags([flag(1, "cancelled", "backlog", ["rejected"], "issue_patch", "c"),
+                              flag(2, "cancelled", "backlog", ["rejected"], "comment_reopen", "c"),
+                              flag(3, "cancelled", "blocked", ["rejected"], "run_escalation", "a"),
+                              flag(4, "todo", "in_progress", ["in_progress_without_run"], "unspecified",
+                                   actor_type="system"),
+                              flag(5, "cancelled", "in_review", [], "issue_patch", actor_type="user")],
+                             self.NAMES, NOW)
+        self.assertEqual(got, {"total": 5, "truncated": False,
+                               "byKind": {"rejected": 3, "in_progress_without_run": 1},
+                               "byPair": {"cancelled -> backlog": 2, "cancelled -> blocked": 1,
+                                          "todo -> in_progress": 1, "cancelled -> in_review": 1},
+                               # The escalation records the Architect as actor but is the server's write.
+                               "server": {"run_escalation": 1, "unspecified": 1},
+                               "agents": {"Coordinator via issue_patch": 1, "Coordinator via comment_reopen": 1},
+                               "operator": {"issue_patch": 1}})
+
+    def test_an_agent_missing_from_the_roster_keeps_its_id(self):
+        got = m.status_flags([flag(1, "done", "blocked", ["rejected"], "issue_patch", "gone")], self.NAMES, NOW)
+        self.assertEqual(got["agents"], {"gone via issue_patch": 1})
+
+    def test_flags_older_than_the_window_are_not_counted(self):
+        self.assertEqual(m.status_flags([flag(30, "done", "blocked", ["rejected"], "issue_patch", "c")],
+                                        self.NAMES, NOW)["total"], 0)
+
+    def test_a_full_fetch_is_truncated(self):
+        saved = m.FLAG_ROWS
+        try:
+            m.FLAG_ROWS = 2
+            got = m.status_flags([flag(1, "done", "blocked", ["rejected"], "issue_patch", "c")] * 2, self.NAMES, NOW)
+        finally:
+            m.FLAG_ROWS = saved
+        self.assertTrue(got["truncated"])
+
+    def test_a_route_that_ignored_the_filter_is_an_error_not_a_quiet_window(self):
+        got = m.status_flags([flag(1, "todo", "done", [], "issue_patch", "c", action="issue.comment_added")],
+                             self.NAMES, NOW)
+        self.assertIn("error", got)
+        self.assertNotIn("total", got)
+
+    def test_no_list_is_an_error_not_a_quiet_window(self):
+        self.assertIn("error", m.status_flags(None, self.NAMES, NOW))
+
+
 def commit(oid, hours_ago, state=None, status_hours_ago=None, context=None):
     contexts = [] if state is None else [{"context": context or m.NIGHTLY_CONTEXT, "state": state,
                                           "createdAt": iso(hours_ago if status_hours_ago is None else status_hours_ago)}]
@@ -573,6 +626,28 @@ class SweepStranded(unittest.TestCase):
         self.assertFalse(any(q and ("done" in q or "cancelled" in q) for q in api.queries))
         self.assertEqual(seen["s"]("AA-1"), "cancelled")
         self.assertIn("/issues/AA-1", api.paths)
+
+    def test_a_failed_flag_read_is_reported_not_raised(self):
+        api = self.Api()
+        real_get = api.get
+
+        def get(path):
+            if path.startswith("/activity"):
+                raise OSError("down")
+            return real_get(path)
+
+        api.get = get
+        saved = (m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE)
+        try:
+            m.merged_branches = lambda *a, **k: []
+            m.nightly = lambda *a, **k: {}
+            m.stranded_branches = lambda *a, **k: []
+            with tempfile.TemporaryDirectory() as tmp:
+                m.REPORT_FILE = Path(tmp, "none.json")
+                report = m.sweep(api, Path(tmp), set(), [])
+        finally:
+            m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE = saved
+        self.assertIn("error", report["statusFlags"])
 
     def test_task_status(self):
         class Missing(Exception):

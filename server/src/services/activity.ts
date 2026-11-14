@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, heartbeatRuns, issues } from "@paperclipai/db";
 import { ACTIVITY_LIST_DEFAULT_LIMIT } from "@paperclipai/shared";
@@ -7,6 +7,10 @@ export interface ActivityFilters {
   agentId?: string;
   entityType?: string;
   entityId?: string;
+  action?: string;
+  /** Rows at or after this instant. Bounds a filtered read to its window: an `action`
+   * with few rows would otherwise walk the whole log looking for `limit` of them. */
+  since?: Date;
   limit?: number;
 }
 
@@ -24,6 +28,12 @@ export function activityService(db: Db) {
       }
       if (filters.entityId) {
         conditions.push(eq(activityLog.entityId, filters.entityId));
+      }
+      if (filters.action) {
+        conditions.push(eq(activityLog.action, filters.action));
+      }
+      if (filters.since) {
+        conditions.push(gte(activityLog.createdAt, filters.since));
       }
 
       return db

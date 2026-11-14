@@ -71,4 +71,32 @@ describe("activity routes", () => {
     expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("issue-uuid-1");
     expect(res.body).toEqual([{ runId: "run-1" }]);
   });
+
+  it("passes the action filter to the list", async () => {
+    mockActivityService.list.mockResolvedValue([]);
+
+    const res = await request(createApp()).get("/api/activity?action=issue.status_transition_flagged&limit=5");
+
+    expect(res.status).toBe(200);
+    expect(mockActivityService.list).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "issue.status_transition_flagged", limit: 5 }),
+    );
+  });
+
+  it("passes since as a date", async () => {
+    mockActivityService.list.mockResolvedValue([]);
+
+    const res = await request(createApp()).get("/api/activity?since=2026-11-13T00:00:00Z");
+
+    expect(res.status).toBe(200);
+    expect(mockActivityService.list).toHaveBeenCalledWith(
+      expect.objectContaining({ since: new Date("2026-11-13T00:00:00Z") }),
+    );
+  });
+
+  it("rejects a repeated action or an unreadable since", async () => {
+    expect((await request(createApp()).get("/api/activity?action=a&action=b")).status).toBe(400);
+    expect((await request(createApp()).get("/api/activity?since=yesterday")).status).toBe(400);
+    expect(mockActivityService.list).not.toHaveBeenCalled();
+  });
 });

@@ -13,7 +13,8 @@ Three more are readings the nightly run could not take for itself. A routine's o
 firing is hidden from the default issue list, so a firing whose wake died was never
 re-fired by anyone (`missed_routines`). And two things were only ever sampled: the last
 day of runs, which the nightly run read fifty rows at a time (`run_digest`), and whether
-main's nightly check is passing or has stopped arriving (`read_nightly`).
+main's nightly check is passing or has stopped arriving (`read_nightly`). The status
+moves the server's transition table flagged are counted the same way (`status_flags`).
 
 What still needs a reader stays in the Facilitator's sweep: why a toggle did not take,
 whether a wedge is new, run productivity, config drift, comment-without-PATCH. This
@@ -30,7 +31,8 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -78,6 +80,13 @@ PARKED_SECONDS = float(os.environ.get("FACILITATOR_PARKED_SECONDS", 48 * 3600))
 DIGEST_SECONDS = float(os.environ.get("FACILITATOR_DIGEST_SECONDS", 24 * 3600))
 DIGEST_ROWS = int(os.environ.get("FACILITATOR_DIGEST_ROWS", 1000))
 QUOTA_ERROR = "claude_usage_limit"
+#: The row the server writes for a status move its transition table flags (stage 1:
+#: reported, not refused). Read over the same window as the run digest.
+FLAG_ACTION = "issue.status_transition_flagged"
+FLAG_ROWS = int(os.environ.get("FACILITATOR_FLAG_ROWS", 1000))
+#: Call sites that are the server's own writes. They record the run's agent as the
+#: actor, so the actor alone would file them against that agent's instructions.
+SERVER_SOURCES = frozenset({"no_skill_run_start", "no_skill_completion", "run_escalation", "unspecified"})
 #: The commit status the nightly check posts on main, and how old the newest one may
 #: be before its absence is the finding: a day's cadence plus half a day of slack.
 NIGHTLY_CONTEXT = os.environ.get("FACILITATOR_NIGHTLY_CONTEXT", "tester/nightly")
@@ -367,6 +376,48 @@ def run_digest(runs: list[dict], names: dict[str, str], now: float) -> dict:
         "byAgent": counts,
         "quotaOut": sorted(a for a, r in newest_finished.items() if r.get("errorCode") == QUOTA_ERROR),
     }
+
+
+def status_flags(rows: list[dict] | None, names: dict[str, str], now: float) -> dict:
+    """The last DIGEST_SECONDS of flagged status moves, counted by kind, pair and owner.
+
+    This is the signal for turning the transition table's refusals on: each caller
+    that still makes a flagged move is a fix owed first, and a quiet window is the
+    evidence the table can be enforced. Callers are split by who owns the fix:
+    `server` (a write the server makes on its own, whatever actor it records),
+    `agents` (an agent's own API call, keyed by its name) and `operator`.
+
+    Zero flags is the reading that turns refusals on, so it must not come from a read
+    that did not happen. A server whose activity route predates the `action` filter
+    returns rows of every action, and no list at all is a failed read: both are
+    `error`. A full fetch is `truncated`, its counts a floor rather than the window.
+    """
+    if not isinstance(rows, list):
+        return {"error": "the activity read returned no list; flags not read"}
+    if any(row.get("action") != FLAG_ACTION for row in rows):
+        return {"error": "the activity route ignored the action filter; flags not read"}
+    by_kind: Counter[str] = Counter()
+    by_pair: Counter[str] = Counter()
+    owners: dict[str, Counter[str]] = {"server": Counter(), "agents": Counter(), "operator": Counter()}
+    total = 0
+    for row in rows:
+        if now - ts(row["createdAt"]) > DIGEST_SECONDS:
+            continue
+        details = row.get("details") or {}
+        actor = details.get("actor") or {}
+        source = details.get("source") or "?"
+        total += 1
+        by_kind.update(details.get("flags") or [])
+        by_pair[f"{(details.get('_previous') or {}).get('status')} -> {details.get('status')}"] += 1
+        if actor.get("actorType") == "system" or source in SERVER_SOURCES:
+            owners["server"][source] += 1
+        elif actor.get("actorType") == "user":
+            owners["operator"][source] += 1
+        else:
+            agent = actor.get("agentId") or "?"
+            owners["agents"][f"{names.get(agent, agent)} via {source}"] += 1
+    return {"total": total, "truncated": len(rows) >= FLAG_ROWS, "byKind": dict(by_kind),
+            "byPair": dict(by_pair), **{owner: dict(c) for owner, c in owners.items()}}
 
 
 # --------------------------------------------------------------------------- main's nightly check
@@ -707,6 +758,11 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
 
     names = {a["id"]: a["name"] for a in roster}
     digest = run_digest(api.get(f"/heartbeat-runs?limit={DIGEST_ROWS}") or [], names, now)
+    since = datetime.fromtimestamp(now - DIGEST_SECONDS, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        flags = status_flags(api.get(f"/activity?action={FLAG_ACTION}&since={since}&limit={FLAG_ROWS}"), names, now)
+    except Exception as err:  # a failed read loses this field, never the sweep's report
+        flags = {"error": f"the activity read failed: {err}"}
 
     reap_at = previous.get("reapAt", 0)
     if now - reap_at >= REAP_SCAN_SECONDS and launch_reap(api.dry_run):
@@ -722,6 +778,7 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
         "routinesRefired": [i["identifier"] for i in due if i in refire],
         "routinesSuperseded": [{"identifier": old["identifier"], "by": by} for old, by in superseded],
         "runDigest": digest,
+        "statusFlags": flags,
         "nightly": main_nightly,
         "wedged": found,
         "wedgeFiled": filed,
