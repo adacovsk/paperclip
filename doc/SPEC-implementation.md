@@ -377,10 +377,10 @@ Every write of `issues.status` goes through `writeIssueStatus` (`server/src/serv
 | in_progress | reject | allow | | allow | allow | allow | allow |
 | in_review | reject | allow | allow | | allow | allow | allow |
 | blocked | allow | allow | allow | allow | | allow | allow |
-| done | reject | allow | reject | operator | reject | | reject |
+| done | reject | allow | reject | allow | reject | | reject |
 | cancelled | reject | allow | reject | operator | reject | reject | |
 
-Two rules shape it: `backlog` is reached only from work that has not started, and `done`/`cancelled` are left only through a reopen to `todo` (or to `in_review` by the operator). Three checks the table cannot express are flagged too: `todo -> in_review` on a task that is not a stage subtask (`Review:`, `Verify:`, `ci-fix:`, `Rebase `), `blocked -> in_review` written by a no-skill run's completion, and entering `in_progress` other than by checkout or a run start.
+Two rules shape it: `backlog` is reached only from work that has not started, and `done`/`cancelled` are left only through a reopen to `todo`, or to `in_review`: from `done` for anyone (the PR-evidence audit's reopen of a task closed with no PR, for a fresh verify), from `cancelled` for the operator. Three checks the table cannot express are flagged too: `todo -> in_review` on a task that is not a stage subtask (`Review:`, `Verify:`, `ci-fix:`, `Rebase `), `blocked -> in_review` written by a no-skill run's completion, and entering `in_progress` other than by checkout or a run start.
 
 The table was ruled pair by pair against the logged history. The list it replaced allowed 15 pairs and called `done`/`cancelled` terminal; it disallowed 48% of real transitions, so it was never enforced.
 
