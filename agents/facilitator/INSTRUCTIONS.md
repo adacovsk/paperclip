@@ -174,7 +174,7 @@ done
 3. its linked `AA-nnnn` task is still open but non-advancing — **no `activeRun` and no live `executionRunId`** (cross-reference via `GET /issues?q=`), **and**
 4. `updatedAt` older than one fire interval.
 
-Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, like §7's finished-task branches, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. A task branch untouched for 14 days is pushed by the mechanical sweep instead (`strandedPushed` in the report), since a push only adds a copy; report those entries, and any with `pushed: false`. (Contrast §7 cases 1–2, which are *remote* branches whose commits are provably on `origin/main`.)
+Condition (3) is the load-bearing filter. A task that is `done`/`cancelled` fails it — that branch is superseded, like §7's finished-task branches, and is not reported. Report candidates that pass all four (with SHA + subject + ahead-count) as a Coordinator followup. **Never auto-delete** — these commits exist in exactly one place. A task branch untouched for 14 days is pushed by the mechanical sweep instead (`strandedPushed` in the report), since a push only adds a copy; report those entries, and any with `pushed: false`. The push skips a branch whose task is `done`/`cancelled`, by the same condition (3): that branch's copies are §7c's, which deletes its remote 7 days after the task finished, and pushing it back each sweep re-created the branch reap had just deleted. (Contrast §7 cases 1–2, which are *remote* branches whose commits are provably on `origin/main`.)
 
 ### 7c. Reap finished tasks' leftovers
 

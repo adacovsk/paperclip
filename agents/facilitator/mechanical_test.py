@@ -465,6 +465,128 @@ class Stranded(unittest.TestCase):
             self.assertIn("refs/heads/task/AA-1", heads)
             self.assertNotIn("refs/heads/other", heads)  # outside the task namespace
 
+    def test_a_finished_tasks_branch_is_never_pushed(self):
+        # reap.py deletes a finished task's remote branch REMOTE_GRACE after it
+        # finished; pushing it back here would undo that every cycle.
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, work = Path(tmp, "origin.git"), Path(tmp, "work")
+
+            def g(*args):
+                return subprocess.run(["git", *args], cwd=work, check=True, capture_output=True, text=True).stdout
+
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True, capture_output=True)
+            g("config", "user.email", "t@t"), g("config", "user.name", "t")
+            g("checkout", "-q", "-b", "main")
+            Path(work, "a").write_text("a\n"), g("add", "a"), g("commit", "-qm", "a")
+            g("push", "-q", "origin", "main")
+            for name in ("task/AA-10", "task/AA-11", "task/AA-12"):
+                g("checkout", "-q", "-b", name, "main")
+                Path(work, name.replace("/", "_")).write_text("x\n"), g("add", "-A"), g("commit", "-qm", name)
+            g("checkout", "-q", "main"), g("fetch", "-q", "origin")
+
+            later = NOW + 365 * 24 * HOUR
+            statuses = {"AA-10": "in_review", "AA-11": "done", "AA-12": "cancelled"}
+            asked = []
+
+            def status_of(ident):
+                asked.append(ident)
+                return statuses[ident]
+
+            self.assertEqual(m.stranded_branches(work, True, later, status_of),
+                             [{"branch": "task/AA-10", "ahead": 1, "pushed": True}])
+            m.stranded_branches(work, False, later, status_of)
+            heads = g("ls-remote", "--heads", "origin")
+            self.assertIn("refs/heads/task/AA-10", heads)
+            self.assertNotIn("refs/heads/task/AA-11", heads)
+            self.assertNotIn("refs/heads/task/AA-12", heads)
+
+            # Only branches that would be pushed are looked up: AA-10 now has an origin
+            # copy, so the next pass asks about the two finished ones and nothing else.
+            asked.clear()
+            m.stranded_branches(work, True, later, status_of)
+            self.assertEqual(sorted(asked), ["AA-11", "AA-12"])
+
+    def test_an_unreadable_status_holds_the_push_and_reports_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, work = Path(tmp, "origin.git"), Path(tmp, "work")
+
+            def g(*args):
+                return subprocess.run(["git", *args], cwd=work, check=True, capture_output=True, text=True).stdout
+
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True, capture_output=True)
+            g("config", "user.email", "t@t"), g("config", "user.name", "t")
+            g("checkout", "-q", "-b", "main")
+            Path(work, "a").write_text("a\n"), g("add", "a"), g("commit", "-qm", "a")
+            g("push", "-q", "origin", "main")
+            g("checkout", "-q", "-b", "task/AA-20", "main")
+            Path(work, "b").write_text("b\n"), g("add", "b"), g("commit", "-qm", "b")
+            g("checkout", "-q", "main"), g("fetch", "-q", "origin")
+
+            def unreadable(ident):
+                raise OSError("server down")
+
+            self.assertEqual(m.stranded_branches(work, False, NOW + 365 * 24 * HOUR, unreadable),
+                             [{"branch": "task/AA-20", "ahead": 1, "pushed": False, "note": "task status unread"}])
+            self.assertNotIn("task/AA-20", g("ls-remote", "--heads", "origin"))
+
+    def test_task_of_reads_the_identifier_reap_reads(self):
+        self.assertEqual(m.task_of("task/AA-18"), "AA-18")
+        self.assertEqual(m.task_of("task/AA-18-retry"), "AA-18")
+        self.assertIsNone(m.task_of("task/none"))
+
+
+class SweepStranded(unittest.TestCase):
+    """The sweep looks tasks up one at a time, never by listing the closed ones."""
+
+    class Api:
+        dry_run = True
+
+        def __init__(self, answers=None):
+            self.queries, self.paths, self.answers = [], [], answers or {}
+
+        def get(self, path):
+            self.paths.append(path)
+            answer = self.answers.get(path)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer if answer is not None else []
+
+        def issues(self, **query):
+            self.queries.append(query.get("status"))
+            return []
+
+    def test_the_sweep_reads_no_closed_task_list(self):
+        seen = {}
+        api = self.Api({"/issues/AA-1": {"status": "cancelled"}})
+        saved = (m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE)
+        try:
+            m.merged_branches = lambda *a, **k: []
+            m.nightly = lambda *a, **k: {}
+            m.stranded_branches = lambda project, dry_run, now, status_of=None: seen.setdefault("s", status_of) and []
+            with tempfile.TemporaryDirectory() as tmp:
+                m.REPORT_FILE = Path(tmp, "none.json")
+                m.sweep(api, Path(tmp), set(), [])
+        finally:
+            m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE = saved
+        self.assertFalse(any(q and ("done" in q or "cancelled" in q) for q in api.queries))
+        self.assertEqual(seen["s"]("AA-1"), "cancelled")
+        self.assertIn("/issues/AA-1", api.paths)
+
+    def test_task_status(self):
+        class Missing(Exception):
+            code = 404
+
+        api = self.Api({"/issues/AA-1": {"status": "done"}, "/issues/AA-2": Missing(),
+                        "/issues/AA-3": OSError("down"), "/issues/AA-4": {"error": "x"}})
+        self.assertEqual(m.task_status(api, "AA-1"), "done")
+        self.assertIsNone(m.task_status(api, "AA-2"))  # no such task: nothing else owns the branch
+        with self.assertRaises(OSError):
+            m.task_status(api, "AA-3")
+        with self.assertRaises(ValueError):
+            m.task_status(api, "AA-4")  # an error body is not a status
+
 
 if __name__ == "__main__":
     unittest.main()
