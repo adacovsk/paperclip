@@ -600,7 +600,9 @@ fi
 #     worktree). Red means no push and no PR: fix within the task's scope,
 #     commit, and land again. This is the gate, not the pre-push hook, because
 #     the hook is skipped by `--no-verify`, which the cloud offload uses.
-( cd "$PAPERCLIP_PROJECT" && pixi run -e dev verify --head "$(git -C "$WORKTREE" rev-parse HEAD)" ) \
+#     land.sh skips this when the cloud verdict records `scripts/verify.sh = 0`;
+#     here it runs on the landing slot pool, not the one self-checks fill.
+( cd "$PAPERCLIP_PROJECT" && VERIFY_SEM_DIR="/tmp/verify-sem-$(id -u)-land" VERIFY_SEM_SLOTS=1 pixi run -e dev verify --head "$(git -C "$WORKTREE" rev-parse HEAD)" ) \
   || { echo "LANDING GATE FAILED: scripts/verify.sh is red on task/{task-id} — fix, commit, land again; no PR opened"; exit 1; }
 
 # 2. Make sure we're on the right GitHub account.

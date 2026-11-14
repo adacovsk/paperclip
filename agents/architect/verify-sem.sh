@@ -13,11 +13,13 @@
 # worktree are shared, so wrapping them bounds every such run whatever script
 # the worktree carries.
 #
-# ONE COUNT, NOT TWO. The slot files and the VERIFY_SEM_SLOTS / VERIFY_SEM_DIR
+# ONE COUNT PER POOL. The slot files and the VERIFY_SEM_SLOTS / VERIFY_SEM_DIR
 # names are the project script's own, so a run started here and a run started
 # by a push hook draw on the same slots. VERIFY_SEM_HELD is exported once a
 # slot is held, which is how a script that does take slots knows not to queue
-# for a second one behind its own parent.
+# for a second one behind its own parent. Landings set VERIFY_SEM_DIR to a
+# pool of their own (land.sh): self-checks fill the shared pool, and a merge
+# waiting behind them is the stall the bound was never meant to cause.
 #
 # The lock is an flock on fd 9, held by this shell while the command runs as
 # its child, so the kernel frees the slot when this process dies. Waiters poll
