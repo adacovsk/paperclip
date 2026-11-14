@@ -3131,17 +3131,20 @@ export function heartbeatService(db: Db) {
       if (!agentHasPaperclipSkill && issueId) {
         const runningIssue = await issuesSvc.getById(issueId);
         if (runningIssue && runningIssue.status === "todo") {
-          await issuesSvc.update(
+          const advanced = await issuesSvc.update(
             issueId,
             { status: "in_progress" },
             {
               actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
               source: "no_skill_run_start",
             },
+            { expectedStatuses: ["todo"] },
           );
           logger.info(
             { issueId, agentId: agent.id, runId: run.id },
-            "auto-advanced task to in_progress for agent without paperclip skill",
+            advanced
+              ? "auto-advanced task to in_progress for agent without paperclip skill"
+              : "left task as it is for agent without paperclip skill: it moved off todo before the run start wrote",
           );
         }
         if (runningIssue && runningIssue.status === "in_review") {
@@ -3619,15 +3622,26 @@ export function heartbeatService(db: Db) {
                 branchOnOrigin,
                 branchMerged,
               });
-              if (nextStatus) {
-                await issuesSvc.update(
+              // Guarded on the status read before the git checks above, which
+              // take seconds: a cancel or hold placed meanwhile stands. Unguarded,
+              // this was the `cancelled -> in_review` race.
+              const promoted = nextStatus
+                ? await issuesSvc.update(
                   issueId,
                   { status: nextStatus },
                   {
                     actor: { actorType: "agent", actorId: agent.id, agentId: agent.id, runId: run.id },
                     source: "no_skill_completion",
                   },
+                  { expectedStatuses: [existingIssue.status] },
+                )
+                : null;
+              if (nextStatus && !promoted) {
+                logger.info(
+                  { issueId, agentId: agent.id, runId: run.id, readStatus: existingIssue.status, nextStatus },
+                  "left task as it is for agent without paperclip skill: its status changed while the run's completion was checked",
                 );
+              } else if (nextStatus) {
                 logger.info(
                   { issueId, agentId: agent.id, runId: run.id, branch: branchToCheck, nextStatus },
                   nextStatus === "done"

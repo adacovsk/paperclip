@@ -1110,6 +1110,12 @@ export function issueService(db: Db) {
       id: string,
       data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] },
       context: IssueWriteContext = UNSPECIFIED_ISSUE_WRITE_CONTEXT,
+      /**
+       * Write only if the task is still in one of these statuses, else return
+       * null. For a server write decided on an earlier read: a move made in
+       * between (a cancel, a hold) stands instead of being overwritten.
+       */
+      options: { expectedStatuses?: readonly string[] } = {},
     ) => {
       const existing = await db
         .select()
@@ -1240,6 +1246,7 @@ export function issueService(db: Db) {
         const updated = await writeIssueStatus(tx, {
           issueId: id,
           set: patch,
+          where: options.expectedStatuses ? inArray(issues.status, [...options.expectedStatuses]) : undefined,
           context,
           // The caller's own row records only the status it asked for; one this
           // method derived (a hold parking the task) is logged by the helper.

@@ -141,6 +141,40 @@ describeEmbeddedPostgres("writeIssueStatus", () => {
     expect((await flagRows(issueId)).map((row) => (row.details as Record<string, unknown>).flags)).toEqual([["rejected"]]);
   });
 
+  it("leaves a move made since the caller's read standing when update is guarded", async () => {
+    const agentId = await seedAgent();
+    const issueId = await seedIssue({ status: "in_progress", assigneeAgentId: agentId });
+    // The operator cancels after a run's completion read `in_progress`.
+    await db.update(issues).set({ status: "cancelled" }).where(eq(issues.id, issueId));
+
+    const result = await svc.update(
+      issueId,
+      { status: "in_review" },
+      { actor: agentActor(agentId), source: "no_skill_completion" },
+      { expectedStatuses: ["in_progress"] },
+    );
+
+    expect(result).toBeNull();
+    const row = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
+    expect(row.status).toBe("cancelled");
+    expect(await statusRows(issueId)).toHaveLength(0);
+    expect(await flagRows(issueId)).toHaveLength(0);
+  });
+
+  it("writes a guarded update whose expected status still holds", async () => {
+    const agentId = await seedAgent();
+    const issueId = await seedIssue({ status: "in_progress", assigneeAgentId: agentId });
+
+    const result = await svc.update(
+      issueId,
+      { status: "in_review" },
+      { actor: agentActor(agentId), source: "no_skill_completion" },
+      { expectedStatuses: ["in_progress"] },
+    );
+
+    expect(result?.status).toBe("in_review");
+  });
+
   it("writes no flag for an allowed move", async () => {
     const agentId = await seedAgent();
     const issueId = await seedIssue({ assigneeAgentId: agentId });
