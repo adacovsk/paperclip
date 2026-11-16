@@ -692,6 +692,17 @@ accept_cloud_work() {
     reject "cloud commits delete files"
   fi
 
+  # A FAIL verdict cannot land, so its commits are not taken. Taking them would
+  # cost the local guard run below, queued behind every other gate on the shared
+  # slots, for work whose result is already red; and they cannot be taken without
+  # it, because Landing trusts the cloud's own verify for a later PASS and this
+  # run is the only local check the VM's commits ever get. The worktree stays at
+  # the launched head and the next launch builds the fix again.
+  if [ "$(field "$body" result)" = FAIL ] && [ "$work" != "$lease" ]; then
+    echo "not taken: FAIL verdict; $(git rev-list --count "$from..$work") commit(s) left on $ref, worktree stays at $lease"
+    return 0
+  fi
+
   if [ "$resolve" = 1 ]; then
     git reset -q --keep "$work" || reject "moving the worktree to the resolved work failed"
   else
