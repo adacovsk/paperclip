@@ -451,6 +451,15 @@ setup AA-28; commit src/a.rs "fn fixed() {}" fix; publish AA-28
 check "guard suite failing on cloud work -> rejected" "$?" 1
 check "worktree reset to launched head" "$(g rev-parse HEAD)" "$LEASE"
 
+# A FAIL verdict's commits are not taken, so the guard suite never runs for them:
+# PIXI_RC=1 would reject them if it did.
+setup AA-34; commit src/a.rs "fn fixed() {}" fix; publish AA-34
+printf 'CLOUD-VERIFY-V2\nresult: FAIL\n' > "$CLOUD_VERIFY_DIR/AA-34.cloud.verdict"
+( cd "$R" && PATH="$REALPATH" PIXI_RC=1 CLOUD_VERIFY_PIXI_BIN="$PIXI" "$CV" accept AA-34 >/dev/null 2>&1 )
+check "FAIL verdict with commits -> not taken, no guard run" "$?" 0
+check "FAIL verdict leaves worktree at launched head" "$(g rev-parse HEAD)" "$LEASE"
+check "FAIL verdict records no rejection" "$([ -f "$CLOUD_VERIFY_DIR/AA-34.cloud.rejected" ] && echo yes || echo no)" no
+
 setup AA-29; commit src/a.rs "fn fixed() {}" fix; publish AA-29
 printf 'dirty\n' >> "$R/src/a.rs"
 accept AA-29;                                   check "uncommitted edit to a file the cloud changed -> rejected" "$?" 1
