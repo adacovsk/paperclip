@@ -23,6 +23,7 @@ whole instruction set. This script runs those rows directly:
   hold `planner`, blocked and unassigned   -> todo, assigned to the Planner (its wake)
   `todo`, no assignee, past the grace      -> backlog, so promotion dispatches it
   same work filed twice, copy unstarted     -> cancel it, re-point holds on it (dedupe.py)
+  open PR on `task/<id>`, task cancelled    -> close it unmerged, branch kept (cancelled_prs.py)
   GitHub issue's linked tasks all finished, -> close it with the landing record; roadmapped
     no roadmap line names it                   and uncovered -> one Planner task (issue_links.py)
   base-red marker, main touched the break -> requeue the verify (requeue-base-red.sh)
@@ -89,6 +90,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import cancelled_prs  # noqa: E402
 import dedupe  # noqa: E402
 import issue_links  # noqa: E402
 import promote as promotion  # noqa: E402
@@ -1513,6 +1515,8 @@ def sweep(api: Api, project: Path) -> None:
         dedupe_duplicates(api, project)
     with skip_unreachable("issue-links"):
         sweep_issue_links(api, project, agents)
+    with skip_unreachable("cancelled-prs"):
+        cancelled_prs.sweep(api, project, prs)
     # Before promotion, so a task parked here is a candidate this same sweep.
     with skip_unreachable("park-stranded-todos"):
         park_stranded_todos(api)
