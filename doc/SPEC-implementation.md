@@ -384,7 +384,7 @@ Two rules shape it: `backlog` is reached only from work that has not started, an
 
 The table was ruled pair by pair against the logged history. The list it replaced allowed 15 pairs and called `done`/`cancelled` terminal; it disallowed 48% of real transitions, so it was never enforced.
 
-**Enforcement is report-only for now.** A flagged move still happens; it writes an `issue.status_transition_flagged` activity row (as the system, with the actor, source and flag kinds in `details`) and a server warning. Once the callers making flagged moves are fixed, `reject` and `operator` become a `409`.
+**Enforcement.** A `reject` move, and an `operator` move made by an agent or the server, is refused: nothing is written and the REST call answers `409` with the pair and the reason. The server's own writes at a run's start and end (`no_skill_run_start`, `no_skill_completion`, `run_escalation`) are skipped instead of thrown, leaving the task as it is. A user actor is never refused: the operator may make any move. The move is refused only after its guarded `UPDATE` matched, so a write its guard would have skipped still returns nothing rather than a `409`. Every flagged move, refused or not, writes an `issue.status_transition_flagged` activity row (as the system, with the actor, source, flag kinds and `refused` in `details`) and a server warning. The three checks the table cannot express (`review_without_work`, `completion_over_hold`, `in_progress_without_run`) are reported and never refused.
 
 Side effects:
 

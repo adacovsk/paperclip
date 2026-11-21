@@ -80,8 +80,9 @@ PARKED_SECONDS = float(os.environ.get("FACILITATOR_PARKED_SECONDS", 48 * 3600))
 DIGEST_SECONDS = float(os.environ.get("FACILITATOR_DIGEST_SECONDS", 24 * 3600))
 DIGEST_ROWS = int(os.environ.get("FACILITATOR_DIGEST_ROWS", 1000))
 QUOTA_ERROR = "claude_usage_limit"
-#: The row the server writes for a status move its transition table flags (stage 1:
-#: reported, not refused). Read over the same window as the run digest.
+#: The row the server writes for a status move its transition table flags, whether
+#: the move was refused (`details.refused`) or let through. Read over the same
+#: window as the run digest.
 FLAG_ACTION = "issue.status_transition_flagged"
 FLAG_ROWS = int(os.environ.get("FACILITATOR_FLAG_ROWS", 1000))
 #: Call sites that are the server's own writes. They record the run's agent as the

@@ -10,6 +10,7 @@ import { issueService } from "../services/issues.ts";
 import {
   ISSUE_STATUS_CHANGED_ACTION,
   ISSUE_STATUS_TRANSITION_FLAGGED_ACTION,
+  ISSUE_STATUS_TRANSITIONS,
   writeIssueStatus,
 } from "../services/issue-status.ts";
 
@@ -94,6 +95,14 @@ describeEmbeddedPostgres("writeIssueStatus", () => {
       .then((rows) => rows.filter((row) => row.action === ISSUE_STATUS_CHANGED_ACTION));
   }
 
+  function statusOf(issueId: string) {
+    return db
+      .select({ status: issues.status })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]?.status);
+  }
+
   function flagRows(issueId: string) {
     return db
       .select()
@@ -102,18 +111,20 @@ describeEmbeddedPostgres("writeIssueStatus", () => {
       .then((rows) => rows.filter((row) => row.action === ISSUE_STATUS_TRANSITION_FLAGGED_ACTION));
   }
 
-  it("lets a flagged move through and records the flag as the system", async () => {
+  it("refuses a rejected move with a 409, writes nothing, and still records the flag", async () => {
     const agentId = await seedAgent();
     const runId = await seedRun(agentId);
     const issueId = await seedIssue({ status: "cancelled" });
 
-    const result = await writeIssueStatus(db, {
-      issueId,
-      set: { status: "done" },
-      context: { actor: agentActor(agentId, runId), source: "issue_patch" },
-    });
+    await expect(
+      writeIssueStatus(db, {
+        issueId,
+        set: { status: "done" },
+        context: { actor: agentActor(agentId, runId), source: "issue_patch" },
+      }),
+    ).rejects.toMatchObject({ status: 409, details: { from: "cancelled", to: "done", flags: ["rejected"] } });
 
-    expect(result?.row.status).toBe("done");
+    expect(await statusOf(issueId)).toBe("cancelled");
     const flags = await flagRows(issueId);
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ actorType: "system", actorId: "issue_status_table", agentId: null, runId: null });
@@ -123,7 +134,97 @@ describeEmbeddedPostgres("writeIssueStatus", () => {
       source: "issue_patch",
       flags: ["rejected"],
       actor: { actorType: "agent", actorId: agentId, runId },
+      refused: true,
     });
+    expect(await statusRows(issueId)).toHaveLength(0);
+  });
+
+  it("refuses every reject and operator cell to an agent and to the server", async () => {
+    const agentId = await seedAgent();
+    const refusedPairs = Object.entries(ISSUE_STATUS_TRANSITIONS).flatMap(([from, row]) =>
+      Object.entries(row).filter(([, rule]) => rule !== "allow").map(([to]) => [from, to] as const));
+    expect(refusedPairs.length).toBeGreaterThan(0);
+
+    for (const [from, to] of refusedPairs) {
+      for (const actor of [agentActor(agentId), { actorType: "system" as const, actorId: "issue_service" }]) {
+        const issueId = await seedIssue({ status: from });
+        await expect(
+          writeIssueStatus(db, { issueId, set: { status: to }, context: { actor, source: "issue_patch" } }),
+          `${from} -> ${to} by ${actor.actorType}`,
+        ).rejects.toMatchObject({ status: 409 });
+        expect(await statusOf(issueId), `${from} -> ${to} by ${actor.actorType}`).toBe(from);
+      }
+    }
+  });
+
+  it("lets the operator make any refused move, and records it as flagged but not refused", async () => {
+    const operator = { actorType: "user" as const, actorId: "local-operator" };
+    const rejected = await seedIssue({ status: "done" });
+    const operatorOnly = await seedIssue({ status: "cancelled" });
+
+    await writeIssueStatus(db, { issueId: rejected, set: { status: "cancelled" }, context: { actor: operator, source: "issue_patch" } });
+    await writeIssueStatus(db, { issueId: operatorOnly, set: { status: "in_review" }, context: { actor: operator, source: "issue_patch" } });
+
+    expect(await statusOf(rejected)).toBe("cancelled");
+    expect(await statusOf(operatorOnly)).toBe("in_review");
+    expect((await flagRows(rejected)).map((row) => row.details)).toMatchObject([{ flags: ["rejected"], refused: false }]);
+    expect(await flagRows(operatorOnly)).toHaveLength(0);
+  });
+
+  it("skips, not throws, a refused move the server makes at a run's start or end", async () => {
+    const agentId = await seedAgent();
+    for (const source of ["no_skill_run_start", "no_skill_completion", "run_escalation"] as const) {
+      const issueId = await seedIssue({ status: "done" });
+
+      const result = await svc.update(issueId, { status: "blocked" }, { actor: agentActor(agentId), source });
+
+      expect(result, source).toBeNull();
+      expect(await statusOf(issueId), source).toBe("done");
+      expect((await flagRows(issueId)).map((row) => row.details), source).toMatchObject([{ flags: ["rejected"], refused: true, source }]);
+    }
+  });
+
+  it("does not refuse a move its guard would have skipped", async () => {
+    const agentId = await seedAgent();
+    const issueId = await seedIssue({ status: "done" });
+
+    const result = await writeIssueStatus(db, {
+      issueId,
+      set: { status: "blocked" },
+      where: eq(issues.status, "in_review"),
+      context: { actor: agentActor(agentId), source: "issue_patch" },
+    });
+
+    expect(result).toBeNull();
+    expect(await statusOf(issueId)).toBe("done");
+    expect(await flagRows(issueId)).toHaveLength(0);
+  });
+
+  it("refuses through update(), rolls its transaction back, and keeps the flag row", async () => {
+    const agentId = await seedAgent();
+    const issueId = await seedIssue({ status: "in_review", title: "Before" });
+
+    await expect(
+      svc.update(issueId, { status: "backlog", title: "After" }, { actor: agentActor(agentId), source: "issue_patch", statusLoggedByCaller: true }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    const row = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
+    expect(row).toMatchObject({ status: "in_review", title: "Before" });
+    expect((await flagRows(issueId)).map((flag) => flag.details)).toMatchObject([{ flags: ["rejected"], refused: true }]);
+  });
+
+  it("lets a move through whose flag is not a refusing kind", async () => {
+    const agentId = await seedAgent();
+    const issueId = await seedIssue({ status: "todo" });
+
+    const result = await writeIssueStatus(db, {
+      issueId,
+      set: { status: "in_progress" },
+      context: { actor: agentActor(agentId), source: "issue_patch" },
+    });
+
+    expect(result?.row.status).toBe("in_progress");
+    expect((await flagRows(issueId)).map((row) => row.details)).toMatchObject([{ flags: ["in_progress_without_run"], refused: false }]);
     expect(await statusRows(issueId)).toHaveLength(1);
   });
 
