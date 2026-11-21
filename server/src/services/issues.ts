@@ -1252,6 +1252,7 @@ export function issueService(db: Db) {
           set: patch,
           where: options.expectedStatuses ? inArray(issues.status, [...options.expectedStatuses]) : undefined,
           context,
+          flagDb: db,
           // The caller's own row records only the status it asked for; one this
           // method derived (a hold parking the task) is logged by the helper.
           skipActivity: context.statusLoggedByCaller === true && data.status !== undefined,

@@ -72,7 +72,7 @@ summary wakes you again — six consecutive no-op fires, observed.
 
 ## Status Moves
 
-The server checks every status change against a transition table (`doc/SPEC-implementation.md` §8.2). A move it does not permit is flagged now (an `issue.status_transition_flagged` row naming you) and will be refused with `409`. Moves an agent never makes:
+The server checks every status change against a transition table (`doc/SPEC-implementation.md` §8.2). A move it does not permit is refused with `409`: nothing is written, and an `issue.status_transition_flagged` row names you. **Do not retry a refused move as it is, and do not comment about it** (a comment wakes another agent): re-read the task and make a permitted move from the list below, or leave the task where it is. A comment sent in the same `PATCH` as the refused status is already on the task, so do not post it again. Moves an agent never makes:
 
 - **Out of `done` or `cancelled`, except to `todo`.** Reopen to `todo` with a comment; to hold a reopened task, place the hold in a second write once it is `todo`. `done ↔ cancelled`, and `-> backlog`, `-> blocked` or `-> in_progress` from either, are refused. `done -> in_review` is for the Coordinator's PR-evidence audit (a task closed with no PR, reopened for a fresh verify); `cancelled -> in_review` is the operator's.
 - **To `backlog` from work that started.** `backlog` is reached only from `todo` or `blocked`; an `in_progress` or `in_review` task is finished, cancelled or held, not re-planned.

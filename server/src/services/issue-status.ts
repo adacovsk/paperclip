@@ -166,9 +166,8 @@ function isStageSubtask(issue: CheckTransitionInput["issue"]): boolean {
  * What is wrong with one transition, if anything: the table's ruling for the
  * pair, plus three checks a from/to table cannot express. Pure.
  *
- * Stage 1 only reports these (`writeIssueStatus` logs them and lets the write
- * through), so the callers that make a flagged move can be found and fixed
- * before stage 2 turns `operator_only` and `rejected` into a 409.
+ * `writeIssueStatus` records every flag as an activity row. Which flags also
+ * stop the write is `refusedFlags`'s decision, not this function's.
  */
 export function checkTransition({ from, to, context, issue }: CheckTransitionInput): TransitionFlag[] {
   if (from === to) return [];
@@ -194,6 +193,42 @@ export function checkTransition({ from, to, context, issue }: CheckTransitionInp
   return flags;
 }
 
+/** The flag kinds that stop a write. The other three are reported and let through. */
+const REFUSED_FLAG_KINDS: readonly TransitionFlagKind[] = ["operator_only", "rejected"];
+
+/**
+ * Writes the server makes on its own at a run's start or end. A refusal there
+ * is skipped like a failed guard (the task is left as it is), never thrown: the
+ * throw would surface inside the heartbeat, which has no caller to answer 409 to.
+ */
+const SKIP_ON_REFUSAL_SOURCES: readonly IssueStatusSource[] = [
+  "no_skill_run_start",
+  "no_skill_completion",
+  "run_escalation",
+];
+
+/**
+ * The flags that refuse this write. None for a user actor: the operator may
+ * make any move, a `reject` cell included, and it is still recorded as flagged.
+ */
+export function refusedFlags(flags: TransitionFlag[], context: IssueWriteContext): TransitionFlag[] {
+  if (context.actor.actorType === "user") return [];
+  return flags.filter((flag) => REFUSED_FLAG_KINDS.includes(flag.kind));
+}
+
+/** Thrown inside the write's transaction to roll the UPDATE back; never leaves `writeIssueStatus`. */
+class TransitionRefused extends Error {
+  constructor(
+    readonly from: string,
+    readonly to: string,
+    readonly identifier: string | null,
+    readonly flags: TransitionFlag[],
+    readonly refused: TransitionFlag[],
+  ) {
+    super("issue status transition refused");
+  }
+}
+
 type IssueRow = typeof issues.$inferSelect;
 // `status` is a plain value, never a SQL expression: the transition check and
 // the from/to log both need to know the target before the write.
@@ -214,6 +249,12 @@ export interface WriteIssueStatusInput {
   context: IssueWriteContext;
   /** Skip the activity row even if status changed. Used by `update` for `statusLoggedByCaller`. */
   skipActivity?: boolean;
+  /**
+   * Where a refused move's flag row is written. A caller that passes its own
+   * transaction as `dbOrTx` passes the top-level db here: the 409 rolls that
+   * transaction back, and a row written inside it would go with it.
+   */
+  flagDb?: DbOrTx;
 }
 
 export interface WriteIssueStatusResult {
@@ -228,7 +269,13 @@ export interface WriteIssueStatusResult {
  * transaction as the update. The row lock is the one the UPDATE would take
  * anyway, taken one statement earlier, so the reading cannot go stale between
  * the two and the guard in `where` is still what decides whether the write
- * wins. The pre-read is for logging only; it never short-circuits the update.
+ * wins. The pre-read never short-circuits the update.
+ *
+ * A move the table refuses (`refusedFlags`) is rolled back and answered with a
+ * 409, or with null for the server's own run-start and run-end writes. It is
+ * refused only after the guarded UPDATE matched, never at the pre-read: a write
+ * whose `where` guard would skip it returns null, and does not throw on a move
+ * it was never going to make. The flag row is written either way.
  */
 export async function writeIssueStatus(
   dbOrTx: DbOrTx,
@@ -250,7 +297,7 @@ export async function writeIssueStatus(
 
   // `transaction` on a transaction handle opens a savepoint, so this works for
   // callers that are already inside one.
-  return dbOrTx.transaction(async (tx) => {
+  const written = await dbOrTx.transaction(async (tx) => {
     const previous = await tx
       .select({ status: issues.status, title: issues.title, dedupeKey: issues.dedupeKey })
       .from(issues)
@@ -272,6 +319,12 @@ export async function writeIssueStatus(
     if (row.status === previous.status) return { row, previousStatus: previous.status };
     const transition = { issueId: row.id, from: previous.status, to: row.status, source: context.source };
 
+    const flags = checkTransition({ from: previous.status, to: row.status, context, issue: previous });
+    const refused = refusedFlags(flags, context);
+    if (refused.length > 0) {
+      throw new TransitionRefused(previous.status, row.status, row.identifier, flags, refused);
+    }
+
     if (!input.skipActivity) {
       await logInSavepoint(tx, {
         actorType: context.actor.actorType,
@@ -290,40 +343,81 @@ export async function writeIssueStatus(
       }, transition, "failed to log issue status transition");
     }
 
-    // Stage 1: report, never refuse. The write above already stands.
-    // Stage 2 refuses here, after the guarded UPDATE matched, never at the
-    // pre-read: a write whose `where` guard would skip it must return null, not
-    // throw on a move it was never going to make.
-    const flags = checkTransition({ from: previous.status, to: row.status, context, issue: previous });
     if (flags.length > 0) {
       logger.warn(
         { ...transition, actor: context.actor, flags },
         `issue status transition flagged: ${flags.map((flag) => flag.kind).join(", ")}`,
       );
-      // Written as the system, not as the actor: the actor did not flag anything,
-      // and an agent-attributed row would count toward its participation and cost.
-      await logInSavepoint(tx, {
-        actorType: "system",
-        actorId: "issue_status_table",
-        agentId: null,
-        runId: null,
-        action: ISSUE_STATUS_TRANSITION_FLAGGED_ACTION,
-        entityType: "issue",
-        entityId: row.id,
-        details: {
-          status: row.status,
-          _previous: { status: previous.status },
-          source: context.source,
-          identifier: row.identifier,
-          flags: flags.map((flag) => flag.kind),
-          reasons: flags.map((flag) => flag.reason),
-          actor: context.actor,
-        },
-      }, transition, "failed to log flagged issue status transition");
+      await logInSavepoint(
+        tx,
+        flaggedActivity(row.id, row.identifier, previous.status, row.status, context, flags, false),
+        transition,
+        "failed to log flagged issue status transition",
+      );
     }
 
     return { row, previousStatus: previous.status };
+  }).catch((err: unknown) => {
+    if (err instanceof TransitionRefused) return err;
+    throw err;
   });
+  if (!(written instanceof TransitionRefused)) return written;
+
+  const { from, to, identifier, flags, refused } = written;
+  const transition = { issueId, from, to, source: context.source };
+  const skipped = SKIP_ON_REFUSAL_SOURCES.includes(context.source);
+  logger.warn(
+    { ...transition, actor: context.actor, flags, skipped },
+    `issue status transition refused: ${refused.map((flag) => flag.kind).join(", ")}`,
+  );
+  await logActivity(
+    (input.flagDb ?? dbOrTx) as unknown as Db,
+    flaggedActivity(issueId, identifier, from, to, context, flags, true),
+  ).catch((err: unknown) => {
+    logger.warn({ err, ...transition }, "failed to log refused issue status transition");
+  });
+  if (skipped) return null;
+  throw conflict(
+    `Status move refused: ${refused.map((flag) => flag.reason).join("; ")}. ` +
+      "Nothing was written. Do not retry this move as it is: re-read the task and make a permitted move.",
+    { from, to, flags: refused.map((flag) => flag.kind), reasons: refused.map((flag) => flag.reason) },
+  );
+}
+
+/**
+ * The activity row for a flagged move. Written as the system, not as the actor:
+ * the actor did not flag anything, and an agent-attributed row would count
+ * toward its participation and cost. `status` is the status asked for; when
+ * `refused` is true the task did not reach it.
+ */
+function flaggedActivity(
+  issueId: string,
+  identifier: string | null,
+  from: string,
+  to: string,
+  context: IssueWriteContext,
+  flags: TransitionFlag[],
+  refused: boolean,
+): Parameters<typeof logActivity>[1] {
+  return {
+    actorType: "system",
+    actorId: "issue_status_table",
+    agentId: null,
+    runId: null,
+    action: ISSUE_STATUS_TRANSITION_FLAGGED_ACTION,
+    entityType: "issue",
+    entityId: issueId,
+    details: {
+      status: to,
+      _previous: { status: from },
+      source: context.source,
+      identifier,
+      flags: flags.map((flag) => flag.kind),
+      reasons: flags.map((flag) => flag.reason),
+      actor: context.actor,
+      refused,
+    },
+  };
 }
 
 /**
