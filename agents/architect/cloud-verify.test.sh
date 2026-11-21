@@ -750,6 +750,10 @@ chmod +x "$BIN/script"
 "$CV" launch AA-43 task/AA-43 >/dev/null 2>&1
 check "prompt sets the maximum background timeout" "$(grep -c 'timeout: 7200000' "$DIR/launch.cmd")" 1
 check "prompt offers INCONCLUSIVE"                 "$(grep -c 'PASS | FAIL | SUPERSEDED | INCONCLUSIVE' "$DIR/launch.cmd")" 1
+# The lib test rustc outgrew the VM's memory: without this step every verify
+# came back INCONCLUSIVE at cargo test --lib and fell through to the local queue.
+check "prompt adds swap before the gates"          "$(grep -c 'swapon /swapfile-verify' "$DIR/launch.cmd")" 1
+check "prompt reads a signal 9 kill as not judged" "$(grep -c 'killed by signal 9 with no compiler error judged' "$DIR/launch.cmd")" 1
 rm -f "$CLOUD_VERIFY_DIR"/AA-43.*
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

@@ -209,6 +209,18 @@ ${sync_text}
    No semaphore, no CARGO_INCREMENTAL, no job or codegen-unit limits.
    On 'No space left on device': cargo clean -p rust-bevy-rpg, then re-run.
 
+   MEMORY: ADD SWAP BEFORE THE FIRST cargo COMMAND. The rustc that compiles the
+   lib test target needs more memory than this VM has, and without swap the
+   kernel kills it (signal 9, no compiler error) before any test runs. Run
+   once, as root or through sudo, and record it as a cmd: line:
+     fallocate -l 16G /swapfile-verify && chmod 600 /swapfile-verify && mkswap /swapfile-verify && swapon /swapfile-verify
+   Then confirm with: free -m. If it fails, record the error text in the cmd:
+   line and carry on without it. Swap changes nothing that is built or tested.
+   A gate whose rustc is killed by signal 9 with no compiler error judged
+   nothing: do not count it as a fix round, re-run it at most once, and if it
+   is killed again go to step 6 with result: INCONCLUSIVE, naming the gate and
+   quoting the kill line under '--- errors ---'.
+
    HOW TO RUN AND WAIT. A background command is KILLED when it reaches its own
    timeout, and the default timeout (10 minutes) kills a cold clippy mid-compile.
    Run each gate as its own Bash call with run_in_background: true and
