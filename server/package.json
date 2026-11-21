@@ -54,7 +54,7 @@
     "@paperclipai/adapter-utils": "workspace:*",
     "@paperclipai/db": "workspace:*",
     "@paperclipai/shared": "workspace:*",
-    "better-auth": "1.7.14",
+    "better-auth": "1.7.17",
     "dompurify": "3.4.17",
     "dotenv": "18.0.9",
     "drizzle-orm": "0.45.4",
@@ -82,6 +82,6 @@
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   }
 }
