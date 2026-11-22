@@ -308,9 +308,11 @@ cmd_launch() {
   head="$(git rev-parse HEAD)" || die "cannot read HEAD" 98
   ref="$(ref_for "$task" "$head")"
 
-  # `--effort` must precede `--cloud`: `--cloud` takes an optional description,
-  # so `--cloud --effort low "..."` swallows the flag and the prompt never arrives.
-  local repair=0 resolve=0 wide=0 prior="" effort="${CLOUD_VERIFY_EFFORT:-low}"
+  # `--model` and `--effort` must precede `--cloud`: `--cloud` takes an optional
+  # description, so `--cloud --effort low "..."` swallows the flag and the prompt
+  # never arrives. The model is named, not left to the launching user's default,
+  # so a change to that default does not silently change what every VM runs.
+  local repair=0 resolve=0 wide=0 prior="" effort="${CLOUD_VERIFY_EFFORT:-low}" model="${CLOUD_VERIFY_MODEL:-claude-opus-5-5}"
   [ -f "$STATE_DIR/$task.cloud.main-repair" ] && repair=1
   [ -f "$STATE_DIR/$task.cloud.wide" ] && wide=1
   prior="$(cat "$STATE_DIR/$task.cloud.prior-rejection" 2>/dev/null)"
@@ -318,7 +320,7 @@ cmd_launch() {
   # restores the pre-split structure instead of porting onto main's.
   [ -f "$STATE_DIR/$task.cloud.resolve" ] && { resolve=1; effort="${CLOUD_VERIFY_RESOLVE_EFFORT:-high}"; }
   space_launch
-  out="$(script -qec "claude --effort $effort --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}" "$repair" "$resolve" "$wide" "$prior")")" /dev/null 2>&1)"
+  out="$(script -qec "claude --model $model --effort $effort --cloud $(printf '%q' "$(verify_prompt "$task" "$head" "$ref" "${CLOUD_VERIFY_FIX_CAP:-3}" "$repair" "$resolve" "$wide" "$prior")")" /dev/null 2>&1)"
   sid="$(printf '%s' "$out" | sed -n 's/.*\(session_[A-Za-z0-9]\{8,\}\).*/\1/p' | head -1)"
   [ -n "$sid" ] || { printf '%s\n' "$out" >&2; die "no session id in launch output"; }
 

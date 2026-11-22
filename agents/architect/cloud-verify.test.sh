@@ -328,11 +328,13 @@ rm -f "$CLOUD_VERIFY_DIR"/AA-16.cloud.*
 P="$(launched AA-16)"
 check "plain verify forbids rebasing"      "$(printf '%s' "$P" | grep -c 'Do NOT rebase or merge')" 1
 check "plain verify runs at low effort"    "$(printf '%s' "$P" | grep -c -- '--effort low')" 1
+check "plain verify names its model"       "$(printf '%s' "$P" | grep -c -- '--model claude-opus-5-5 --effort low --cloud')" 1
 : > "$CLOUD_VERIFY_DIR/AA-16.cloud.resolve"
 P="$(launched AA-16)"
 check "resolve verify rebases onto main"   "$(printf '%s' "$P" | grep -c 'CONFLICTS WITH CURRENT main')" 1
 check "resolve verify reports rebased-onto" "$(printf '%s' "$P" | grep -c 'rebased-onto:')" 1
 check "resolve verify runs at high effort" "$(printf '%s' "$P" | grep -c -- '--effort high')" 1
+check "resolve verify names its model"     "$(printf '%s' "$P" | grep -c -- '--model claude-opus-5-5 --effort high --cloud')" 1
 rm -f "$CLOUD_VERIFY_DIR/AA-16.cloud.resolve"; : > "$CLOUD_VERIFY_DIR/AA-16.cloud.wide"
 echo "guard suite failed" > "$CLOUD_VERIFY_DIR/AA-16.cloud.prior-rejection"
 P="$(launched AA-16)"
