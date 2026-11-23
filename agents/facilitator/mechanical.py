@@ -92,7 +92,10 @@ SERVER_SOURCES = frozenset({"no_skill_run_start", "no_skill_completion", "run_es
 #: be before its absence is the finding: a day's cadence plus half a day of slack.
 NIGHTLY_CONTEXT = os.environ.get("FACILITATOR_NIGHTLY_CONTEXT", "tester/nightly")
 NIGHTLY_STALE_SECONDS = float(os.environ.get("FACILITATOR_NIGHTLY_STALE_SECONDS", 36 * 3600))
-NIGHTLY_PAGES = 3
+#: Statuses are read this many commits to a query. The walk itself is bounded by
+#: NIGHTLY_STALE_SECONDS, with NIGHTLY_MAX_COMMITS as a backstop on a burst of merges.
+NIGHTLY_BATCH = 100
+NIGHTLY_MAX_COMMITS = 1000
 WEDGE_TITLE = "[class:wedged-dispatcher] "
 STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
 STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
@@ -443,31 +446,54 @@ def read_nightly(commits: list[dict], now: float) -> dict:
             "stale": True if reached > NIGHTLY_STALE_SECONDS else None}
 
 
-NIGHTLY_QUERY = """query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){
-ref(qualifiedName:"refs/heads/main"){target{... on Commit{history(first:100,after:$after){
-pageInfo{hasNextPage endCursor}
-nodes{oid committedDate status{contexts{context state createdAt}}}}}}}}}"""
+def first_parent(project: Path, now: float) -> list[dict]:
+    """origin/main's first-parent commits, newest first, through the first one older
+    than NIGHTLY_STALE_SECONDS.
+
+    The nightly status lands on a commit of main itself, so the walk is first-parent:
+    the full graph interleaves every merged branch's own commits, and on a day of many
+    merges a walk of a few hundred commits ends short of the age the reading needs.
+    The commit time of a first-parent commit is when it landed on main.
+    """
+    out = git(project, "log", "--first-parent", f"--max-count={NIGHTLY_MAX_COMMITS}",
+              "--format=%H%x09%cI", "origin/main").stdout
+    commits: list[dict] = []
+    for line in out.splitlines():
+        oid, _, date = line.partition("\t")
+        commits.append({"oid": oid, "committedDate": date})
+        if now - ts(date) > NIGHTLY_STALE_SECONDS:
+            break
+    return commits
+
+
+def commit_statuses(project: Path, oids: list[str]) -> dict[str, dict | None]:
+    """Each commit's combined status, by oid, from one GraphQL query."""
+    fields = "".join(f'c{i}:object(oid:"{oid}"){{... on Commit{{oid status{{contexts{{context state createdAt}}}}}}}}'
+                     for i, oid in enumerate(oids))
+    query = f"query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{{fields}}}}}"
+    out = subprocess.run(["gh", "api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-f", f"query={query}"],
+                         cwd=project, capture_output=True, text=True, timeout=60, check=True).stdout
+    found = json.loads(out)["data"]["repository"]
+    return {node["oid"]: node.get("status") for node in found.values() if node}
 
 
 def nightly(project: Path, now: float) -> dict:
-    """`read_nightly` over main's recent commits. A failed read is reported, not raised:
-    the rest of the sweep does not depend on it."""
-    commits: list[dict] = []
-    after = None
+    """`read_nightly` over main's first-parent commits. A failed read is reported, not
+    raised: the rest of the sweep does not depend on it."""
     try:
-        for _ in range(NIGHTLY_PAGES):
-            args = ["gh", "api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-f", f"query={NIGHTLY_QUERY}"]
-            if after:
-                args += ["-f", f"after={after}"]
-            out = subprocess.run(args, cwd=project, capture_output=True, text=True, timeout=60, check=True).stdout
-            history = json.loads(out)["data"]["repository"]["ref"]["target"]["history"]
-            commits += history["nodes"]
-            found = read_nightly(commits, now)
-            if found["sha"] or not history["pageInfo"]["hasNextPage"]:
+        # Best effort: a failed fetch leaves an older origin/main, whose statuses are still real.
+        git(project, "fetch", "--quiet", "origin", "main", check=False)
+        commits = first_parent(project, now)
+        for at in range(0, len(commits), NIGHTLY_BATCH):
+            batch = commits[at:at + NIGHTLY_BATCH]
+            statuses = commit_statuses(project, [c["oid"] for c in batch])
+            for c in batch:
+                c["status"] = statuses.get(c["oid"])
+            found = read_nightly(commits[:at + len(batch)], now)
+            if found["sha"]:
                 return found
-            after = history["pageInfo"]["endCursor"]
         return read_nightly(commits, now)
-    except (subprocess.SubprocessError, OSError, KeyError, TypeError, ValueError) as exc:
+    except (subprocess.SubprocessError, OSError, KeyError, TypeError, ValueError, AttributeError) as exc:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
