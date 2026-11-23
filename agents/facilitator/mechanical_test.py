@@ -128,9 +128,9 @@ class PlanToggles(unittest.TestCase):
 
 
 class Wedged(unittest.TestCase):
-    def run_(self, agent, status, minutes_ago):
-        return {"id": f"{agent}{status}{minutes_ago}", "agentId": agent, "agentName": agent, "status": status,
-                "createdAt": iso(minutes_ago / 60)}
+    def run_(self, agent, status, minutes_ago, source="on_demand"):
+        return {"id": f"{agent}{status}{minutes_ago}{source}", "agentId": agent, "agentName": agent,
+                "status": status, "invocationSource": source, "createdAt": iso(minutes_ago / 60)}
 
     def test_queued_with_none_running_past_the_threshold_is_wedged(self):
         found = m.wedged([self.run_("W", "queued", 40), self.run_("W", "queued", 5)], NOW)
@@ -138,6 +138,10 @@ class Wedged(unittest.TestCase):
 
     def test_an_agent_at_its_cap_is_not_wedged(self):
         self.assertEqual(m.wedged([self.run_("W", "queued", 40), self.run_("W", "running", 40)], NOW), [])
+
+    def test_a_detached_run_does_not_hide_a_wedge(self):
+        found = m.wedged([self.run_("W", "queued", 40), self.run_("W", "running", 40, "detached_external")], NOW)
+        self.assertEqual([(a["agentName"], a["queued"], a["running"]) for a in found], [("W", 1, 0)])
 
     def test_a_fresh_queue_is_not_wedged(self):
         self.assertEqual(m.wedged([self.run_("W", "queued", 5)], NOW), [])

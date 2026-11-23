@@ -94,6 +94,8 @@ NIGHTLY_CONTEXT = os.environ.get("FACILITATOR_NIGHTLY_CONTEXT", "tester/nightly"
 NIGHTLY_STALE_SECONDS = float(os.environ.get("FACILITATOR_NIGHTLY_STALE_SECONDS", 36 * 3600))
 NIGHTLY_PAGES = 3
 WEDGE_TITLE = "[class:wedged-dispatcher] "
+#: Runs opened for work executing outside the server; they occupy no dispatch slot.
+DETACHED_INVOCATION_SOURCE = "detached_external"
 STAGE_PREFIXES = ("Review:", "Verify:", "ci-fix:", "Rebase ")
 STAGE_KEYS = {"review", "verify", "ci-fix", "rebase"}
 
@@ -479,13 +481,17 @@ def wedged(live_runs: list[dict], now: float) -> list[dict]:
 
     Not a missed wake: toggling an assignee only queues another run behind the block.
     The fix is a server restart, which is the operator's, so this only reports.
+
+    A `detached_external` run does not count as running: it holds no dispatch slot,
+    so queued runs beside it should start, and one that has not is the same wedge.
     """
     by_agent: dict[str, dict] = {}
     for run in live_runs:
         a = by_agent.setdefault(run["agentId"], {"agentId": run["agentId"], "agentName": run.get("agentName"),
                                                  "queued": 0, "running": 0, "oldest": None})
         if run["status"] == "running":
-            a["running"] += 1
+            if run.get("invocationSource") != DETACHED_INVOCATION_SOURCE:
+                a["running"] += 1
         elif run["status"] == "queued":
             a["queued"] += 1
             if a["oldest"] is None or run["createdAt"] < a["oldest"]:
