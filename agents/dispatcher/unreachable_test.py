@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import subprocess
 import sys
 import unittest
 import urllib.error
@@ -97,6 +98,18 @@ class Guard(unittest.TestCase):
         with self.assertRaises(KeyError):
             with skip_unreachable("x"):
                 raise KeyError("k")
+
+    def test_a_failed_or_timed_out_subprocess_is_contained(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with skip_unreachable("open-prs") as failed:
+                raise subprocess.CalledProcessError(1, ["gh", "pr", "list", "--state", "open"], "",
+                                                    "gh: not logged in\nrun gh auth login")
+            with skip_unreachable("requeue") as slow:
+                raise subprocess.TimeoutExpired(["bash", "requeue-base-red.sh"], 300)
+        self.assertTrue(failed.skipped and slow.skipped)
+        self.assertIn("open-prs: gh pr list exited 1: gh: not logged in; left for the next sweep", out.getvalue())
+        self.assertIn("requeue: bash requeue-base-red.sh timed out after 300s", out.getvalue())
 
     def test_it_records_whether_it_skipped(self):
         with contextlib.redirect_stdout(io.StringIO()):

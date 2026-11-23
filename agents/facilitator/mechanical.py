@@ -731,8 +731,13 @@ def save(path: Path, data: dict, dry_run: bool) -> None:
     path.write_text(json.dumps(data, indent=1))
 
 
-def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_since=None) -> dict:
-    """Run every check, act on them, and write REPORT_FILE. Returns the report."""
+def sweep(api, project: Path, open_heads: set[str] | None, roster: list[dict], quiet_since=None) -> dict:
+    """Run every check, act on them, and write REPORT_FILE. Returns the report.
+
+    `open_heads` None means the open-PR listing could not be read. The branch scan
+    then keeps its last report and runs on a later sweep: with no listing every
+    branch reads as PR-less, and a live PR's branch would be judged deletable.
+    """
     now = time.time()
     me = os.environ.get("PAPERCLIP_AGENT_ID")
     paused = {a["id"] for a in roster if a.get("status") in ("paused", "terminated")}
@@ -774,12 +779,12 @@ def sweep(api, project: Path, open_heads: set[str], roster: list[dict], quiet_si
     # A merge-tree per remote branch is a minute of the Dispatcher's 600 s budget, and a
     # branch whose work landed costs nothing by waiting, so this runs on its own clock.
     previous = load(REPORT_FILE)
-    if now - previous.get("branchesAt", 0) >= BRANCH_SCAN_SECONDS:
+    if open_heads is not None and now - previous.get("branchesAt", 0) >= BRANCH_SCAN_SECONDS:
         merged, branches_at = merged_branches(project, open_heads, api.dry_run, now), now
         stranded = stranded_branches(project, api.dry_run, now, lambda ident: task_status(api, ident))
         main_nightly = nightly(project, now)
     else:
-        merged, branches_at = previous.get("branchesOnMain", []), previous["branchesAt"]
+        merged, branches_at = previous.get("branchesOnMain", []), previous.get("branchesAt", 0)
         stranded = previous.get("strandedPushed", [])
         main_nightly = previous.get("nightly") or nightly(project, now)
 

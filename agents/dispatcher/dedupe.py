@@ -115,10 +115,20 @@ def repoint(hold: dict | None, moved: dict[str, str]) -> tuple[list[str], list[s
 
 
 def commits_ahead(project: Path, ident: str) -> int:
-    """Commits on the task's local branch past origin/main; 0 when it has no branch."""
+    """Commits on the task's local branch past origin/main; 0 when it has no branch.
+
+    Raises `CalledProcessError` when the branch exists and the count still failed:
+    a 0 here is what licenses cancelling the copy, so a failed read must not be one.
+    """
     out = subprocess.run(["git", "-C", str(project), "rev-list", "--count", f"origin/main..task/{ident}"],
                          capture_output=True, text=True, timeout=60)
-    return int(out.stdout.strip() or 0) if out.returncode == 0 else 0
+    if out.returncode == 0:
+        return int(out.stdout.strip() or 0)
+    branch = subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "--quiet", f"refs/heads/task/{ident}"],
+                            capture_output=True, text=True, timeout=60)
+    if branch.returncode == 1:  # `--quiet`: 1 is "no such ref", the one answer that means no commits
+        return 0
+    raise subprocess.CalledProcessError(out.returncode, out.args, out.stdout, out.stderr)
 
 
 def sweep(api, project: Path) -> int:
@@ -127,7 +137,14 @@ def sweep(api, project: Path) -> int:
     live = [i for i in api.issues(status="backlog,todo,in_progress,in_review,blocked,done") if is_candidate(i, now)]
     moved: dict[str, str] = {}
     for group in groups(live):
-        ahead = {i["identifier"]: commits_ahead(project, i["identifier"]) for i in group}
+        try:
+            ahead = {i["identifier"]: commits_ahead(project, i["identifier"]) for i in group}
+        except subprocess.SubprocessError as exc:
+            # One group's unread branch costs that group: the copies cancelled in
+            # the others still get their holds re-pointed below.
+            print(f"dedupe  {group[0]['identifier']}: branch count failed ({exc}); left for the next sweep",
+                  flush=True)
+            continue
         keep, cancel, left = plan(group, ahead)
         for issue in left:
             print(f"dedupe  {issue['identifier']}: duplicate of {keep['identifier']} but its branch "
