@@ -40,12 +40,22 @@ export function resolveNoSkillCompletionStatus(input: {
 
   // Promotion is an ALLOWLIST, not a denylist. A no-skill run exits 0 whether or
   // not it did any work, so reaching this point is no evidence about the task —
-  // only the task's own status says whether a promotion is wanted. Just two
-  // statuses describe a task that was dispatched and is still in flight, and
-  // therefore legitimately owes an `in_review`.
+  // only the task's own status says whether a promotion is wanted. One status
+  // describes a task that was dispatched and is still in flight, and therefore
+  // legitimately owes an `in_review`: `in_progress`, which the run's own start
+  // wrote (`no_skill_run_start`, `todo -> in_progress`).
   //
   // Every other status is someone's deliberate decision that this task is not
   // advancing, and promoting it silently discards that decision:
+  //   - `todo`      — queued for work. The run's start moved a `todo` task to
+  //                   `in_progress`, so finding `todo` at the run's end means
+  //                   another writer re-queued it while the run was in flight
+  //                   (a reset for a fresh Worker pass, a reopen, an unblock of
+  //                   a task the run started on while held). The queued pass
+  //                   has not run; `todo -> in_review` on a task that is not a
+  //                   stage subtask skips its Worker, which the transition table
+  //                   flags as `review_without_work`. The dispatcher picks the
+  //                   task up from `todo` as it is.
   //   - `blocked`   — coordinator/operator held it (usually an unmerged
   //                   cross-task dependency); promoting re-enters it into the
   //                   pipeline against a base commit that lacks that dependency.
@@ -55,13 +65,9 @@ export function resolveNoSkillCompletionStatus(input: {
   //   - `done`      — already terminal.
   //   - `in_review` — already where it needs to be.
   //
-  // This was previously written as a denylist that named only `blocked`, so
-  // every other non-active status still fell through to `in_review`. That let a
-  // task reverted to `backlog` mid-run get flipped back into the pipeline by the
-  // very run the revert was meant to abandon, four times over. Keep this an
-  // allowlist: a status added to the system later must opt IN to promotion
-  // rather than silently inherit it.
-  if (input.currentStatus === "todo" || input.currentStatus === "in_progress") return "in_review";
+  // Keep this an allowlist: a status added to the system later must opt IN to
+  // promotion rather than silently inherit it.
+  if (input.currentStatus === "in_progress") return "in_review";
 
   return null;
 }
@@ -76,11 +82,9 @@ export function resolveNoSkillCompletionStatus(input: {
  * or parking it `blocked` and unassigned) belongs to its new owner from that
  * write on, and the old run's exit is not news about it. Acting on it anyway
  * did two kinds of damage. The run's final message landed after the `Held:`
- * line, burying it for any reader of the newest comment. Worse, a `planner`
- * hold stands on a `todo` task, `todo` is in the promotion allowlist, so the
- * old run's exit flipped the Planner's task to `in_review`, which clears the
- * hold and is a status the Planner never reads; two Verify stages sat there
- * three days with no run. The run's own record keeps its result either way.
+ * line, burying it for any reader of the newest comment. Worse, the old run's
+ * exit could promote the Planner's task to `in_review`, which clears the hold
+ * and is a status the Planner never reads, so the stage sat with no run. The run's own record keeps its result either way.
  */
 export function noSkillRunOwnsTask(input: {
   /** The agent whose run just finished. */
