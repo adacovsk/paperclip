@@ -1,8 +1,12 @@
 """Decision tests for dedupe.py.  Run: python3 -m unittest agents/dispatcher/dedupe_test.py"""
 
+import contextlib
 import importlib.util
+import io
+import subprocess
 import sys
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -123,6 +127,49 @@ class Repoint(unittest.TestCase):
 
     def test_a_task_with_no_hold_is_left(self):
         self.assertIsNone(dedupe.repoint(None, {"AA-10": "AA-1"}))
+
+
+class CommitsAhead(unittest.TestCase):
+    """A 0 licenses cancelling the copy, so only a missing branch may read as 0."""
+
+    @staticmethod
+    def runs(*codes):
+        return [subprocess.CompletedProcess([], code, "3\n" if code == 0 else "", "") for code in codes]
+
+    def test_a_branch_ahead_is_counted(self):
+        with mock.patch.object(dedupe.subprocess, "run", side_effect=self.runs(0)):
+            self.assertEqual(dedupe.commits_ahead(Path("/p"), "T-1"), 3)
+
+    def test_no_branch_is_no_commits(self):
+        with mock.patch.object(dedupe.subprocess, "run", side_effect=self.runs(128, 1)):
+            self.assertEqual(dedupe.commits_ahead(Path("/p"), "T-1"), 0)
+
+    def test_a_failed_count_of_a_branch_that_exists_raises(self):
+        with mock.patch.object(dedupe.subprocess, "run", side_effect=self.runs(128, 0)):
+            with self.assertRaises(subprocess.CalledProcessError):
+                dedupe.commits_ahead(Path("/p"), "T-1")
+
+    def test_an_unread_group_cancels_nothing(self):
+        class Api:
+            dry_run = True
+            cancelled = []
+
+            def issues(self, **query):
+                return [task("T-1", "Retire a thing", "backlog", "2026-10-07T00:00:00Z"),
+                        task("T-2", "Retire a thing", "backlog", "2026-10-08T00:00:00Z")]
+
+            def set_status(self, issue, *a):
+                self.cancelled.append(issue["identifier"])
+
+        api = Api()
+        failed = subprocess.CalledProcessError(128, ["git"], "", "fatal: bad object")
+        with mock.patch.object(dedupe, "commits_ahead", side_effect=failed), \
+                mock.patch.object(dedupe, "datetime", wraps=datetime) as clock, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            clock.now.return_value = NOW
+            self.assertEqual(dedupe.sweep(api, Path("/p")), 0)
+        self.assertEqual(api.cancelled, [])
+        self.assertIn("left for the next sweep", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Decision tests for mechanical.py.  Run: python3 -m unittest agents/facilitator/mechanical_test.py"""
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -648,6 +649,24 @@ class SweepStranded(unittest.TestCase):
         finally:
             m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE = saved
         self.assertIn("error", report["statusFlags"])
+
+    def test_without_the_pr_listing_the_branch_scan_waits(self):
+        # With no listing every branch reads as PR-less, so a live PR's branch would be deletable.
+        scanned = []
+        saved = (m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE)
+        try:
+            m.merged_branches = lambda *a, **k: scanned.append(a) or []
+            m.nightly = lambda *a, **k: {}
+            m.stranded_branches = lambda *a, **k: scanned.append(a) or []
+            with tempfile.TemporaryDirectory() as tmp:
+                m.REPORT_FILE = Path(tmp, "report.json")
+                m.REPORT_FILE.write_text(json.dumps({"branchesAt": 0, "branchesOnMain": [{"branch": "b"}]}))
+                report = m.sweep(self.Api(), Path(tmp), None, [])
+        finally:
+            m.merged_branches, m.stranded_branches, m.nightly, m.REPORT_FILE = saved
+        self.assertEqual(scanned, [])
+        self.assertEqual(report["branchesOnMain"], [{"branch": "b"}])
+        self.assertEqual(report["branchesAt"], 0)  # so the next sweep with a listing scans
 
     def test_task_status(self):
         class Missing(Exception):

@@ -94,7 +94,7 @@ import cancelled_prs  # noqa: E402
 import dedupe  # noqa: E402
 import issue_links  # noqa: E402
 import promote as promotion  # noqa: E402
-from unreachable import ApiUnreachable, skip_unreachable, transport_failure  # noqa: E402
+from unreachable import ApiUnreachable, skip_unreachable, subprocess_words, transport_failure  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("mechanical", HERE.parent / "facilitator" / "mechanical.py")
 facilitator = importlib.util.module_from_spec(_spec)
@@ -1041,8 +1041,11 @@ def verify_capacity() -> int | None:
         slots = int(Path("/tmp/cargo-sem.slots").read_text().strip())
     except (OSError, ValueError):
         slots = 2
+    # `check=True`: a census that failed prints nothing, and nothing read as no
+    # build alive would hand out every slot at once.
     live = subprocess.run(
         [str(HERE.parent / "architect" / "verify-census.sh")], capture_output=True, text=True, timeout=60,
+        check=True,
     ).stdout.split()
     return max(0, 2 * slots - len(live))
 
@@ -1290,54 +1293,95 @@ def sweep(api: Api, project: Path) -> None:
     agents = {a["name"]: a["id"] for a in roster}
     # First, so no step below dispatches or re-fires a stage whose parent is closed.
     # Contained like every later step: an orphan left open is a wasted run, while
-    # an uncaught `ApiUnreachable` here ended the sweep before any step below ran.
+    # a failure escaping here would end the sweep before any step below ran.
     with skip_unreachable("cancel-orphan-stages"):
         cancel_orphan_stages(api)
     worker = next(a for a in roster if a["name"] == "Worker")
 
-    owned = api.issues(status="in_review", assigneeAgentId=agents["Worker"])
-    parents = [p for p in owned if not stage_of(p)]
-    # An `in_review` parent nobody holds has no run coming and no other sweep
-    # reading it, so it is judged here like a Worker-held one.
-    parents += [p for p in api.issues(status="in_review") if not p.get("assigneeAgentId") and not stage_of(p)]
-    # A finished rebase's parent may be parked anywhere (a conflict hold blocks
-    # it), so it joins the sweep by its child rather than by its own status.
-    listed = {p["id"] for p in parents}
-    for rebase in owned:
-        if finished_rebase(rebase) and rebase.get("parentId") and rebase["parentId"] not in listed:
-            listed.add(rebase["parentId"])
-            parents.append(api.get(f"/issues/{rebase['parentId']}"))
-    # So may a parent whose stage stopped on a conflict: it waits on a rebase
-    # nothing else would dispatch.
-    for stalled in api.issues(status="blocked"):
-        if stage_of(stalled) in ("verify", "review") and stalled.get("parentId") and stalled["parentId"] not in listed:
-            listed.add(stalled["parentId"])
-            parents.append(api.get(f"/issues/{stalled['parentId']}"))
+    def gather_parents() -> list[dict]:
+        owned = api.issues(status="in_review", assigneeAgentId=agents["Worker"])
+        parents = [p for p in owned if not stage_of(p)]
+        # An `in_review` parent nobody holds has no run coming and no other sweep
+        # reading it, so it is judged here like a Worker-held one.
+        parents += [p for p in api.issues(status="in_review") if not p.get("assigneeAgentId") and not stage_of(p)]
+        # A finished rebase's parent may be parked anywhere (a conflict hold blocks
+        # it), so it joins the sweep by its child rather than by its own status.
+        listed = {p["id"] for p in parents}
+        for rebase in owned:
+            if finished_rebase(rebase) and rebase.get("parentId") and rebase["parentId"] not in listed:
+                listed.add(rebase["parentId"])
+                parents.append(api.get(f"/issues/{rebase['parentId']}"))
+        # So may a parent whose stage stopped on a conflict: it waits on a rebase
+        # nothing else would dispatch.
+        for stalled in api.issues(status="blocked"):
+            if stage_of(stalled) in ("verify", "review") and stalled.get("parentId") and stalled["parentId"] not in listed:
+                listed.add(stalled["parentId"])
+                parents.append(api.get(f"/issues/{stalled['parentId']}"))
+        return parents
 
     def load(parent: dict):
-        children = api.issues(parentId=parent["id"])
-        if live_stage(ordered_stages(children)):
-            return parent, children, None  # a stage is live: no git read needed
-        full = api.get(f"/issues/{parent['id']}")
-        return full, children, git_state(project, parent["identifier"])
+        """(parent, children, git state), or None when a read got no answer: that parent waits a sweep."""
+        with skip_unreachable(f"stage   {parent['identifier']}"):
+            children = api.issues(parentId=parent["id"])
+            if live_stage(ordered_stages(children)):
+                return parent, children, None  # a stage is live: no git read needed
+            full = api.get(f"/issues/{parent['id']}")
+            return full, children, git_state(project, parent["identifier"])
+        return None
 
-    with concurrent.futures.ThreadPoolExecutor(8) as pool:
-        loaded = list(pool.map(load, parents))
-    prs = open_prs(project)
-    pr_heads = open_pr_heads(project, prs=prs)
-    # Branch protection counts drafts too: a draft's branch is live work.
-    branch_heads = open_pr_heads(project, prs=prs, drafts=True)
-    merged: dict[str, int] | None = None  # a `gh` call; read on first use
+    # Every external read below is contained per step, and a step whose input
+    # failed to load is skipped rather than run on an empty stand-in. `None`
+    # marks "not read": an empty list or dict is a real answer.
+    loaded: list | None = None
+    # Whether some parent went unjudged this sweep; see `handoffs.json` below.
+    partial = True
+    with skip_unreachable("load-parents"):
+        parents = gather_parents()
+        with concurrent.futures.ThreadPoolExecutor(8) as pool:
+            rows = list(pool.map(load, parents))
+        loaded = [t for t in rows if t is not None]
+        partial = len(loaded) < len(rows)
+    # One PR listing feeds every PR-dependent reader. Without it an open PR reads
+    # as none: the stage loop would re-verify a parent already in review, the
+    # branch sweep would delete a live PR's branch, and a landed Verify would
+    # look unlanded. Those readers are skipped this sweep instead.
+    prs: list[dict] | None = None
+    pr_heads: dict[str, str] | None = None
+    branch_heads: dict[str, str] | None = None
+    with skip_unreachable("open-prs"):
+        prs = open_prs(project)
+        pr_heads = open_pr_heads(project, prs=prs)
+        # Branch protection counts drafts too: a draft's branch is live work.
+        branch_heads = open_pr_heads(project, prs=prs, drafts=True)
+    if prs is None:
+        print("open-prs: no PR listing, so the stage loop, landed-verify close, main-repair "
+              "merges, cancelled-PR closes, hold releases, promotion and the branch sweep "
+              "wait for the next sweep", flush=True)
+    merged: dict[str, int] | subprocess.SubprocessError | None = None  # a `gh` call; read on first use
 
     def pr_merged(branch: str) -> bool:
+        """Whether `branch` has a merged PR. Raises, for every caller, once the listing failed.
+
+        The failure is kept rather than retried, so one dead `gh` costs one call's
+        timeout per sweep, not one per parent; each parent that needs the answer
+        is skipped instead of being judged as unmerged.
+        """
         nonlocal merged
         if merged is None:
-            merged = merged_pr_numbers(project)
+            try:
+                merged = merged_pr_numbers(project)
+            except subprocess.SubprocessError as exc:
+                merged = exc
+        if isinstance(merged, subprocess.SubprocessError):
+            raise merged
         return branch in merged
 
     capacity: int | None | str = "unread"  # the probe costs seconds; read it on first use
     slots = ((worker.get("runtimeConfig") or {}).get("heartbeat") or {}).get("maxConcurrentRuns") or 0
-    in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
+    # Unread, the Worker slots are taken as full: no rebase is started on a guess.
+    in_flight = slots
+    with skip_unreachable("worker-in-flight"):
+        in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
     # Rebases take Worker slots ahead of new work: each one is reviewed work a
     # merge away from landing, and the Coordinator promotes only into what is left.
     rebase_slots = max(0, slots - in_flight)
@@ -1349,7 +1393,13 @@ def sweep(api: Api, project: Path) -> None:
     def take_capacity() -> bool:
         nonlocal capacity
         if capacity == "unread":
-            capacity = verify_capacity()
+            try:
+                capacity = verify_capacity()
+            except subprocess.SubprocessError as exc:
+                # No slot is handed out on a probe that failed: a Verify created
+                # now is held, and dispatched once a probe answers.
+                print(f"capacity: {subprocess_words(exc)}; no verify dispatched this sweep", flush=True)
+                capacity = 0
         if capacity is None:
             return True
         if capacity > 0:
@@ -1381,10 +1431,10 @@ def sweep(api: Api, project: Path) -> None:
             handoff.append({"identifier": issue["identifier"], "reason": reason})
 
     # Held verifies first: they waited longest for a build slot.
-    for held in sorted(
-        (v for v in api.issues(status="todo") if stage_of(v) == "verify" and not v.get("assigneeAgentId")),
-        key=lambda v: v["createdAt"],
-    ):
+    held_verifies: list[dict] = []
+    with skip_unreachable("held-verifies"):
+        held_verifies = [v for v in api.issues(status="todo") if stage_of(v) == "verify" and not v.get("assigneeAgentId")]
+    for held in sorted(held_verifies, key=lambda v: v["createdAt"]):
         with skip_unreachable(f"verify  {held['identifier']}"):
             body = api.get(f"/issues/{held['id']}").get("description") or ""
             if HELD_VERIFY not in body or not take_capacity():
@@ -1403,8 +1453,10 @@ def sweep(api: Api, project: Path) -> None:
     # A stage that escalated on a red `main` is owned by its base-red marker.
     base_red_stages = {name for m in base_red_markers() for name in (m.escalated, m.task)}
     escalators = {agents[name] for name in ("Architect", "Reviewer") if name in agents}
-    for parent, children, git_st in sorted(loaded, key=lambda t: t[0]["createdAt"]):
-        with skip_unreachable(f"stage   {parent['identifier']}"):
+    judged_stages = loaded is not None and prs is not None
+    partial = partial or not judged_stages
+    for parent, children, git_st in sorted(loaded if judged_stages else [], key=lambda t: t[0]["createdAt"]):
+        with skip_unreachable(f"stage   {parent['identifier']}") as judged:
             if git_st is None:
                 continue
             branch = f"task/{parent['identifier']}"
@@ -1491,22 +1543,28 @@ def sweep(api: Api, project: Path) -> None:
                           f"  reassign {parent['identifier']} to the Worker")
             elif decision.kind == "handoff":
                 hand_off(parent, handoff_signature(parent, children, git_st), decision.reason)
+        partial = partial or judged.skipped
 
-    # Each step is contained: a call with no answer ends that step, not the sweep.
+    # Each step is contained: a failed call ends that step, not the sweep.
     with skip_unreachable("collect-landings"):
         collect_landings(api)
-    with skip_unreachable("close-landed-verifies"):
-        close_landed_verifies(api, project, pr_heads)
+    if pr_heads is not None:
+        with skip_unreachable("close-landed-verifies"):
+            close_landed_verifies(api, project, pr_heads)
     with skip_unreachable("close-superseded"):
         close_superseded(api)
-    requeue_base_red(api.dry_run)
+    with skip_unreachable("requeue-base-red"):
+        requeue_base_red(api.dry_run)
     with skip_unreachable("route-sentinels"):
         route_sentinels(api, agents, project)
     with skip_unreachable("file-main-repair"):
         file_main_repair(api, agents, project)
-    with skip_unreachable("merge-main-repairs"):
-        merge_main_repairs(api, project, prs)
+    if prs is not None:
+        with skip_unreachable("merge-main-repairs"):
+            merge_main_repairs(api, project, prs)
     # After route_sentinels: a sentinel it just routed is a wake it just sent, not a missed one.
+    # It runs without the PR listing too: its wake and re-fire checks read no PR,
+    # and it skips only the branch sweep when `branch_heads` is None.
     with skip_unreachable("facilitator-checks"):
         facilitator_checks(api, project, roster, branch_heads)
     # Before release_holds: a hold on a cancelled duplicate reads as released, so it
@@ -1515,30 +1573,38 @@ def sweep(api: Api, project: Path) -> None:
         dedupe_duplicates(api, project)
     with skip_unreachable("issue-links"):
         sweep_issue_links(api, project, agents)
-    with skip_unreachable("cancelled-prs"):
-        cancelled_prs.sweep(api, project, prs)
+    if prs is not None:
+        with skip_unreachable("cancelled-prs"):
+            cancelled_prs.sweep(api, project, prs)
     # Before promotion, so a task parked here is a candidate this same sweep.
     with skip_unreachable("park-stranded-todos"):
         park_stranded_todos(api)
     released = promoted = judged = 0
     # A dedupe cut short may have left a hold on a duplicate it would have moved,
     # and releasing that hold frees its task early, so the release waits a sweep.
-    if not deduped.skipped:
+    # Without the PR listing an `until_pr` hold reads as unmet and a parent with an
+    # open PR as still writing; both wait for a sweep that has the listing.
+    if not deduped.skipped and pr_heads is not None:
         with skip_unreachable("release-holds"):
             released = release_holds(api, pr_heads, agents)
-    with skip_unreachable("promote"):
-        promoted, judged = promotion.promote(api, agents, project, pr_heads)
-    in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
+    if pr_heads is not None:
+        with skip_unreachable("promote"):
+            promoted, judged = promotion.promote(api, agents, project, pr_heads)
 
     # What promote.py could not decide needs the Coordinator's judgment; ask only
-    # when it left such candidates and a slot is still free for them.
-    backlog = len(api.issues(status="backlog")) if (judged or promoted == 0) else 0
-    refill_state = load_state("refill.json")
-    refill = (
-        slots > in_flight
-        and backlog > 0
-        and (released > 0 or time.time() - refill_state.get("at", 0) > REFILL_INTERVAL)
-    )
+    # when it left such candidates and a slot is still free for them. Unread
+    # counts ask for no refill: a refill wake is a guess at free slots otherwise.
+    refill = False
+    backlog = 0
+    with skip_unreachable("refill-check"):
+        in_flight = len(api.issues(status="todo,in_progress", assigneeAgentId=agents["Worker"]))
+        backlog = len(api.issues(status="backlog")) if (judged or promoted == 0) else 0
+        refill_state = load_state("refill.json")
+        refill = (
+            slots > in_flight
+            and backlog > 0
+            and (released > 0 or time.time() - refill_state.get("at", 0) > REFILL_INTERVAL)
+        )
 
     if handoff or refill:
         note = {
@@ -1559,15 +1625,20 @@ def sweep(api: Api, project: Path) -> None:
             pending.update({h["identifier"]: h for h in handoff})
             note["handoff"] = list(pending.values())
             save_state(HANDOFF_FILE.name, note, False)
-            api.call(
-                "POST",
-                f"/agents/{agents['Coordinator']}/wakeup",
-                {"source": "automation", "triggerDetail": "callback", "reason": "dispatcher_handoff"},
-            )
-            if refill:
-                save_state("refill.json", {"at": time.time()}, False)
-    # Forget tasks that left the hand-off set so a later return re-notifies.
-    save_state("handoffs.json", seen, api.dry_run)
+            # The file keeps the hand-offs if this wake gets no answer; the
+            # Coordinator's next fire reads them.
+            with skip_unreachable("coordinator-wake"):
+                api.call(
+                    "POST",
+                    f"/agents/{agents['Coordinator']}/wakeup",
+                    {"source": "automation", "triggerDetail": "callback", "reason": "dispatcher_handoff"},
+                )
+                if refill:
+                    save_state("refill.json", {"at": time.time()}, False)
+    # Forget tasks that left the hand-off set so a later return re-notifies. A
+    # parent this sweep did not judge did not leave it: dropping its record would
+    # re-send a hand-off the Coordinator already has.
+    save_state("handoffs.json", {**handed, **seen} if partial else seen, api.dry_run)
     save_state("reworks.json", reworks, api.dry_run)
 
 
@@ -2275,30 +2346,33 @@ def merge_main_repairs(api: Api, project: Path, prs: list[dict]) -> None:
     unbuilt or conflicting repairs stay on the ordinary landing path.
     """
     for pr, identifier in main_repair_candidates(prs):
-        issue = api.get(f"/issues/{identifier}")
-        if not issue or issue.get("status") in ("done", "cancelled") or needs_architect(issue) != "main-repair":
-            continue
-        sha = pr["headRefOid"]
-        if not verify_green(project, sha):
-            continue
-        what = f"merge   #{pr['number']} {identifier}: main-repair, {VERIFY_CONTEXT} green on {sha[:9]}"
-        print(("DRY " if api.dry_run else "") + what, flush=True)
-        if api.dry_run:
-            continue
-        out = subprocess.run(
-            [str(HERE.parent / "architect" / "op-merge.sh"), str(pr["number"])],
-            cwd=project, capture_output=True, text=True, timeout=600,
-            env={**os.environ, "PAPERCLIP_PROJECT": str(project)},
-        )
-        said = (out.stdout.strip().splitlines() or [out.stderr.strip() or f"op-merge.sh exit {out.returncode}"])[-1]
-        print(f"  {said}", flush=True)
-        if out.returncode == 0:
-            api.write(
-                "POST", f"/issues/{issue['id']}/comments",
-                {"body": f"Merged by the Dispatcher: main-repair with `{VERIFY_CONTEXT}` green on "
-                         f"`{sha[:9]}` (`op-merge.sh`).\n\n`{said}`"},
-                f"  comment on {identifier}",
+        # Per PR: a status read or a merge that fails costs that PR. A merge that
+        # timed out may still have landed; the next sweep's PR listing says which.
+        with skip_unreachable(f"merge   #{pr['number']}"):
+            issue = api.get(f"/issues/{identifier}")
+            if not issue or issue.get("status") in ("done", "cancelled") or needs_architect(issue) != "main-repair":
+                continue
+            sha = pr["headRefOid"]
+            if not verify_green(project, sha):
+                continue
+            what = f"merge   #{pr['number']} {identifier}: main-repair, {VERIFY_CONTEXT} green on {sha[:9]}"
+            print(("DRY " if api.dry_run else "") + what, flush=True)
+            if api.dry_run:
+                continue
+            out = subprocess.run(
+                [str(HERE.parent / "architect" / "op-merge.sh"), str(pr["number"])],
+                cwd=project, capture_output=True, text=True, timeout=600,
+                env={**os.environ, "PAPERCLIP_PROJECT": str(project)},
             )
+            said = (out.stdout.strip().splitlines() or [out.stderr.strip() or f"op-merge.sh exit {out.returncode}"])[-1]
+            print(f"  {said}", flush=True)
+            if out.returncode == 0:
+                api.write(
+                    "POST", f"/issues/{issue['id']}/comments",
+                    {"body": f"Merged by the Dispatcher: main-repair with `{VERIFY_CONTEXT}` green on "
+                             f"`{sha[:9]}` (`op-merge.sh`).\n\n`{said}`"},
+                    f"  comment on {identifier}",
+                )
 
 
 def file_main_repair(api: Api, agents: dict, project: Path) -> None:
@@ -2384,10 +2458,12 @@ def close_superseded(api: Api) -> None:
         lines = evidence.splitlines()
         sha_line = lines[0].removeprefix("superseded-by: ")
         branch = f"task/{parent['identifier']}"
-        tip = subprocess.run(
+        remote = subprocess.run(
             ["git", "ls-remote", "origin", f"refs/heads/{branch}"],
             cwd=project_root(), capture_output=True, text=True, timeout=60,
-        ).stdout.split("\t")[0][:12] or "not on origin"
+        )
+        # A failed ls-remote prints nothing too; the closing record must not call that "not on origin".
+        tip = (remote.stdout.split("\t")[0][:12] or "not on origin") if remote.returncode == 0 else "unread"
         detail = "\n".join(lines[1:])
         api.set_status(
             verify,
@@ -2467,12 +2543,16 @@ def verify_quiet_since(api: Api):
     return quiet_since
 
 
-def facilitator_checks(api: Api, project: Path, roster: list[dict], branch_heads: dict[str, str]) -> None:
-    """`branch_heads` holds every open PR, drafts included: the sweep spares their branches."""
+def facilitator_checks(api: Api, project: Path, roster: list[dict], branch_heads: dict[str, str] | None) -> None:
+    """`branch_heads` holds every open PR, drafts included: the sweep spares their branches.
+
+    None means the PR listing failed: the checks still run, without the branch sweep.
+    """
     state = load_state("facilitator-run.json")
     if time.time() - state.get("at", 0) < FACILITATOR_SCAN_INTERVAL:
         return
-    facilitator.sweep(api, project, set(branch_heads), roster, verify_quiet_since(api))
+    open_heads = set(branch_heads) if branch_heads is not None else None
+    facilitator.sweep(api, project, open_heads, roster, verify_quiet_since(api))
     save_state("facilitator-run.json", {"at": time.time()}, api.dry_run)
 
 

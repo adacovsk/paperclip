@@ -1736,6 +1736,171 @@ class VerifyQuietSince(unittest.TestCase):
         (dispatch.VERIFY_DIR / "T-1.pid").write_text(str(os.getpid()))
         self.assertEqual(self.quiet(self.issue("in_progress")), 0.0)
 
+class SweepSurvivesFailedReads(unittest.TestCase):
+    """One failed `gh`/`git`/API call costs its step, and no step runs on a read that failed."""
+
+    ROSTER = [{"name": n, "id": n.lower()} for n in ("Worker", "Architect", "Coordinator", "Planner", "Dispatcher")]
+    PARENT = {"id": "p1", "identifier": "T-1", "title": "Do a thing", "status": "in_review",
+              "assigneeAgentId": "worker", "createdAt": "2026-01-01T00:00:00Z", "labels": []}
+    # The sweep's tail, by what each step reads. A PR-dependent step must not run
+    # without the PR listing; every other step must run whatever failed before it.
+    PR_STEPS = ("close_landed_verifies", "merge_main_repairs", "release_holds")
+    OTHER_STEPS = ("collect_landings", "close_superseded", "requeue_base_red", "route_sentinels",
+                   "file_main_repair", "dedupe_duplicates", "sweep_issue_links", "park_stranded_todos",
+                   "facilitator_checks")
+
+    class Api:
+        dry_run = False
+
+        def __init__(self, roster, parent):
+            self.roster, self.parent, self.calls = roster, parent, []
+
+        def get(self, path):
+            return self.roster if path == "/agents" else self.parent
+
+        def issues(self, **query):
+            if query.get("status") == "in_review" and query.get("assigneeAgentId") == "worker":
+                return [self.parent]
+            return []
+
+        def call(self, method, path, body=None):
+            self.calls.append((method, path))
+
+        def write(self, method, path, body, what):
+            self.calls.append((method, path))
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name)
+        self.steps = {}
+        patches = [mock.patch.object(dispatch, "STATE_DIR", self.state),
+                   mock.patch.object(dispatch, "VERIFY_DIR", self.state / "verify"),
+                   mock.patch.object(dispatch, "cancel_orphan_stages", return_value=[]),
+                   mock.patch.object(dispatch, "git_state", return_value=CLEAN),
+                   mock.patch.object(dispatch, "decide", return_value=dispatch.Decision("skip", "test")),
+                   mock.patch.object(dispatch.cancelled_prs, "sweep", return_value=0),
+                   mock.patch.object(dispatch.promotion, "promote", return_value=(0, 0))]
+        for name in self.PR_STEPS + self.OTHER_STEPS:
+            patches.append(mock.patch.object(dispatch, name, return_value=0))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.steps = {name: getattr(dispatch, name) for name in self.PR_STEPS + self.OTHER_STEPS}
+        self.steps["cancelled_prs"] = dispatch.cancelled_prs.sweep
+        self.steps["promote"] = dispatch.promotion.promote
+
+    def sweep(self, prs):
+        api = self.Api(self.ROSTER, dict(self.PARENT))
+        out = io.StringIO()
+        with mock.patch.object(dispatch, "open_prs", **prs), contextlib.redirect_stdout(out):
+            dispatch.sweep(api, Path("/proj"))
+        return out.getvalue()
+
+    GH_DOWN = {"side_effect": subprocess.CalledProcessError(
+        1, ["gh", "pr", "list"], "", "To get started with GitHub CLI, please run:  gh auth login")}
+
+    def test_a_failed_pr_listing_skips_only_the_pr_readers(self):
+        said = self.sweep(self.GH_DOWN)
+        self.assertIn("open-prs: gh pr list exited 1: To get started", said)
+        for name in self.PR_STEPS + ("cancelled_prs", "promote"):
+            self.steps[name].assert_not_called()
+        for name in self.OTHER_STEPS:
+            self.steps[name].assert_called_once()
+        # No parent is judged as if it had no PR: that is the re-verify of work in review.
+        dispatch.decide.assert_not_called()
+
+    def test_without_the_listing_the_branch_sweep_gets_none_not_an_empty_set(self):
+        # An empty set would read every branch as PR-less, and a live PR's branch as deletable.
+        self.sweep(self.GH_DOWN)
+        self.assertIsNone(self.steps["facilitator_checks"].call_args.args[3])
+
+    def test_the_hand_off_record_survives_a_sweep_that_judged_no_parent(self):
+        (self.state / "handoffs.json").write_text(json.dumps({"p1": "sig"}))
+        self.sweep(self.GH_DOWN)
+        self.assertEqual(json.loads((self.state / "handoffs.json").read_text()), {"p1": "sig"})
+
+    def test_with_the_listing_every_step_runs(self):
+        # The control: the harness above does reach the PR readers when gh answers.
+        self.sweep({"return_value": []})
+        dispatch.decide.assert_called_once()
+        for name in self.PR_STEPS + self.OTHER_STEPS + ("cancelled_prs", "promote"):
+            self.steps[name].assert_called_once()
+        self.assertEqual(self.steps["facilitator_checks"].call_args.args[3], {})
+
+    def test_a_failing_step_costs_that_step_only(self):
+        dispatch.close_landed_verifies.side_effect = subprocess.CalledProcessError(
+            1, ["gh", "pr", "list", "--state", "merged"], "", "HTTP 502")
+        dispatch.requeue_base_red.side_effect = subprocess.TimeoutExpired(["bash", "requeue-base-red.sh"], 300)
+        said = self.sweep({"return_value": []})
+        self.assertIn("close-landed-verifies: gh pr list exited 1: HTTP 502", said)
+        self.assertIn("requeue-base-red: bash requeue-base-red.sh timed out after 300s", said)
+        for name in self.OTHER_STEPS + ("cancelled_prs", "promote", "release_holds", "merge_main_repairs"):
+            self.steps[name].assert_called_once()
+
+    def test_an_unanswered_api_listing_costs_that_step_only(self):
+        dispatch.park_stranded_todos.side_effect = dispatch.ApiUnreachable("GET /issues: timed out")
+        self.sweep({"return_value": []})
+        self.steps["promote"].assert_called_once()
+
+    def test_a_failed_merged_listing_is_read_once_and_skips_the_parents_needing_it(self):
+        verify_done = {"id": "v1", "identifier": "T-2", "title": "Verify: T-1 x", "status": "done",
+                       "createdAt": "2026-01-02T00:00:00Z", "parentId": "p1"}
+        api = self.Api(self.ROSTER, dict(self.PARENT))
+        second = dict(self.PARENT, id="p2", identifier="T-3")
+        api.issues = lambda **q: ([api.parent, second] if q.get("assigneeAgentId") == "worker"
+                                  and q.get("status") == "in_review" else
+                                  [dict(verify_done, parentId=q["parentId"])] if "parentId" in q else [])
+        api.get = lambda path: self.ROSTER if path == "/agents" else {"/issues/p1": api.parent, "/issues/p2": second}[path]
+        gh = subprocess.CalledProcessError(1, ["gh", "pr", "list", "--state", "merged"], "", "HTTP 502")
+        with mock.patch.object(dispatch, "open_prs", return_value=[]), \
+                mock.patch.object(dispatch, "merged_pr_numbers", side_effect=gh) as merged, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            dispatch.sweep(api, Path("/proj"))
+        self.assertEqual(merged.call_count, 1)
+        # Neither parent is judged as unmerged on a listing that failed.
+        dispatch.decide.assert_not_called()
+        self.assertIn("stage   T-1: gh pr list exited 1: HTTP 502", out.getvalue())
+        self.assertIn("stage   T-3: gh pr list exited 1: HTTP 502", out.getvalue())
+        self.steps["promote"].assert_called_once()
+
+
+class VerifyCapacityProbe(unittest.TestCase):
+    def test_a_failed_census_raises_rather_than_reading_as_no_build_alive(self):
+        # A census that failed prints nothing; read as no build alive, it hands out every slot.
+        def run(cmd, **kw):
+            if kw.get("check"):
+                raise subprocess.CalledProcessError(2, cmd, "", "")
+            return subprocess.CompletedProcess(cmd, 2, "", "")
+
+        with mock.patch.dict(os.environ, {"ARCHITECT_CLOUD_LANE": "0"}), \
+                mock.patch.object(dispatch.subprocess, "run", side_effect=run):
+            with self.assertRaises(subprocess.CalledProcessError):
+                dispatch.verify_capacity()
+
+    def test_a_failed_probe_dispatches_no_verify(self):
+        held = {"id": "v1", "identifier": "T-2", "title": "Verify: T-1 x", "status": "todo",
+                "createdAt": "2026-01-01T00:00:00Z", "parentId": "p1",
+                "description": dispatch.HELD_VERIFY}
+        api = SweepSurvivesFailedReads.Api(SweepSurvivesFailedReads.ROSTER, held)
+        api.issues = lambda **q: [held] if q.get("status") == "todo" else []
+        api.set_status = mock.Mock()
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(dispatch, "STATE_DIR", Path(tmp)), \
+                mock.patch.object(dispatch, "cancel_orphan_stages", return_value=[]), \
+                mock.patch.object(dispatch, "open_prs", return_value=[]), \
+                mock.patch.object(dispatch, "verify_capacity",
+                                  side_effect=subprocess.TimeoutExpired(["verify-census.sh"], 60)), \
+                contextlib.ExitStack() as stack, contextlib.redirect_stdout(io.StringIO()) as out:
+            for name in SweepSurvivesFailedReads.PR_STEPS + SweepSurvivesFailedReads.OTHER_STEPS:
+                stack.enter_context(mock.patch.object(dispatch, name, return_value=0))
+            stack.enter_context(mock.patch.object(dispatch.cancelled_prs, "sweep", return_value=0))
+            stack.enter_context(mock.patch.object(dispatch.promotion, "promote", return_value=(0, 0)))
+            dispatch.sweep(api, Path("/proj"))
+        api.set_status.assert_not_called()
+        self.assertIn("capacity: verify-census.sh timed out after 60s; no verify dispatched", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
 
