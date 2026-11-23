@@ -118,5 +118,18 @@ check "launch with nothing beyond main hands it to a model" "$(run launch)" 1
 
 check "a missing worktree hands the verify to a model" "$(bash "$SUT" T-404 T-9 retry >/dev/null; echo $?)" 1
 
+# An op branch: the operator's worktree, outside .paperclip/, under the key op-<slug>.
+OPWT="$DIR/op-wt"
+git -C "$PAPERCLIP_PROJECT" worktree add -q -b op/thing "$OPWT" origin/main
+(cd "$OPWT" && echo op > op.txt && git add op.txt && git commit -qm op)
+oprun() { : > "$CALLS"; : > "$LOCALS"; rm -f "$S/op-thing.exit"; env "$@" bash "$SUT" op-thing op-thing launch > "$DIR/out"; echo $?; }
+check "an op branch launches from its own worktree" "$(oprun)" 0
+check "  offloading op/thing under the op key" "$(cat "$CALLS")" "0 offload op-thing op/thing op-thing"
+check "  on top of current main" "$(cd "$OPWT" && git merge-base --is-ancestor origin/main HEAD && echo yes)" yes
+check "an op branch the lane refuses is not built locally" "$(oprun CV_RC=1)" 1
+check "  no local launch" "$(locals)" ""
+check "  and says why" "$(grep -c 'has no local lane' "$DIR/out")" 1
+check "an op key with no worktree hands it to a model" "$(bash "$SUT" op-nothing op-nothing launch >/dev/null; echo $?)" 1
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

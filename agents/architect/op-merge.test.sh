@@ -142,11 +142,29 @@ check "not launched" "$(wc -l < "$CALLS")" 0
 has "names the gap" "carries commits the worktree lacks"
 git -C "$PAPERCLIP_PROJECT/.paperclip/worktrees/T-1" merge -q --ff-only origin/task/T-1
 
-echo "only task branches, only open PRs"
+echo "only task and op branches, only open PRs"
 reset; echo success > "$DIR/status"
-run PR_HEAD=op/thing; check "op branch refused" "$RC" 1
+run PR_HEAD=feature/thing; check "other branch refused" "$RC" 1
 run PR_STATE=MERGED; check "merged PR refused" "$RC" 1
 check "no merge attempted" "$(wc -l < "$CALLS")" 0
+
+echo "a green op branch merges like a task branch"
+reset; echo success > "$DIR/status"
+run PR_HEAD=op/thing; check "exit" "$RC" 0
+check "merged" "$(grep -c '^merge' "$CALLS")" 1
+
+echo "an unbuilt op branch is built from the worktree that has it checked out"
+reset; rm -f "$S"/op-thing.*
+git -C "$PAPERCLIP_PROJECT" worktree add -q -b op/thing "$DIR/op-thing" main
+( cd "$DIR/op-thing" && echo c > h && git add h && git commit -qm op && git push -q origin op/thing )
+run PR_HEAD=op/thing; check "exit" "$RC" 3
+check "launched under the op key" "$(cat "$CALLS")" "relaunch op-thing op-thing launch lane=1"
+
+echo "an op branch no worktree has checked out is not built"
+git -C "$PAPERCLIP_PROJECT" worktree remove --force "$DIR/op-thing"
+run PR_HEAD=op/thing; check "exit" "$RC" 1
+check "not launched" "$(grep -c '^relaunch' "$CALLS")" 0
+has "names the branch" "no worktree has op/thing checked out"
 
 echo "several PRs: one waiting does not stop the next, and the worst result wins"
 reset; echo success > "$DIR/status"

@@ -34,6 +34,7 @@ stub gh "case \"\$1 \$2\" in
   'pr create') echo \"pr-create \$*\" >> $CALLS; echo https://example/pr/1 > $DIR/open-pr ;;
   'pr edit') echo \"pr-edit \$*\" >> $CALLS ;;
   'pr ready') echo \"pr-ready \$*\" >> $CALLS; rm -f $DIR/draft ;;
+  'pr view') printf '## What changed\\n- by hand\\n' ;;
   'pr list') case \"\$*\" in
       *'--state all'*) printf '%s' \"\${PRS:-}\"; [ -z \"\${PRS:-}\" ] || echo ;;
       *) [ -e $DIR/draft ] || cat $DIR/open-pr 2>/dev/null ;;
@@ -198,6 +199,28 @@ green; echo https://example/pr/1 > "$DIR/open-pr"
 r=$(PRS="1 OPEN false" LAND_SEM_DIR=/x/land run)
 check "explicit gate sees the landing pool" "$(called 'gate /x/land 1')" 1
 git -C "$WT" config --unset core.hooksPath
+
+echo "an op branch keeps its hand-written body and is marked ready"
+OPWT="$DIR/op-wt"
+git -C "$PAPERCLIP_PROJECT" worktree add -q -b op/thing "$OPWT" origin/main
+(cd "$OPWT" && echo op > op.txt && git add op.txt && git commit -qm op && git push -q -u origin op/thing)
+opgreen() {
+  rm -f "$S"/op-thing.* "$DIR/open-pr"
+  echo 0 > "$S/op-thing.exit"
+  git -C "$PAPERCLIP_PROJECT" rev-parse origin/main > "$S/op-thing.base"
+  printf 'CLOUD-VERIFY-V2\nresult: PASS\nschemas: not-relevant\ncmd: bash scripts/verify.sh = 0\n' > "$S/op-thing.cloud.verdict"
+}
+oprun() { : > "$CALLS"; env -u LAND_BODY "$@" bash "$SUT" op-thing op-thing "Op title" > "$DIR/out" 2>&1; echo $?; }
+opgreen; touch "$DIR/draft"; echo https://example/pr/2 > "$DIR/open-pr"
+check "op draft lands -> 0" "$(oprun PRS='9 OPEN true')" 0
+check "  status posted" "$(called status)" 1
+check "  draft marked ready" "$(called 'pr-ready pr ready op/thing')" 1
+check "  no second PR" "$(called pr-create)" 0
+check "  body kept and extended" "$(grep -c -e '- by hand' -e 'cloud verify of' "$S/op-thing.pr-body.md")" 2
+opgreen
+check "op branch with no PR -> 1" "$(oprun PRS=)" 1
+check "  says so" "$(grep -c 'no PR is open for op/thing' "$DIR/out")" 1
+check "  nothing created" "$(called pr-create)" 0
 
 echo
 echo "$PASS passed, $FAIL failed"
