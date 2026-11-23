@@ -199,9 +199,103 @@ class ReviewerStage(unittest.TestCase):
         stages = [*self.cancelled_verify(), child("Verify: T-1", "done", "3", "verify")]
         self.assertEqual(decide(parent(), stages, CLEAN, pr_merged=True).kind, "skip")
 
+    def test_a_superseded_verify_is_not_a_ruling(self):
+        # The rebase that answered it was opened before the Dispatcher cancelled it.
+        verify = {**child("Verify: T-1", "cancelled", "2026-10-18T00:00:00Z", "verify"),
+                  "cancelledAt": "2026-10-18T02:00:00Z"}
+        rebase = child("Rebase task/T-1 onto origin/main", "done", "2026-10-18T01:00:00Z")
+        git = GitState(exists=True, ahead=2, merges_clean=True, head_at=iso_ts("2026-10-19T00:00:00Z"))
+        self.assertIsNone(dispatch.ruling_verify(dispatch.ordered_stages([self.review, verify, rebase])))
+        self.assertEqual(decide(parent(), [self.review, verify, rebase], git).reason,
+                         "verify finished; landing owns it")
+
     def test_ci_fix_key_counts_as_a_verify(self):
         stages = [self.review, child("ci-fix: abc", "in_review", "2", "ci-fix")]
         self.assertEqual(decide(parent(), stages, CLEAN).kind, "skip")
+
+
+def stamped(title, status, created, closed=None, key=None):
+    c = {**child(title, status, created, key), "updatedAt": closed or created}
+    if status == "cancelled":
+        c["cancelledAt"] = closed or created
+    return c
+
+
+REBASE_TITLE = "Rebase task/T-1 onto origin/main"
+
+
+class RulingThenRebases(unittest.TestCase):
+    """A Verify cancelled by hand, then only rebases: the ruling still decides the parent."""
+    review = stamped("Review: T-1", "done", "2026-10-10T00:00:00Z", key="review")
+    verify = stamped("Verify: T-1", "cancelled", "2026-10-11T00:00:00Z", "2026-10-11T12:00:00Z", key="verify")
+
+    def rebases(self, last_status, last_closed="2026-10-14T00:00:00Z"):
+        return [stamped(REBASE_TITLE, "done", "2026-10-12T00:00:00Z", "2026-10-12T06:00:00Z"),
+                stamped(REBASE_TITLE, "done", "2026-10-13T00:00:00Z", "2026-10-13T06:00:00Z"),
+                stamped(REBASE_TITLE, last_status, "2026-10-14T00:00:00Z", last_closed)]
+
+    def git(self, head_at, **kw):
+        return GitState(exists=True, ahead=3, head="a" * 40, merges_clean=True, head_at=iso_ts(head_at), **kw)
+
+    def test_rework_after_a_cancelled_last_rebase_gets_a_review(self):
+        stages = [self.review, self.verify, *self.rebases("cancelled")]
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-15T00:00:00Z")).kind, "review")
+        self.assertIs(dispatch.ruling_verify(dispatch.ordered_stages(stages))[0], self.verify)
+
+    def test_no_commit_since_the_last_rebase_is_rework(self):
+        # The rebases rewrote the head after the ruling: that is not rework.
+        stages = [self.review, self.verify, *self.rebases("cancelled")]
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-13T03:00:00Z")).kind, "rework")
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-11T06:00:00Z")).kind, "rework")
+
+    def test_rework_after_done_rebases_gets_a_review(self):
+        stages = [self.review, self.verify, *self.rebases("done")]
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-15T00:00:00Z")).kind, "review")
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-13T03:00:00Z")).kind, "rework")
+
+    def test_a_running_rebase_after_the_ruling_holds_the_parent(self):
+        for status in ("todo", "in_progress"):
+            stages = [self.review, self.verify, *self.rebases(status)]
+            self.assertEqual(decide(parent(), stages, self.git("2026-10-15T00:00:00Z")).kind, "skip")
+
+    def test_a_finished_clean_rebase_after_the_ruling_is_not_reverified(self):
+        stages = [self.review, self.verify, *self.rebases("in_review")]
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-15T00:00:00Z")).kind, "review")
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-13T23:00:00Z")).kind, "rework")
+
+    def test_a_finished_rebase_that_still_conflicts_rebases_again_up_to_the_cap(self):
+        git = GitState(exists=True, ahead=3, head="a" * 40, conflicts=("src/x.rs",),
+                       head_at=iso_ts("2026-10-15T00:00:00Z"))
+        stages = [self.review, self.verify, *self.rebases("in_review")[1:]]
+        self.assertEqual(decide(parent(), stages, git).kind, "rebase")
+        stages = [self.review, self.verify, *self.rebases("in_review")]
+        self.assertEqual(decide(parent(), stages, git).reason,
+                         "rebase finished but the branch still does not merge cleanly")
+
+    def test_a_finished_rebase_the_open_pr_carries_only_closes(self):
+        stages = [self.review, self.verify, *self.rebases("in_review")]
+        git = self.git("2026-10-15T00:00:00Z")
+        self.assertEqual(decide(parent(), stages, git, pr_head=git.head).kind, "close-rebase")
+
+    def test_rework_on_a_dirty_tree_is_handed_off(self):
+        stages = [self.review, self.verify, *self.rebases("cancelled")]
+        self.assertEqual(decide(parent(), stages, self.git("2026-10-15T00:00:00Z", dirty=True)).kind, "handoff")
+
+    def test_a_chain_with_steps_left_is_handed_off(self):
+        stages = [self.review, self.verify, *self.rebases("cancelled")]
+        git = self.git("2026-10-15T00:00:00Z", chain_steps=1)
+        self.assertEqual(decide(parent(description="Chain: 2 steps"), stages, git).kind, "handoff")
+
+    def test_a_later_verify_or_review_ends_the_ruling(self):
+        rebases = self.rebases("done")
+        git = self.git("2026-10-16T00:00:00Z")
+        later = stamped("Verify: T-1", "done", "2026-10-15T00:00:00Z", key="verify")
+        self.assertEqual(decide(parent(), [self.review, self.verify, *rebases, later], git, pr_merged=True).reason,
+                         "verify finished; landing owns it")
+        later = stamped("Review: T-1", "in_review", "2026-10-15T00:00:00Z", key="review")
+        self.assertEqual(decide(parent(), [self.review, self.verify, *rebases, later], git).kind, "skip")
+        later = stamped("Review: T-1", "done", "2026-10-15T00:00:00Z", key="review")
+        self.assertEqual(decide(parent(), [self.review, self.verify, *rebases, later], git).kind, "verify")
 
 
 class RebaseStage(unittest.TestCase):

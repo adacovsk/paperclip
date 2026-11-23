@@ -434,6 +434,29 @@ def unlanded_verify(stages: list[tuple[str, dict]]) -> dict | None:
     return last if stage == "verify" and last["status"] == "done" else None
 
 
+def ruling_verify(stages: list[tuple[str, dict]]) -> tuple[dict, list[dict]] | None:
+    """The newest real stage, when it is a Verify cancelled by hand to send the work back,
+    with the rebases that followed it.
+
+    Only rebases may follow it: a later Review or Verify is the newest real stage
+    instead. Rebases after a ruling do not answer it, so the ruling still decides
+    the parent; read as "landing owns it", the parent sits `in_review` with no
+    stage and no run. A Verify the Dispatcher cancels as superseded is cancelled
+    only once the rebase that answered its conflict has finished, so that rebase
+    was created before the cancel; a ruling is cancelled first, and every rebase
+    after it was opened later.
+    """
+    i = next((i for i in range(len(stages) - 1, -1, -1) if stages[i][0] != "rebase"), None)
+    if i is None or stages[i][0] != "verify" or stages[i][1]["status"] != "cancelled":
+        return None
+    verify = stages[i][1]
+    cancelled = iso_ts(verify.get("cancelledAt") or verify["updatedAt"])
+    later = [c for _, c in stages[i + 1:]]
+    if any(iso_ts(c["createdAt"]) < cancelled for c in later):
+        return None
+    return verify, later
+
+
 def decide(parent: dict, children: list[dict], git: GitState, pr_head: str | None = None,
            pr_merged: bool = False) -> Decision:
     """One parent -> what its next stage is.
@@ -473,6 +496,11 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
             return Decision("handoff", "rebase finished but the branch still does not merge cleanly")
         if pr_head and pr_head == git.head:
             return Decision("close-rebase", "rebase finished and the open PR already carries it")
+        ruling = ruling_verify(stages)
+        if ruling:
+            # The rebase moved the branch, not the ruling: the rework it asked
+            # for is still owed a Review, never a Verify of the old work.
+            return after_cancelled_verify(*ruling, git)
         dead = superseded(stages)
         if any(stage == "review" and c["id"] in dead for stage, c in stages):
             return Decision("resume-review", "rebase finished and merge-tree is clean; the review it held resumes")
@@ -517,8 +545,9 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
         if label == "data-only":
             return Decision("handoff", "Reviewer done, data-only with nothing cargo reads")
         return Decision("handoff", "Reviewer done, no label and nothing cargo reads")
-    if stage == "verify" and last["status"] == "cancelled" and last is stages[-1][1]:
-        return after_cancelled_verify(last, git)
+    ruling = ruling_verify(stages)
+    if ruling:
+        return after_cancelled_verify(*ruling, git)
     if stage == "verify" and last["status"] == "done" and not pr_merged:
         return after_unlanded_verify(stages, git)
     if stage == "verify":
@@ -527,16 +556,18 @@ def next_stage(parent: dict, children: list[dict], git: GitState, pr_head: str |
     return Decision("handoff", f"last stage {stage} ended {last['status']}")
 
 
-def after_cancelled_verify(verify: dict, git: GitState) -> Decision:
-    """A cancelled final Verify is a ruling sent back for rework, not a landing.
+def after_cancelled_verify(verify: dict, rebases: list[dict], git: GitState) -> Decision:
+    """A Verify cancelled by hand (`ruling_verify`) is a ruling sent back for rework, not a landing.
 
-    Every path that cancels a Verify as superseded leaves a newer stage after it
-    (a rebase, a fresh Verify) or closes the parent, so a cancelled Verify that is
-    still the newest stage was cancelled by hand. Read as "landing owns it", the
-    parent sat `in_review` with no run and no sweep ever looked at it again.
+    Rework is a commit newer than the ruling and than every rebase after it: a
+    rebase rewrites the head's committer time, so against the ruling alone a
+    rebase with no rework in it would read as rework done. A rebase that ended
+    `cancelled` counts too, so only a commit made after it (a re-spec's fresh
+    work) is reviewed.
     """
-    cancelled = iso_ts(verify.get("cancelledAt") or verify["updatedAt"])
-    if git.head_at <= cancelled:
+    since = max(iso_ts(c.get("cancelledAt") or c.get("completedAt") or c["updatedAt"])
+                for c in (verify, *rebases))
+    if git.head_at <= since:
         return Decision("rework", "verify cancelled; the Worker has not committed since")
     if git.dirty:
         return Decision("handoff", "verify cancelled; the Worker's rework left a dirty tree")
@@ -1419,6 +1450,17 @@ def sweep(api: Api, project: Path) -> None:
                 # parked on its own agent can have that agent's run on it now.
                 if hold and still_parked(api, blocked) and not being_read(blocked, api.get("/live-runs") or []):
                     route_to_planner(api, blocked, hold, agents["Planner"])
+            if decision.kind in ("review", "rework"):
+                # A clean rebase after a ruling is answered by the ruling's
+                # decision, not by a reverify, and nothing else closes it.
+                for finished in (c for _, c in stages if finished_rebase(c)):
+                    api.set_status(
+                        finished,
+                        {"status": "done"},
+                        f"Rebase landed: `merge-tree --write-tree origin/main HEAD` is clean at "
+                        f"{git_st.head[:9]}, tree clean. A cancelled verify's rework decides what follows.",
+                        f"rebase  {finished['identifier']}: close ({decision.reason})",
+                    )
             if decision.kind == "review":
                 create_review(api, agents, parent, git_st)
                 start_publish(api, parent)
@@ -1472,7 +1514,7 @@ def sweep(api: Api, project: Path) -> None:
                 if decision.kind == "reverify":
                     create_verify(api, agents, parent, rebase, git_st, take_capacity())
             elif decision.kind == "rework":
-                verify = stages[-1][1]
+                verify = ruling_verify(stages)[0]
                 if reworks.get(parent["id"]) == verify["id"]:
                     # Woken once for this ruling and came back with no commit.
                     hand_off(parent, handoff_signature(parent, children, git_st),
