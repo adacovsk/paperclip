@@ -516,7 +516,7 @@ PATCH /api/issues/AA-120
 | `other` | whatever `note` says (required) | none |
 
 - Setting a hold sets `status: blocked` and clears the assignee in the same write. A `planner` hold may instead stand on a `todo` task assigned to the Planner.
-- `blockers` are issue ids or identifiers. A blocker that does not exist is refused with 422.
+- `blockers` are issue ids or identifiers. A blocker that does not exist, or is the task itself or one of its ancestors (`parentId` chain), is refused with 422: a parent cannot land until its child finishes, so that hold would never release.
 - With no `comment` in the request, the server writes the `Held: …` line to the thread.
 - Moving the task to any other status clears the hold. `"hold": null` clears it without moving the task.
 - `hold.reheld` is true when the same condition on the same blockers was held and cleared before.
