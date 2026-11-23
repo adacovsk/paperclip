@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# The operator's merge of a `task/<id>` PR: merge the head only when the
-# pipeline built it, and otherwise send it to be built instead of merging.
+# The operator's merge of a `task/<id>` or `op/<slug>` PR: merge the head only
+# when the pipeline built it, and otherwise send it to be built instead of
+# merging. An `op/*` branch is built from the operator worktree that has it
+# checked out, under the verify key `op-<slug>` (branch-of.sh), in the cloud
+# lane only: the local chain builds `.paperclip/worktrees/` and nothing else.
+# Nothing wakes on an op build's verdict, so run this again when it reports.
 #
 # WHY. The operator's merge is the final gate, and `gh pr merge` asks nothing.
 # A PR that conflicts with `main` invited a hand resolution on the operator's
@@ -11,8 +15,8 @@
 # that a head was built already exists (`pipeline/verify`, keyed on the SHA,
 # see post-verify-status.sh) and branch protection would enforce it, but the
 # project's plan does not offer branch protection on a private repository. So
-# the check lives here, and the rule is that a `task/*` PR merges through this
-# script and never through a bare `gh pr merge`.
+# the check lives here, and the rule is that a `task/*` or `op/*` PR merges
+# through this script and never through a bare `gh pr merge`.
 #
 # What it does with a head that is not green is the same thing the Dispatcher
 # does, through the same scripts, so there is one way a build is launched:
@@ -44,6 +48,7 @@ CENSUS="${OP_MERGE_CENSUS:-$HERE/verify-census.sh}"
 PROJECT="${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}"
 S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"
 export ARCHITECT_CLOUD_LANE="${ARCHITECT_CLOUD_LANE:-1}"
+. "$HERE/branch-of.sh"
 CONTEXT=pipeline/verify
 
 cd "$PROJECT" || { echo "op-merge: no project at $PROJECT" >&2; exit 2; }
@@ -78,10 +83,8 @@ one() {
   IFS=$'\t' read -r state branch sha mergeable draft title < <(pr_fields "$pr")
   say() { echo "op-merge #$pr: $*"; }
   [ "${state:-}" = OPEN ] || { say "is ${state:-unreadable}, not OPEN"; return 1; }
-  case "$branch" in
-    task/*) task="${branch#task/}" ;;
-    *) say "head $branch is not a task branch; this gate covers task/* only"; return 1 ;;
-  esac
+  task="$(branch_key "$branch")"
+  [ -n "$task" ] || { say "head $branch is neither task/* nor op/*; this gate covers those only"; return 1; }
 
   if [ "$(verify_state "$sha")" = success ]; then
     # A draft is marked ready by land.sh, after the landing gate and with the
@@ -104,8 +107,8 @@ one() {
   fi
   [ -z "$landed" ] || { say "landed, but ${sha:0:9} still has no green $CONTEXT"; return 1; }
 
-  wt="$PROJECT/.paperclip/worktrees/$task"
-  [ -d "$wt" ] || { say "no worktree for $task, so nothing here can build it"; return 1; }
+  wt="$(key_worktree "$task")"
+  [ -n "$wt" ] || { say "no worktree has $branch checked out, so nothing here can build it"; return 1; }
   if build_out "$task"; then say "a verify of $task is out"; return 3; fi
 
   sentinel="$(cat "$S/$task.exit" 2>/dev/null)"

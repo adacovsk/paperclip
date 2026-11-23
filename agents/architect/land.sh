@@ -22,6 +22,10 @@
 # marks it ready; it never opens a second PR. A draft is not a landing.
 #
 # Usage:  land.sh <task-id> <verify-task-id> <task-title>
+#         <task-id> may be `op-<slug>` (branch-of.sh): the operator's `op/<slug>`
+#         branch. Its draft already exists and its body was written by hand, so
+#         landing keeps that body, appends what the build established, and marks
+#         it ready; there is no Paperclip task to generate a body from.
 # Exit:   0  landed: the branch is pushed and a ready-for-review PR for it exists
 #         2  not landed, a new build is out: a freshness re-verify, or a
 #            resolve-mode verify of a branch that conflicts with main
@@ -42,7 +46,8 @@ LOCAL="${LAND_LOCAL:-$HERE/local-landable.sh}"
 GH="${LAND_GH:-gh}"
 PROJECT="${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}"
 S="${XDG_CACHE_HOME:-$HOME/.cache}/paperclip-verify"
-branch="task/$task"
+. "$HERE/branch-of.sh"
+branch="$(key_branch "$task")"
 
 say() { echo "land $task: $*"; }
 model() { say "$*"; exit 1; }
@@ -53,6 +58,9 @@ gate() {
 }
 body() {
   if [ -n "${LAND_BODY:-}" ]; then "$LAND_BODY" "$task"; return; fi
+  if [ "$branch" != "task/$task" ]; then
+    "$GH" pr view "$branch" --json body -q .body; return
+  fi
   ( cd "$PROJECT" && pixi run -e dev python scripts/generate_pr_body.py "$task" )
 }
 body_check() {
@@ -61,8 +69,8 @@ body_check() {
       --head-ref "$branch" --title "$title" --body-file "$1" )
 }
 
-WORKTREE="$PROJECT/.paperclip/worktrees/$task"
-cd "$WORKTREE" 2>/dev/null || model "no worktree"
+WORKTREE="$(key_worktree "$task")"
+cd "${WORKTREE:-/nonexistent}" 2>/dev/null || model "no worktree"
 [ "$(git branch --show-current)" = "$branch" ] || model "worktree is not on $branch"
 [ "$(cat "$S/$task.exit" 2>/dev/null)" = "0" ] || model "the sentinel is not 0"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || model "uncommitted changes in the worktree"
@@ -87,6 +95,9 @@ fi
 # The draft open-draft.sh opened when the verify launched; landing marks it ready.
 draft=""
 grep -qE ' OPEN true$' <<< "$prs" && draft=1
+# An op PR is opened by the operator session that wrote it; landing has no body
+# of its own to open one with.
+[ "$branch" = "task/$task" ] || [ -n "$prs" ] || model "no PR is open for $branch"
 
 # Freshness: relaunch-verify.sh owns the re-verify decision so the two cannot
 # disagree. 0 = a re-verify is out; 3 = land; 1 = it could not proceed, which
@@ -190,8 +201,10 @@ fi
 
 if [ -z "$prs" ] || [ -n "$draft" ]; then
   B="$S/$task.pr-body.md"
-  body > "$B" || model "generate_pr_body.py could not build a reviewable body"
+  body > "$B" || model "could not build a reviewable body"
   {
+    [ "$branch" = "task/$task" ] \
+      || printf '\n## Pipeline verify\n- cloud verify of %s: cargo clippy, cargo test --lib and scripts/verify.sh green\n' "${head:0:9}"
     grep -E '^out-of-scope:' <<< "$verdict" | sed 's/^/- /'
     [ -n "$verdict" ] || echo "- local build: clippy --all-targets -D warnings and cargo test --lib green; every commit is the Worker's or the Reviewer's, no Architect fix"
     [ -z "$note" ] || echo "- note: $note"

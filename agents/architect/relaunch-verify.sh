@@ -19,6 +19,9 @@
 # the fallback is today's behaviour, never a dropped verify.
 #
 # Usage:  relaunch-verify.sh <task-id> <verify-task-id> launch|retry|fresh
+#         <task-id> may be `op-<slug>`: the operator's `op/<slug>` branch, built
+#         from the worktree that has it checked out (branch-of.sh). An op branch
+#         builds in the cloud lane only; local-verify.sh builds `.paperclip/worktrees/`.
 # Exit:   0  relaunched, in the cloud lane or locally; the next sentinel arrives as usual
 #         3  fresh only: nothing to re-verify, Landing should run (main has not
 #            moved in code, or the freshness cap is reached)
@@ -43,9 +46,11 @@ CAP="${FRESHNESS_CAP:-2}"
 
 say() { echo "relaunch-verify $task: $*"; }
 
-cd "${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}/.paperclip/worktrees/$task" 2>/dev/null \
-  || { say "no worktree"; exit 1; }
-[ "$(git branch --show-current)" = "task/$task" ] || { say "worktree is not on task/$task"; exit 1; }
+. "$HERE/branch-of.sh"
+branch="$(key_branch "$task")"
+wt="$(key_worktree "$task")"
+cd "${wt:-/nonexistent}" 2>/dev/null || { say "no worktree"; exit 1; }
+[ "$(git branch --show-current)" = "$branch" ] || { say "worktree is not on $branch"; exit 1; }
 # A dirty tree is an Architect's unfinished fix: offloading would publish the
 # committed head without it, and the sync below would refuse anyway.
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { say "uncommitted changes in the worktree"; exit 1; }
@@ -54,7 +59,7 @@ cd "${PAPERCLIP_PROJECT:?set PAPERCLIP_PROJECT}/.paperclip/worktrees/$task" 2>/d
 # rebased, because Landing's push is not forced. Returns 1 on a conflict, with
 # no rebase or merge left in progress.
 sync() {
-  { ! git ls-remote --exit-code --heads origin "task/$task" >/dev/null 2>&1 && git rebase -q origin/main 2>/dev/null; } \
+  { ! git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 && git rebase -q origin/main 2>/dev/null; } \
     || { git rebase --abort >/dev/null 2>&1
          git merge -q --no-edit origin/main >/dev/null 2>&1 \
            || { git merge --abort >/dev/null 2>&1; return 1; }; }
@@ -62,9 +67,10 @@ sync() {
 
 offload() {
   rm -f "$S/$task.exit"
-  if "$CV" offload "$task" "task/$task" "$verify" >/dev/null 2>&1; then
+  if "$CV" offload "$task" "$branch" "$verify" >/dev/null 2>&1; then
     say "relaunched in the cloud lane ($1)"; exit 0
   fi
+  [ "$branch" = "task/$task" ] || { say "the cloud lane refused the offload, and $branch has no local lane ($1)"; exit 1; }
   # A refused offload (the lane closed, or a build it does not take) is a local
   # build, which is all the woken Architect would have done with it.
   if out="$("$LOCAL" "$task" "$verify" ${2:-} 2>&1)"; then
@@ -90,7 +96,7 @@ case "$mode" in
     # head; only a resolve already tried makes it a model's (and the operator's).
     [ ! -e "$S/$task.cloud.resolve" ] || { say "conflicts with origin/main and a resolve verify was already tried"; exit 1; }
     rm -f "$S/$task.exit"
-    if CLOUD_VERIFY_RESOLVE=1 "$CV" offload "$task" "task/$task" "$verify" >/dev/null 2>&1; then
+    if CLOUD_VERIFY_RESOLVE=1 "$CV" offload "$task" "$branch" "$verify" >/dev/null 2>&1; then
       say "conflicts with origin/main; launched in resolve mode"; exit 0
     fi
     say "the cloud lane refused the resolve offload"; exit 1
