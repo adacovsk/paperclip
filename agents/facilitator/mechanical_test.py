@@ -434,6 +434,68 @@ class Nightly(unittest.TestCase):
         self.assertIsNone(m.read_nightly([], NOW)["stale"])
 
 
+class NightlyWalk(unittest.TestCase):
+    """`nightly` walks main's first-parent history in a real repo; the status read is stubbed."""
+
+    def repo(self, tmp):
+        def run(*args, hours_ago=0):
+            stamp = iso(hours_ago)
+            env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp,
+                   "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                   "GIT_COMMITTER_EMAIL": "t@t"}
+            return subprocess.run(["git", "-C", tmp, *args], env=env, capture_output=True, text=True,
+                                  check=True).stdout.strip()
+        run("init", "-q", "-b", "main")
+        run("commit", "-q", "--allow-empty", "-m", "base", hours_ago=60)
+        run("commit", "-q", "--allow-empty", "-m", "nightly-checked", hours_ago=10)
+        checked = run("rev-parse", "HEAD")
+        side = []
+        for n in range(3):  # each merge brings a branch's own commits into the full graph
+            run("checkout", "-q", "-b", f"b{n}", checked if n == 0 else "main")
+            for k in range(5):
+                run("commit", "-q", "--allow-empty", "-m", f"b{n}.{k}", hours_ago=9 - n)
+                side.append(run("rev-parse", "HEAD"))
+            run("checkout", "-q", "main")
+            run("merge", "-q", "--no-ff", "-m", f"merge b{n}", f"b{n}", hours_ago=8 - n)
+        run("update-ref", "refs/remotes/origin/main", "main")
+        return checked, side, run("rev-parse", "HEAD")
+
+    def test_the_walk_is_first_parent_and_finds_the_status_behind_many_merges(self):
+        saved = (m.commit_statuses, m.NIGHTLY_BATCH)
+        asked: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            checked, side, head = self.repo(tmp)
+
+            def statuses(project, oids):
+                asked.extend(oids)
+                return {checked: {"contexts": [{"context": m.NIGHTLY_CONTEXT, "state": "FAILURE",
+                                                "createdAt": iso(9)}]}} if checked in oids else {}
+            try:
+                m.commit_statuses, m.NIGHTLY_BATCH = statuses, 2
+                got = m.nightly(Path(tmp), NOW)
+            finally:
+                m.commit_statuses, m.NIGHTLY_BATCH = saved
+        self.assertEqual(got, {"sha": checked, "state": "failure", "ageHours": 9.0, "commitsSince": 3,
+                               "stale": False})
+        self.assertEqual(asked[0], head)
+        self.assertFalse(set(asked) & set(side))
+
+    def test_the_walk_stops_at_the_first_commit_past_the_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp)
+            walked = m.first_parent(Path(tmp), NOW)
+        self.assertEqual(len(walked), 5)  # three merges, the checked commit, then base past the threshold
+        saved = m.commit_statuses
+        try:
+            m.commit_statuses = lambda project, oids: {}
+            with tempfile.TemporaryDirectory() as tmp:
+                self.repo(tmp)
+                self.assertEqual(m.nightly(Path(tmp), NOW),
+                                 {"sha": None, "state": None, "searched": 5, "stale": True})
+        finally:
+            m.commit_statuses = saved
+
+
 class Branches(unittest.TestCase):
     def test_young_branches_and_open_pr_heads_are_never_candidates(self):
         rows = [("old", NOW - 48 * HOUR, "s1"), ("young", NOW - HOUR, "s2"), ("pr", NOW - 48 * HOUR, "s3")]
