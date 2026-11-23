@@ -20,6 +20,8 @@
 #      sentinel — so the next reader cannot act on it;
 #   2. the escalated task, if still `blocked`, is put back to `todo` and its
 #      assignee toggled through null, which is what fires `wakeOnDemand`.
+#      Leaving `blocked` clears any hold on it; one the Dispatcher held, and so
+#      left unassigned, goes to the Architect.
 # The relaunch that follows rebases onto current `origin/main` (§Detached
 # launch), so a break that is really gone stays gone, and one that is still
 # there re-escalates with a fresh marker.
@@ -111,6 +113,15 @@ hits.sort(key=lambda i: i.get("issueNumber") or 0, reverse=True)
 if hits:
     i = hits[0]
     print(i["id"], "blocked", i.get("assigneeAgentId") or "-", i.get("identifier"))' "$1"
+}
+
+# Prints the Architect's agent id, nothing when it cannot be read.
+architect_id() {
+  api GET "/agents" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+d = d if isinstance(d, list) else d.get("agents", [])
+print(next((a["id"] for a in d if a.get("name") == "Architect"), ""))'
 }
 
 # Prints a reason when `<sha>..origin/main` plausibly touches the recorded
@@ -214,8 +225,14 @@ for marker in "$S"/*.base-red; do
     *)
       echo "$task: $esc is $status, not yet blocked — marker kept for a later pass"; continue ;;
   esac
+  # A verify the Dispatcher held on its base-red is unassigned, since a hold
+  # write clears the assignee. Its release is this requeue, so it goes back to
+  # the Architect, the only agent that runs a Verify.
   if [ "$assignee" = "-" ]; then
-    echo "$task: $esc has no assignee — marker kept, not re-dispatched"; continue
+    assignee="$(architect_id 2>/dev/null)" || assignee=""
+    if [ -z "$assignee" ]; then
+      echo "$task: $esc has no assignee and no Architect was found — marker kept, not re-dispatched"; continue
+    fi
   fi
 
   # Clear before re-dispatch: a woken Architect must find no result, so it

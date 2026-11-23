@@ -11,7 +11,8 @@
 # A marker that records failing sites is requeued only by a commit touching the
 # break, not by any move of main; a re-dispatch cut off between the null PATCH
 # and the re-assignment is finished by the next sweep; and a second concurrent
-# sweep backs off the lock.
+# sweep backs off the lock. A verify held on its base-red is unassigned, and goes
+# to the Architect.
 #
 # Run: bash agents/architect/requeue-base-red.test.sh
 set -u
@@ -51,7 +52,8 @@ if [ "\$m" = PATCH ]; then
 elif [ "\$m" = POST ]; then
   echo "POST \$url" >> "$D/calls"
 else
-  echo "GET \$url" >> "$D/calls"; cat "$D/issues.json"
+  echo "GET \$url" >> "$D/calls"
+  case "\$url" in */agents) cat "$D/agents.json" 2>/dev/null || echo '[]';; *) cat "$D/issues.json";; esac
 fi
 EOF
 chmod +x "$D/bin/curl"
@@ -215,6 +217,24 @@ echo '[{"identifier":"V-1","id":"u1","status":"blocked","assigneeAgentId":"arch"
 out="$(flock "$V/.requeue-base-red.lock" bash "$R")"
 case "$out" in *"skipped"*) ok "a concurrent sweep backs off the lock";; *) fail "no back-off: $out";; esac
 [ -e "$V/T-1.base-red" ] && ! grep -q PATCH "$D/calls" && ok "the backed-off sweep changed nothing" || fail "backed-off sweep acted"
+
+# 13. A held verify is unassigned (the hold write cleared it) → re-dispatched to the Architect.
+reset
+printf '%s\nV-1\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
+echo '[{"identifier":"V-1","id":"u1","status":"blocked","assigneeAgentId":null}]' > "$D/issues.json"
+echo '[{"id":"w1","name":"Worker"},{"id":"arch9","name":"Architect"}]' > "$D/agents.json"
+out="$(bash "$R")"
+case "$(grep PATCH "$D/calls" | sed -n 2p)" in *"/issues/u1 "*'"assigneeAgentId":"arch9"'*) ok "a held, unassigned verify goes to the Architect";; *) fail "held verify not re-dispatched: $out";; esac
+[ ! -e "$V/T-1.base-red" ] && ok "its marker is removed after the re-dispatch" || fail "held verify's marker survived"
+
+# 14. Unassigned and no Architect readable → marker kept, nothing patched.
+reset
+printf '%s\nV-1\n' "$OLD" > "$V/T-1.base-red"; echo 1 > "$V/T-1.exit"
+echo '[]' > "$D/agents.json"
+bash "$R" >/dev/null
+[ -e "$V/T-1.base-red" ] && [ -e "$V/T-1.exit" ] && ! grep -q PATCH "$D/calls" \
+  && ok "no Architect to assign keeps the marker" || fail "acted with no Architect to assign"
+rm -f "$D/agents.json"
 
 # 5. --dry-run changes nothing.
 reset

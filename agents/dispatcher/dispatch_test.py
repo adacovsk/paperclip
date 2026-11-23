@@ -464,36 +464,94 @@ class Holds(unittest.TestCase):
 
 
 
-class UnheldEscalations(unittest.TestCase):
-    """A blocked stage nobody owns is routed to the Planner with its own reason."""
+class EscalationHolds(unittest.TestCase):
+    """Every blocked stage with no hold gets the hold its escalation's cause names."""
 
     VERIFY = {"id": "v", "identifier": "AA-20"}
-
+    PARENT = {"identifier": "AA-2", "status": "in_review"}
     STAGE_AGENTS = {"arch", "rev"}
+    CONFLICT = GitState(exists=True, ahead=2, head="a" * 40, conflicts=("src/x.rs",))
+    MARKER = dispatch.BaseRed("AA-2", "b" * 40, "AA-20", ())
 
     @staticmethod
     def comment(at, body, author="arch"):
         return {"createdAt": at, "body": body, "authorAgentId": author}
 
-    def test_a_requeue_note_is_not_an_escalation(self):
-        comments = [
-            self.comment("1", "main does not compile; nothing here is this task's."),
-            self.comment("2", "Requeued by requeue-base-red.sh: main moved past the break; the verify re-dispatched.", None),
-        ]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+    def hold(self, comments=(), git=CLEAN, stage=None, parent=None, marker=None, repair=None, rebases=0):
+        return dispatch.escalation_hold(stage or self.VERIFY, parent or self.PARENT, list(comments), git,
+                                        marker, repair, self.STAGE_AGENTS, rebases)
 
-    def test_another_agents_note_is_not_an_escalation(self):
-        comments = [self.comment("1", "Handing to the Architect: its verify result needs a model.", "disp")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+    def test_a_held_stage_needs_none(self):
+        held = {**self.VERIFY, "hold": {"kind": "operator", "blockers": [], "note": "needs a ruling"}}
+        self.assertIsNone(self.hold([self.comment("1", "PAPERCLIP-ESCALATE: x")], stage=held))
+
+    def test_a_parent_the_worker_holds_is_left_to_its_run(self):
+        for status in ("todo", "in_progress"):
+            self.assertIsNone(self.hold(parent={**self.PARENT, "status": status}))
+
+    def test_a_held_parent_lends_the_stage_its_hold(self):
+        parent = {**self.PARENT, "status": "blocked",
+                  "hold": {"kind": "until_merge", "blockers": [{"id": "x", "identifier": "AA-9"}], "note": None}}
+        got = self.hold([self.comment("1", "PAPERCLIP-ESCALATE: x")], git=self.CONFLICT, parent=parent)
+        self.assertEqual((got.kind, got.blockers), ("until_merge", ("AA-9",)))
+        self.assertIn("parent AA-2 is held until AA-9 merged", got.note)
+        parent["hold"] = {"kind": "operator", "blockers": [], "note": "needs a ruling"}
+        self.assertEqual(self.hold(parent=parent).kind, "operator")
+
+    def test_base_red_waits_on_the_live_main_repair(self):
+        got = self.hold([self.comment("1", "PAPERCLIP-ESCALATE: main does not compile")],
+                        marker=self.MARKER, repair="AA-77")
+        self.assertEqual((got.kind, got.blockers), ("until_merge", ("AA-77",)))
+        self.assertIn("requeue-base-red.sh", got.note)
+
+    def test_base_red_with_no_repair_names_the_requeue(self):
+        got = self.hold([self.comment("1", "PAPERCLIP-ESCALATE: main does not compile")], marker=self.MARKER)
+        self.assertEqual((got.kind, got.blockers), ("other", ()))
+        self.assertIn("bbbbbbbbb", got.note)
+        self.assertIn("main does not compile", got.note)
+
+    def test_a_clean_branch_goes_to_the_planner_with_the_escalation_reason(self):
+        comments = [self.comment("2", "Two worn-item tests fail.\n\nPAPERCLIP-ESCALATE: pick a scope for the Epaulet slot")]
+        self.assertEqual(self.hold(comments), dispatch.StageHold("planner", "AA-20 escalated: pick a scope for the Epaulet slot"))
 
     def test_a_marked_escalation_routes_whoever_posted_it(self):
-        comments = [self.comment("1", "Red twice.\n\nPAPERCLIP-ESCALATE: pick a scope", None)]
-        self.assertEqual(
-            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "AA-20 escalated: pick a scope",
-        )
+        comments = [self.comment("1", "Red twice.\n\nPAPERCLIP-ESCALATE: cloud lane gave up", None)]
+        self.assertEqual(self.hold(comments).note, "AA-20 escalated: cloud lane gave up")
 
-    def test_a_stage_re_dispatched_since_it_was_read_is_not_routed(self):
+    def test_a_prose_escalation_reads_by_its_first_line_past_later_remarks(self):
+        comments = [
+            self.comment("1", "Two lib tests fail outside this task's files.\nDetail follows."),
+            {"createdAt": "2", "body": "Operator: not mine to rule on.", "authorAgentId": None, "authorUserId": "op"},
+            self.comment("3", "Handing to the Architect: its verify result needs a model.", "disp"),
+        ]
+        self.assertEqual(self.hold(comments).note, "AA-20 escalated: Two lib tests fail outside this task's files.")
+
+    def test_a_stage_with_no_comment_is_still_held(self):
+        got = self.hold()
+        self.assertEqual(got.kind, "planner")
+        self.assertIn("no `Held:` line", got.note)
+
+    def test_modify_delete_goes_to_the_planner_to_re_file(self):
+        git = GitState(exists=True, ahead=2, conflicts=("assets/x.json",), deleted_on_main=True)
+        got = self.hold([self.comment("1", "needs operator merge", "rev")], git=git)
+        self.assertEqual(got.kind, "planner")
+        self.assertIn("re-file", got.note)
+        self.assertIn("assets/x.json", got.note)
+
+    def test_a_conflict_past_the_rebase_cap_goes_to_the_operator(self):
+        got = self.hold([self.comment("1", "PAPERCLIP-ESCALATE: conflict")], git=self.CONFLICT,
+                        rebases=dispatch.MAX_REBASES)
+        self.assertEqual(got.kind, "operator")
+        self.assertIn("the cap", got.note)
+
+    def test_any_other_conflict_goes_to_the_operator(self):
+        parent = {**self.PARENT, "status": "blocked"}  # no rebase is dispatched under a blocked parent
+        got = self.hold([self.comment("1", "PAPERCLIP-ESCALATE: conflict with main")], git=self.CONFLICT, parent=parent)
+        self.assertEqual(got.kind, "operator")
+        self.assertIn("src/x.rs", got.note)
+        self.assertIn("conflict with main", got.note)
+
+    def test_a_stage_re_dispatched_since_it_was_read_is_not_held(self):
         class Api:
             def __init__(self, fresh):
                 self.fresh = fresh
@@ -506,70 +564,72 @@ class UnheldEscalations(unittest.TestCase):
         self.assertFalse(dispatch.still_parked(Api({"status": "todo", "assigneeAgentId": "arch"}), read))
         self.assertFalse(dispatch.still_parked(Api({"status": "blocked", "assigneeAgentId": "planner"}), read))
 
-    def test_routes_a_marked_escalation_with_its_reason(self):
-        comments = [self.comment("2", "Two worn-item tests fail.\n\nPAPERCLIP-ESCALATE: pick a scope for the Epaulet slot")]
-        self.assertEqual(
-            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "AA-20 escalated: pick a scope for the Epaulet slot",
-        )
+    class Api:
+        dry_run = False
 
-    def test_routes_a_prose_escalation_by_its_first_line(self):
-        comments = [self.comment("2", "What it needs: an operator to land it.\nDetail follows.")]
-        self.assertEqual(
-            dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "AA-20 escalated: What it needs: an operator to land it.",
-        )
+        def __init__(self):
+            self.writes = []
 
-    def test_a_held_stage_is_owned(self):
-        comments = [self.comment("1", "PAPERCLIP-ESCALATE: x")]
-        held = {**self.VERIFY, "hold": {"kind": "operator", "blockers": [], "note": "needs a ruling"}}
-        self.assertIsNone(dispatch.unheld_escalation(held, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+        def hold(self, issue, kind, what, blockers=(), note=None, **fields):
+            self.writes.append((kind, tuple(blockers), note, fields))
 
-    def test_a_conflict_is_the_rebase_lanes(self):
-        comments = [self.comment("1", "PAPERCLIP-ESCALATE: conflict with main")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, False, set(), self.STAGE_AGENTS))
+    def test_a_planner_hold_is_the_planners_wake(self):
+        api = self.Api()
+        dispatch.hold_escalation(api, {"Planner": "pl"}, self.VERIFY, dispatch.StageHold("planner", "pick"))
+        self.assertEqual(api.writes[0][0], "planner")
+        self.assertEqual((api.writes[0][3]["status"], api.writes[0][3]["assigneeAgentId"]), ("todo", "pl"))
 
-    def test_a_red_main_is_the_base_red_markers_by_stage_or_parent(self):
-        comments = [self.comment("1", "PAPERCLIP-ESCALATE: main does not compile")]
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-20"}, self.STAGE_AGENTS))
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, {"AA-2"}, self.STAGE_AGENTS))
+    def test_other_holds_park_the_stage(self):
+        api = self.Api()
+        dispatch.hold_escalation(api, {"Planner": "pl"}, self.VERIFY,
+                                 dispatch.StageHold("until_merge", "wait", ("AA-77",)))
+        self.assertEqual(api.writes, [("until_merge", ("AA-77",), "wait", {})])
 
-    def test_a_stage_with_no_comment_is_left(self):
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", [], True, set(), self.STAGE_AGENTS))
+    def test_with_no_planner_a_planner_hold_is_the_operators(self):
+        api = self.Api()
+        dispatch.hold_escalation(api, {}, self.VERIFY, dispatch.StageHold("planner", "pick"))
+        self.assertEqual(api.writes[0][0], "operator")
+        self.assertIn("pick", api.writes[0][2])
 
-    PARKED = {**VERIFY, "assigneeAgentId": "arch"}
 
-    def test_a_stage_parked_on_its_agent_routes_past_an_operator_remark(self):
-        comments = [
-            self.comment("1", "Two lib tests fail outside this task's files.\nDetail follows."),
-            {"createdAt": "2", "body": "Operator: looked at this, not mine to rule on.", "authorAgentId": None,
-             "authorUserId": "op"},
-        ]
-        self.assertEqual(
-            dispatch.unheld_escalation(self.PARKED, "AA-2", comments, True, set(), self.STAGE_AGENTS),
-            "AA-20 escalated: Two lib tests fail outside this task's files.",
-        )
-        # Unassigned, the same thread is no escalation: the stage agent did not park it.
-        self.assertIsNone(dispatch.unheld_escalation(self.VERIFY, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+class BuildPending(unittest.TestCase):
+    """A parked Verify with a build out, or an unread result, is route_sentinels', not a hold's."""
 
-    def test_a_stage_parked_on_its_agent_with_no_comment_is_routed(self):
-        self.assertIn("no `Held:` line",
-                      dispatch.unheld_escalation(self.PARKED, "AA-2", [], True, set(), self.STAGE_AGENTS))
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        for name, value in (("VERIFY_DIR", self.dir), ("landing_running", lambda p: False),
+                            ("watcher_alive", lambda p: False), ("local_build_alive", lambda p: False)):
+            patcher = mock.patch.object(dispatch, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
-    def test_a_dispatcher_note_after_the_park_still_wins(self):
-        # A relaunch leaves the Verify blocked on the Architect while its build is out.
-        comments = [
-            self.comment("1", "Red on a test outside this task."),
-            self.comment("2", "Relaunched by the Dispatcher, no model run: stale result.", "disp"),
-        ]
-        self.assertIsNone(dispatch.unheld_escalation(self.PARKED, "AA-2", comments, True, set(), self.STAGE_AGENTS))
+    def verify(self, parked_ago):
+        stamp = datetime.fromtimestamp(time.time() - parked_ago, timezone.utc).isoformat().replace("+00:00", "Z")
+        return {"id": "v", "identifier": "AA-20", "updatedAt": stamp}
 
-    def test_a_parked_stage_keeps_its_other_owners(self):
-        comments = [self.comment("1", "main does not compile")]
-        held = {**self.PARKED, "hold": {"kind": "operator", "blockers": []}}
-        self.assertIsNone(dispatch.unheld_escalation(held, "AA-2", comments, True, set(), self.STAGE_AGENTS))
-        self.assertIsNone(dispatch.unheld_escalation(self.PARKED, "AA-2", comments, False, set(), self.STAGE_AGENTS))
-        self.assertIsNone(dispatch.unheld_escalation(self.PARKED, "AA-2", comments, True, {"AA-20"}, self.STAGE_AGENTS))
+    def age(self, name, seconds):
+        path = self.dir / name
+        path.write_text("1")
+        os.utime(path, (time.time() - seconds, time.time() - seconds))
+
+    def test_nothing_out_is_not_pending(self):
+        self.age("AA-2.exit", 3600)
+        self.age("AA-2.log", 3600)
+        self.assertFalse(dispatch.build_pending("AA-2", self.verify(60)))
+
+    def test_a_result_written_after_the_park_is_pending(self):
+        self.age("AA-2.exit", 10)
+        self.assertTrue(dispatch.build_pending("AA-2", self.verify(60)))
+
+    def test_a_fresh_launch_is_pending(self):
+        self.age("AA-2.cloud.launched", 60)
+        self.assertTrue(dispatch.build_pending("AA-2", self.verify(3600)))
+
+    def test_a_live_build_is_pending(self):
+        with mock.patch.object(dispatch, "watcher_alive", lambda p: True):
+            self.assertTrue(dispatch.build_pending("AA-2", self.verify(3600)))
 
 
 class NothingToLand(unittest.TestCase):
@@ -598,6 +658,22 @@ class NothingToLand(unittest.TestCase):
         dirty = GitState(exists=True, ahead=2, dirty=True, merges_clean=True)
         self.assertEqual(decide(parent(), stages, dirty).reason, dispatch.BLOCKED_STAGE)
         self.assertEqual(decide(parent(), stages, CLEAN).reason, dispatch.BLOCKED_STAGE)
+
+
+class BlockedBehindCancelledRebase(unittest.TestCase):
+    """A cancelled rebase never moved the branch, so the blocked stage before it still owns the parent."""
+
+    def stages(self, *after):
+        return [child("Review: T-1", "done", "1", "review"), child("Verify: T-1", "blocked", "2", "verify"), *after]
+
+    def test_the_blocked_verify_is_still_the_stage(self):
+        stages = self.stages(child("Rebase: T-1", "cancelled", "3", "rebase"))
+        self.assertEqual(decide(parent(), stages, CLEAN).reason, dispatch.BLOCKED_STAGE)
+        self.assertEqual(dispatch.parked_stage(dispatch.ordered_stages(stages))[1]["id"], stages[1]["id"])
+
+    def test_a_finished_rebase_is_not_passed_over(self):
+        stages = self.stages(child("Rebase: T-1", "done", "3", "rebase"))
+        self.assertNotEqual(decide(parent(), stages, CLEAN).reason, dispatch.BLOCKED_STAGE)
 
 
 class OrphanStages(unittest.TestCase):
