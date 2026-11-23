@@ -97,6 +97,39 @@ describeEmbeddedPostgres("issue holds", () => {
     ).rejects.toMatchObject({ status: 422 });
   });
 
+  it("refuses a hold on the task's own parent or ancestor, and accepts one on a sibling", async () => {
+    const grandparent = await seedIssue();
+    const parent = await seedIssue({ parentId: grandparent.id });
+    const task = await seedIssue({ parentId: parent.id });
+    const sibling = await seedIssue({ parentId: parent.id });
+    const unrelated = await seedIssue();
+    const hold = (blockers: string[]) => holds.fromInput(task.id, { kind: "until_merge", blockers, note: null }, {});
+
+    await expect(hold([task.identifier])).rejects.toMatchObject({ status: 422 });
+    await expect(hold([parent.identifier])).rejects.toMatchObject({ status: 422 });
+    await expect(hold([grandparent.id])).rejects.toMatchObject({ status: 422 });
+    await expect(hold([sibling.identifier, parent.identifier])).rejects.toMatchObject({ status: 422 });
+    expect(await hold([sibling.identifier])).toMatchObject({ blockers: [{ id: sibling.id }] });
+    expect(await hold([unrelated.id])).toMatchObject({ blockers: [{ id: unrelated.id }] });
+
+    const fromComment = await holds.fromComment(task.id, `Held: until ${parent.identifier} merges`, {});
+    expect(fromComment).toMatchObject({ kind: "other", blockers: [] });
+  });
+
+  it("stops the ancestor walk on a parent cycle", async () => {
+    const first = await seedIssue();
+    const second = await seedIssue({ parentId: first.id });
+    await db.update(issues).set({ parentId: second.id }).where(eq(issues.id, first.id));
+    const unrelated = await seedIssue();
+
+    await expect(
+      holds.fromInput(second.id, { kind: "until_merge", blockers: [first.identifier], note: null }, {}),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(
+      await holds.fromInput(second.id, { kind: "until_merge", blockers: [unrelated.id], note: null }, {}),
+    ).toMatchObject({ blockers: [{ id: unrelated.id }] });
+  });
+
   it("refuses a hold on a status it cannot stand under, and an assignee on a blocked hold", async () => {
     const agentId = await seedAgent();
     const blocker = await seedIssue();

@@ -45,7 +45,34 @@ export function holdPlacement(
   return { status, assigned: Boolean(agent || user) };
 }
 
+/**
+ * How far up the parent chain a hold's blockers are checked. Parent links are
+ * not constrained against cycles, so the walk stops here as well as on a repeat.
+ */
+const MAX_ANCESTOR_DEPTH = 64;
+
 export function issueHoldService(db: Db) {
+  /**
+   * The task and every task above it. A hold on any of them never releases: a
+   * parent cannot land until its child finishes, and a held child does not.
+   */
+  async function selfAndAncestors(issueId: string): Promise<Set<string>> {
+    const chain = new Set<string>([issueId]);
+    let current: string | null = issueId;
+    for (let depth = 0; current && depth < MAX_ANCESTOR_DEPTH; depth += 1) {
+      const row: { parentId: string | null } | undefined = await db
+        .select({ parentId: issues.parentId })
+        .from(issues)
+        .where(eq(issues.id, current))
+        .then((rows) => rows[0]);
+      const parentId: string | null = row?.parentId ?? null;
+      if (!parentId || chain.has(parentId)) break;
+      chain.add(parentId);
+      current = parentId;
+    }
+    return chain;
+  }
+
   async function resolveBlockers(refs: string[]) {
     const wanted = [...new Set(refs.map((ref) => ref.trim()).filter(Boolean))];
     if (wanted.length === 0) return { blockers: [] as IssueHoldBlocker[], missing: [] as string[] };
@@ -93,9 +120,9 @@ export function issueHoldService(db: Db) {
   }
 
   /**
-   * A hold a caller wrote as a field. A blocker that does not exist, or the
-   * task itself, is refused here: the writer is still in the request and can
-   * correct it, where a hold on a task nobody can find would never release.
+   * A hold a caller wrote as a field. A blocker that does not exist, the task
+   * itself, or one of its ancestors is refused here: the writer is still in the
+   * request and can correct it, where any of those holds would never release.
    */
   async function fromInput(issueId: string, input: IssueHoldInput, actor: HoldActor): Promise<IssueHold> {
     const { blockers, missing } = await resolveBlockers(input.blockers);
@@ -105,15 +132,25 @@ export function issueHoldService(db: Db) {
     if (blockers.some((blocker) => blocker.id === issueId)) {
       throw unprocessable("A task cannot be held on itself");
     }
+    const ancestors = await selfAndAncestors(issueId);
+    const onAncestor = blockers.filter((blocker) => ancestors.has(blocker.id));
+    if (onAncestor.length > 0) {
+      throw unprocessable(
+        `A task cannot be held on its own parent or ancestor, which cannot land until it finishes: ${onAncestor
+          .map((blocker) => blocker.identifier)
+          .join(", ")}`,
+      );
+    }
     return stamped(input.kind, blockers, input.note ?? null, actor, new Date());
   }
 
   /**
    * The hold a `Held:` comment declares, for writers that have not moved to the
    * field. Nothing is refused on this path, because the comment is already the
-   * caller's whole intent: a line whose blockers cannot all be found is kept as
-   * kind `other` with the line as its note, so it is visible as a hold that
-   * names no release rather than read as one that waits on fewer tasks.
+   * caller's whole intent: a line whose blockers cannot all be found, or that
+   * names the task or one of its ancestors, is kept as kind `other` with the
+   * line as its note, so it is visible as a hold that names no release rather
+   * than read as one that will.
    */
   async function fromComment(
     issueId: string,
@@ -124,7 +161,8 @@ export function issueHoldService(db: Db) {
     const parsed = parseHoldLine(body);
     if (!parsed) return null;
     const { blockers, missing } = await resolveBlockers(parsed.blockerIdentifiers);
-    const unreadable = missing.length > 0 || blockers.some((blocker) => blocker.id === issueId);
+    const ancestors = blockers.length > 0 ? await selfAndAncestors(issueId) : new Set<string>();
+    const unreadable = missing.length > 0 || blockers.some((blocker) => ancestors.has(blocker.id));
     if (unreadable) {
       const line = body.trim().split("\n", 1)[0]!.replace(/^\s*Held:\s*/, "");
       return stamped("other", [], line, actor, setAt);

@@ -110,7 +110,8 @@ treats it as one.
 the task, which names what releases it. Setting it is one write
 (`PATCH {"hold": {"kind": …, "blockers": [<id>…], "note": "<why>"}}`): the server
 parks the task `blocked` with no assignee, posts the `Held:` line to the thread,
-and refuses a blocker that does not exist. Moving the task to another status
+and refuses a blocker that does not exist or is the task's own parent or
+ancestor (which cannot land until the task finishes). Moving the task to another status
 clears the hold.
 
 - `until_merge`, naming tasks — released when every one is done or cancelled
