@@ -80,7 +80,7 @@ const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 // The wrapper opens the run when it wins a slot and closes it when the build
 // exits, which is the ONLY thing that settles such a run — see the reaper
 // exemption below for why this must never be reaped or retried.
-const DETACHED_INVOCATION_SOURCE = "detached_external";
+export const DETACHED_INVOCATION_SOURCE = "detached_external";
 // Marker written on in-flight runs when the server is shutting down, *before* it
 // SIGTERMs their child processes. Without it the next boot's reaper can only say
 // "child pid N is no longer running", which reads like the child died on its own
@@ -1973,11 +1973,28 @@ export function heartbeatService(db: Db) {
     };
   }
 
+  /**
+   * Running runs this process supervises for the agent: the ones that occupy a
+   * `maxConcurrentRuns` slot and that the agent's own status reflects.
+   *
+   * Detached runs are excluded. They stand for work executing outside this
+   * process (a long build under `cargo-sem.sh`), which is already capped by its
+   * own semaphore, and nothing here starts, settles or finalizes the agent for
+   * them. Counted as slots, a detached build opened under an agent with
+   * `maxConcurrentRuns: 1` holds that agent's queue for the whole build, and
+   * builds run back to back, so the queue barely drains.
+   */
   async function countRunningRunsForAgent(agentId: string) {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.status, "running")));
+      .where(
+        and(
+          eq(heartbeatRuns.agentId, agentId),
+          eq(heartbeatRuns.status, "running"),
+          ne(heartbeatRuns.invocationSource, DETACHED_INVOCATION_SOURCE),
+        ),
+      );
     return Number(count ?? 0);
   }
 
@@ -2341,7 +2358,15 @@ export function heartbeatService(db: Db) {
       const latest = await db
         .select({ errorCode: heartbeatRuns.errorCode })
         .from(heartbeatRuns)
-        .where(and(eq(heartbeatRuns.agentId, agent.id), sql`${heartbeatRuns.finishedAt} is not null`))
+        .where(
+          and(
+            eq(heartbeatRuns.agentId, agent.id),
+            sql`${heartbeatRuns.finishedAt} is not null`,
+            // A detached run never sets the agent's status, so its outcome says
+            // nothing about whether this `error` came from a lost process.
+            ne(heartbeatRuns.invocationSource, DETACHED_INVOCATION_SOURCE),
+          ),
+        )
         .orderBy(desc(heartbeatRuns.finishedAt))
         .limit(1)
         .then((rows) => rows[0] ?? null);

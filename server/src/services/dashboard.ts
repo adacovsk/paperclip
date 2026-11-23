@@ -1,8 +1,9 @@
-import { eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
 import { budgetService } from "./budgets.js";
 import { getOrCreateInstanceSettingsRow } from "./instance-settings.js";
+import { DETACHED_INVOCATION_SOURCE } from "./heartbeat.js";
 
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
@@ -28,7 +29,9 @@ export function dashboardService(db: Db) {
 
       // Per-agent queue depth — surfaces the "agent appears idle but has stuck queued
       // runs" failure mode. An agent with queued > 0 and running == 0 means wakes are
-      // accumulating but never claiming; treat as stuck.
+      // accumulating but never claiming; treat as stuck. Detached runs are left out:
+      // they hold no dispatch slot, so a queue beside them that is not draining is
+      // just as stuck.
       const agentRunCounts = await db
         .select({
           agentId: heartbeatRuns.agentId,
@@ -36,7 +39,12 @@ export function dashboardService(db: Db) {
           count: sql<number>`count(*)`,
         })
         .from(heartbeatRuns)
-        .where(inArray(heartbeatRuns.status, ["queued", "running"]))
+        .where(
+          and(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            ne(heartbeatRuns.invocationSource, DETACHED_INVOCATION_SOURCE),
+          ),
+        )
         .groupBy(heartbeatRuns.agentId, heartbeatRuns.status);
       const queuedByAgent = new Map<string, number>();
       const runningByAgent = new Map<string, number>();
