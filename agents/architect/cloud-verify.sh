@@ -664,6 +664,22 @@ accept_cloud_work() {
   # regenerated schema, or a declared out-of-scope fix the task's own diff
   # forced (`check_out_of_scope`).
   task_files="$(git diff --name-only "$base" "$lease")"
+  # A resolve ports the task onto main, and main may have moved the task's
+  # files since (one layout change moved every data file under a new root).
+  # The port then edits the file at main's path, which the task's original
+  # diff never named, and a correct resolution was rejected as out of scope.
+  # Main's own renames of the task's files carry its scope to the new path;
+  # anything main renamed that the task never touched stays out. Read commit
+  # by commit, oldest first, not as one base..onto diff: a file main renamed
+  # and then rewrote no longer looks like a rename end to end, and a file moved
+  # twice has to be followed through each move.
+  if [ "$resolve" = 1 ]; then
+    local status old new
+    while IFS=$'\t' read -r status old new; do
+      case "$status" in R*) ;; *) continue ;; esac
+      printf '%s\n' "$task_files" | grep -qxF -- "$old" && task_files="$task_files"$'\n'"$new"
+    done < <(git log --reverse -M --name-status --diff-filter=R --format= "$base..$from")
+  fi
   [ -f "$STATE_DIR/$TASK.cloud.main-repair" ] && repair=1
   [ -f "$STATE_DIR/$TASK.cloud.wide" ] && repair=1
   bad=""

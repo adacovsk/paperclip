@@ -615,6 +615,24 @@ setup_resolve AA-83; resolved; commit src/b.rs "fn widened() {}" widen; publish 
 accept AA-83;                                   check "resolution into a file the task never touched -> rejected" "$?" 1
 check "  ...for that reason (AA-83)" "$(why AA-83 'outside the task')" 1
 
+# Main moved files after the launch: the port edits the task's file at main's
+# new path, which is in scope; an untouched file main also moved is not.
+relayout() {  # task: main renames both files; the VM starts from the new main
+  g checkout -q main; g mv src/a.rs src/moved_a.rs; g mv src/b.rs src/moved_b.rs
+  g commit -q -m relayout; g push -q origin main; ONTO="$(g rev-parse HEAD)"; g fetch -q origin
+  sed -i "s/^rebased-onto: .*/rebased-onto: $ONTO/" "$CLOUD_VERIFY_DIR/$1.cloud.verdict"
+  g checkout -q --detach "$ONTO"
+}
+setup_resolve AA-78; relayout AA-78; commit src/moved_a.rs "fn a2() {}" "task, ported onto the new path"
+WORK="$(g rev-parse HEAD)"; publish AA-78
+accept AA-78;                                   check "port onto the path main renamed the task's file to -> accepted" "$?" 0
+check "worktree moved to the ported work"       "$(g rev-parse HEAD)" "$WORK"
+setup_resolve AA-79; relayout AA-79; commit src/moved_a.rs "fn a2() {}" port; commit src/moved_b.rs "fn widened() {}" widen
+publish AA-79
+accept AA-79;                                   check "edit to a renamed file the task never touched -> rejected" "$?" 1
+check "  ...for that reason (AA-79)" "$(why AA-79 'outside the task')" 1
+rm -f "$CLOUD_VERIFY_DIR"/AA-7[89].cloud.resolve
+
 setup_resolve AA-84 "#[allow(dead_code)] fn a2() {}"; resolved "#[allow(dead_code)] fn a2() {}"; publish AA-84
 accept AA-84;                                   check "the task's own suppression is not charged to the VM -> accepted" "$?" 0
 
