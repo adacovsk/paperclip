@@ -742,7 +742,13 @@ accept_cloud_work() {
     export PATH="${CLOUD_VERIFY_PIXI_BIN:-$HOME/.pixi/bin}:$PATH"
     # Through verify-sem.sh: a task worktree runs its own copy of the gate, and
     # one forked before the gate bounded itself would run beside every other.
-    if ! command -v pixi >/dev/null || ! "$(dirname "$0")/verify-sem.sh" pixi run -e dev verify; then
+    # On its own slot pool, as a landing's gate is (land.sh): the shared pool
+    # bounds Workers' and push hooks' self-checks, and finished cloud work queued
+    # behind them holds a merge for the length of their runs.
+    if ! command -v pixi >/dev/null \
+       || ! VERIFY_SEM_DIR="${ACCEPT_SEM_DIR:-/tmp/verify-sem-$(id -u)-accept}" \
+            VERIFY_SEM_SLOTS="${ACCEPT_SEM_SLOTS:-2}" \
+            "$(dirname "$0")/verify-sem.sh" pixi run -e dev verify; then
       git reset -q --keep "$lease"
       reject "guard suite failed (or pixi unavailable) on the cloud commits"
     fi
