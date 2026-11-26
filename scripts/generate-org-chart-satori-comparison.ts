@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm dlx tsx@4.23.15
 /**
  * Standalone org chart comparison generator — pure SVG (no Playwright).
  *
@@ -6,7 +6,7 @@
  * Uses the server-side SVG renderer directly — same code that powers the routes.
  *
  * Usage:
- *   npx tsx scripts/generate-org-chart-satori-comparison.ts
+ *   pnpm dlx tsx@4.23.15 scripts/generate-org-chart-satori-comparison.ts
  *
  * Output: tmp/org-chart-svg-comparison/
  */

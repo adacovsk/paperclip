@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm dlx tsx@4.23.15
 /**
  * Standalone org chart image generator.
  *
@@ -6,7 +6,7 @@
  * This gives us browser-native emoji rendering, full CSS support, and pixel-perfect output.
  *
  * Usage:
- *   npx tsx scripts/generate-org-chart-images.ts
+ *   pnpm dlx tsx@4.23.15 scripts/generate-org-chart-images.ts
  *
  * Output: tmp/org-chart-images/<style>-<size>.png
  */
