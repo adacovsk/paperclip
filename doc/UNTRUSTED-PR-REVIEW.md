@@ -29,8 +29,7 @@ docker compose -f docker-compose.untrusted-review.yml run --rm --service-ports r
 That opens an interactive shell in the review container with:
 
 - Node + Corepack/pnpm
-- `codex`
-- `claude`
+- `codex`, `claude` and `opencode`, at the versions pinned in `docker/agent-clis`
 - `gh`
 - `git`, `rg`, `fd`, `jq`
 

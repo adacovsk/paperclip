@@ -32,6 +32,11 @@ and the entry is removed once the version ages past the window.
 script unless the package is allowed under `allowBuilds`. Adding one there
 means reading what the script does first.
 
+**Agent CLIs in the Docker images** (`claude`, `codex`, `opencode`) are their
+own pnpm project in `docker/agent-clis`, with its own lockfile, cooldown and
+`allowBuilds`. Bump them there (Dependabot does, weekly); both Dockerfiles
+install from it.
+
 **Lockfile.** Commit `pnpm-lock.yaml` only in the same PR as the manifest change
 that moved it. A lockfile-only edit is rejected by `pr.yml`'s `policy` job;
 regenerate it with `refresh-lockfile.yml` rather than resolving a conflict by hand.

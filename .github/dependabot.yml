@@ -77,6 +77,19 @@ updates:
           - "pino"
           - "pino-*"
 
+  # The agent CLIs both Docker images install (docker/agent-clis has its own
+  # lockfile, outside the root workspace). Grouped: one image rebuild per round.
+  - package-ecosystem: "npm"
+    directory: "/docker/agent-clis"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 14
+    groups:
+      agent-clis:
+        patterns:
+          - "*"
+
   # GitHub Actions versions. The runner already warns that actions/checkout@v4,
   # actions/setup-node@v4 and pnpm/action-setup@v4 target the deprecated Node 20.
   - package-ecosystem: "github-actions"
@@ -86,9 +99,12 @@ updates:
     cooldown:
       default-days: 14
 
-  # Base image for the Dockerfile.
+  # Base image for both Dockerfiles; the untrusted-review image pins the same
+  # Node, so one entry covering both directories keeps them in step.
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/docker/untrusted-review"
     schedule:
       interval: "weekly"
     cooldown:

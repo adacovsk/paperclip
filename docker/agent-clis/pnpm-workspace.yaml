@@ -1,0 +1,16 @@
+# Settings for the agent-CLI install the Docker images run. This file also stops
+# pnpm's upward search, so this directory is its own project, not a member of
+# the repository's workspace.
+
+# Supply-chain cooldown, as in the root pnpm-workspace.yaml: resolve no version,
+# direct or transitive, published less than 14 days ago (in minutes).
+minimumReleaseAge: 20160
+saveExact: true
+
+# Install scripts run only for these, each read:
+#   @anthropic-ai/claude-code  postinstall (install.cjs) links the platform binary
+#   opencode-ai                postinstall (postinstall.mjs) links the platform binary
+# @openai/codex ships its binaries as platform packages and runs no script.
+allowBuilds:
+  "@anthropic-ai/claude-code": true
+  opencode-ai: true

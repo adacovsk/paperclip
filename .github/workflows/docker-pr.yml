@@ -1,0 +1,60 @@
+name: Docker build check
+
+# docker.yml builds and pushes only from master, so without this a Dockerfile
+# change is first built after it lands. This builds both images on a PR that
+# touches them (amd64, no push) and runs each agent CLI they ship.
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker/**"
+      - "docker-compose*.yml"
+      - ".github/workflows/docker-pr.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: app
+            file: Dockerfile
+            # docker.yml's scope, so a PR starts from master's layers.
+            cache_scope: buildkit
+          - image: untrusted-review
+            file: docker/untrusted-review/Dockerfile
+            cache_scope: untrusted-review
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: paperclip-${{ matrix.image }}:check
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          # A PR's cache writes are kept to its own ref and never reach master's.
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+
+      - name: Agent CLIs run
+        run: |
+          docker run --rm --entrypoint sh "paperclip-${{ matrix.image }}:check" -c \
+            'set -e; claude --version; codex --version; opencode --version'
