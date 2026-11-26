@@ -13,12 +13,12 @@ Current implementation status:
 ## Prerequisites
 
 - Node.js 22.22+ or 24.15+
-- pnpm 10.16+ (`minimumReleaseAge` needs it)
+- pnpm 12 (the `packageManager` pin; an older pnpm switches to it on its own)
 
 ## Dependency Policy
 
 **Versions are exact.** Every manifest entry is a pinned version, never a `^`/`~`
-range, and `.npmrc` sets `save-exact=true` so `pnpm add` keeps it that way.
+range, and `saveExact` in `pnpm-workspace.yaml` makes `pnpm add` keep it that way.
 
 **Nothing younger than 14 days.** `minimumReleaseAge` in `pnpm-workspace.yaml`
 makes pnpm refuse to resolve any version, direct or transitive, published in the
@@ -28,8 +28,8 @@ the same 14 days (`cooldown` in `.github/dependabot.yml`). An urgent security fi
 younger than that lands by naming its package under `minimumReleaseAgeExclude`,
 and the entry is removed once the version ages past the window.
 
-**Install scripts are off.** pnpm 10 runs no dependency `preinstall`/`postinstall`
-script unless the package is listed in `onlyBuiltDependencies`. Adding one there
+**Install scripts are off.** pnpm runs no dependency `preinstall`/`postinstall`
+script unless the package is allowed under `allowBuilds`. Adding one there
 means reading what the script does first.
 
 **Lockfile.** Commit `pnpm-lock.yaml` only in the same PR as the manifest change
