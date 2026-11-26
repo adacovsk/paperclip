@@ -598,6 +598,12 @@ accept AA-80;                                   check "resolved onto origin/main
 check "worktree moved to the resolved work"     "$(g rev-parse HEAD)" "$WORK"
 check "resolved branch published to origin"     "$(g ls-remote origin refs/heads/task/AA-80 | cut -f1)" "$WORK"
 check "landing's base is the commit it was rebased onto" "$(cat "$CLOUD_VERIFY_DIR/AA-80.base")" "$ONTO"
+check "a passed resolve clears the resolve mark" "$([ -f "$CLOUD_VERIFY_DIR/AA-80.cloud.resolve" ] && echo kept || echo cleared)" cleared
+
+setup_resolve AA-88; resolved; publish AA-88
+sed -i 's/^result: PASS$/result: FAIL/' "$CLOUD_VERIFY_DIR/AA-88.cloud.verdict"
+accept AA-88;                                   check "failed resolve: commits not taken" "$?" 0
+check "a failed resolve keeps the resolve mark" "$([ -f "$CLOUD_VERIFY_DIR/AA-88.cloud.resolve" ] && echo kept || echo cleared)" kept
 
 setup_resolve AA-81; resolved; publish AA-81
 sed -i '/^rebased-onto:/d' "$CLOUD_VERIFY_DIR/AA-81.cloud.verdict"

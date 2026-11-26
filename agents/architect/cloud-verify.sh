@@ -765,6 +765,13 @@ accept_cloud_work() {
       reject "push of the resolved $branch refused (moved on origin since launch)"
     fi
     printf '%s\n' "$onto" > "$STATE_DIR/$TASK.base"
+    # A passed resolve is spent, not tried. The mark is what land.sh and
+    # relaunch-verify.sh read as "a resolve already came back", and they refuse a
+    # second one: a guard against a conflict no resolve can settle. Left on after
+    # a PASS, it read that way for a branch whose resolve had worked, and the next
+    # time main moved into it (an hour's build is enough) the branch stalled for
+    # an operator to delete the mark. A failed resolve returns above and keeps it.
+    [ "$(field "$body" result)" = PASS ] && rm -f "$STATE_DIR/$TASK.cloud.resolve"
   fi
 
   printf '%s\n' "$work" > "$STATE_DIR/$TASK.cloud.head"
