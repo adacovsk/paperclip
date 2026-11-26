@@ -31,7 +31,7 @@
     "@dnd-kit/utilities": "3.2.2",
     "@lexical/link": "0.48.0",
     "lexical": "0.48.0",
-    "@mdxeditor/editor": "4.3.4",
+    "@mdxeditor/editor": "4.5.0",
     "@paperclipai/adapter-claude-local": "workspace:*",
     "@paperclipai/adapter-codex-local": "workspace:*",
     "@paperclipai/adapter-cursor-local": "workspace:*",
