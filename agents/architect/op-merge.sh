@@ -35,7 +35,7 @@
 #         2  usage
 # Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME,
 #         ARCHITECT_CLOUD_LANE (default 1 here: the operator asked for a build;
-#         cloud-pace.py still closes the lane on usage; 0 builds locally),
+#         unset or 0 builds locally),
 #         OP_MERGE_GH / OP_MERGE_LAND / OP_MERGE_RELAUNCH / OP_MERGE_CENSUS (test seams).
 set -uo pipefail
 

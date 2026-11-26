@@ -14,6 +14,7 @@ check() { [ "$2" = "$3" ] && { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; } \
                          || { FAIL=$((FAIL+1)); printf '  FAIL %s (expected %s, got %s)\n' "$1" "$3" "$2"; }; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+unset ARCHITECT_CLOUD_LANE
 export PAPERCLIP_PROJECT="$DIR/proj" XDG_CACHE_HOME="$DIR/cache" LOCAL_VERIFY_SCOPE=0
 S="$XDG_CACHE_HOME/paperclip-verify"; mkdir -p "$S"
 # The chain checks for cargo and sccache before it builds; neither runs here.
@@ -77,6 +78,9 @@ check "a failing generator -> red, test skipped" "$r $(cat "$S/T-1.exit") $(grep
 check "  no schema result recorded" "$([ -e "$S/T-1.schemas" ] && echo yes || echo no)" no
 
 echo "refusals"
+printf '#!/bin/sh\necho "cv $* in $(pwd)" >> %s\n' "$DIR/calls" > "$DIR/cv"; chmod +x "$DIR/cv"
+check "the cloud lane on -> offloaded, nothing built here" "$(rm -f "$S"/T-1.*; : > "$DIR/calls"; ARCHITECT_CLOUD_LANE=1 LOCAL_VERIFY_CV="$DIR/cv" bash "$SUT" T-1 V-2 >/dev/null 2>&1; echo $?; cat "$DIR/calls"; [ -e "$S/T-1.log" ] && echo log)" "0
+cv offload T-1 task/T-1 V-2 in $WT"
 launch >/dev/null; settle
 check "a sentinel already present -> 1" "$(bash "$SUT" T-1 V-2 >/dev/null 2>&1; echo $?)" 1
 check "an id that is not one -> 1" "$(bash "$SUT" 'T-1;rm' V-2 >/dev/null 2>&1; echo $?)" 1

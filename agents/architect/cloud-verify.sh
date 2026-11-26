@@ -812,54 +812,45 @@ suppressions() {  # lines adding a lint or test suppression in $1..$2
 }
 
 # The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
-# detached; exit the run as for a local launch). Exit 1 = lane closed; run the
-# local chain instead. Declining is never an error and writes no sentinel.
+# detached; exit the run as for a local launch). Exit 1 = not offloaded: the
+# lane is off, or the worktree cannot be published (wrong branch, uncommitted
+# changes, origin unreachable). Declining is never an error and writes no sentinel.
 #
-# There is deliberately no concurrency bound: while usage is under the week
-# ceiling (cloud-pace.py) every verify goes to the cloud, and the flood
-# is bounded by the quota it spends closing the gate. The gate is here rather than in INSTRUCTIONS.md so
-# no Architect run can offload without passing it.
+# While the lane is on, every verify goes to the cloud: no concurrency bound, no
+# usage gate, and no rejection count that sends a head to the local box. The
+# cloud lane and local builds are exclusive (ARCHITECT_CLOUD_LANE), so a
+# refusal here must never become a local build; do not re-add a gate that
+# answers "run locally" while the lane is on.
 cmd_offload() {
-  local task="${1:?task id}" branch="${2:?branch}" verify_task="${3:-$1}" open
+  local task="${1:?task id}" branch="${2:?branch}" verify_task="${3:-$1}"
   [ "${ARCHITECT_CLOUD_LANE:-}" = "1" ] || { echo "cloud lane off (ARCHITECT_CLOUD_LANE unset) — run locally"; exit 1; }
-  # A rejection at this head earns ONE more cloud attempt, told why the first
-  # was discarded: most rejections are a guard the VM skipped or an undeclared
-  # edit, which a session that knows the reason avoids. A second rejection at
-  # the same head means the VM cannot produce admissible work for it, and only
-  # then does the verify fall back to the local chain.
+  # A rejection at this head goes back to the cloud told why it was discarded:
+  # most rejections are a guard the VM skipped or an undeclared edit, which a
+  # session that knows the reason avoids. A later head starts clean.
   if [ -f "$STATE_DIR/$task.cloud.rejected" ]; then
     local rejected_head
     rejected_head="$(cat "$STATE_DIR/$task.cloud.rejected-head" 2>/dev/null || cat "$STATE_DIR/$task.cloud.launched-head" 2>/dev/null)"
     if [ -z "$rejected_head" ] || [ "$rejected_head" = "$(git rev-parse HEAD)" ]; then
-      if [ "$(cat "$STATE_DIR/$task.cloud.retried-head" 2>/dev/null)" = "$rejected_head" ] || [ -z "$rejected_head" ]; then
-        echo "cloud work for $task was rejected twice at this head ($(cat "$STATE_DIR/$task.cloud.rejected")) — run locally"; exit 1
-      fi
       cp -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.prior-rejection"
-      printf '%s\n' "$rejected_head" > "$STATE_DIR/$task.cloud.retried-head"
     else
-      rm -f "$STATE_DIR/$task.cloud.prior-rejection" "$STATE_DIR/$task.cloud.retried-head"
+      rm -f "$STATE_DIR/$task.cloud.prior-rejection"
     fi
-    rm -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.rejected-head"
+    rm -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.rejected-head" "$STATE_DIR/$task.cloud.retried-head"
   fi
   mkdir -p "$STATE_DIR"
-  open="$(python3 "$(dirname "$0")/cloud-pace.py" 2>>"$STATE_DIR/pace.log")" || open=0
-  if [ "$open" != "1" ]; then
-    echo "not offloaded: $(tail -1 "$STATE_DIR/pace.log" 2>/dev/null) — run locally"
-    exit 1
-  fi
   # The VM clones the remote, and Step 0's rebase has usually rewritten the branch
   # locally, so publish exactly this head. The base recorded here is what
   # acceptance scopes the VM's changes against.
-  [ "$(git branch --show-current)" = "$branch" ] || { echo "not on $branch — run locally"; exit 1; }
+  [ "$(git branch --show-current)" = "$branch" ] || { echo "not on $branch"; exit 1; }
   [ -z "$(git status --porcelain)" ] || { echo "uncommitted changes — commit them first"; exit 1; }
   git fetch -q origin main && git merge-base HEAD origin/main > "$STATE_DIR/$task.base" \
-    || { echo "cannot read origin/main — run locally"; exit 1; }
+    || { echo "cannot read origin/main"; exit 1; }
   # --no-verify: the pre-push hook runs the full guard suite, minutes under build
   # load, and the Architect's run ends and kills this command mid-hook — after
   # `.base` is written, before the push — leaving no sentinel and a guard-rewritten
   # baseline that makes the next offload refuse as uncommitted. The push is only
   # the VM's input; the VM runs the suite and acceptance re-runs it on this box.
-  git push -q --no-verify --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed — run locally"; exit 1; }
+  git push -q --no-verify --force-with-lease -u origin "HEAD:$branch" || { echo "push of $branch failed"; exit 1; }
   rm -f "$STATE_DIR/$task.exit" "$STATE_DIR/$task.cloud.head" "$STATE_DIR/$task.cloud.verdict" "$STATE_DIR/$task.base-red" "$STATE_DIR/$task.superseded"
   # Recorded as a file, not passed as env: the watcher runs in a transient scope
   # that does not inherit the caller's environment.
