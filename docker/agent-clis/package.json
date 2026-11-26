@@ -1,0 +1,12 @@
+{
+  "name": "paperclip-agent-clis",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The agent CLIs baked into the Docker images. A project of its own so they install from a lockfile under the same release cooldown and build-script allowlist as the app, and Dependabot can bump them.",
+  "packageManager": "pnpm@12.19.0",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.314",
+    "@openai/codex": "0.166.0",
+    "opencode-ai": "1.19.5"
+  }
+}

@@ -30,7 +30,8 @@ COPY packages/adapters/openclaw-gateway/package.json packages/adapters/openclaw-
 COPY packages/adapters/opencode-local/package.json packages/adapters/opencode-local/
 COPY packages/adapters/pi-local/package.json packages/adapters/pi-local/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store
 
 FROM base AS build
 WORKDIR /app
@@ -40,26 +41,26 @@ RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 
+# Agent CLIs: their own pnpm project (docker/agent-clis), installed from its
+# lockfile under the same release cooldown and build-script allowlist as the
+# app, and bumped by Dependabot. A stage of its own so app changes never
+# reinstall them, and its store sits in a cache mount rather than in the image.
+FROM base AS agent-clis
+WORKDIR /opt/agent-clis
+COPY docker/agent-clis/package.json docker/agent-clis/pnpm-workspace.yaml docker/agent-clis/pnpm-lock.yaml ./
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --prod --store-dir=/pnpm/store
+
 FROM base AS production
+# The CLI layer goes in before the app's, so an app-only change leaves this
+# ~900 MB layer byte-identical and registries and pulls reuse it.
+COPY --from=agent-clis /opt/agent-clis /opt/agent-clis
+RUN mkdir -p /paperclip && chown node:node /paperclip
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
-# Agent CLIs, pinned like every other dependency: each is the newest release
-# at least 14 days old when it was last bumped (raise them by hand; Dependabot
-# does not see these). `--before` holds their own dependencies to the same
-# window, since npm would otherwise resolve those to whatever was published
-# the day the image is built.
-ARG CLAUDE_CODE_VERSION=2.1.314
-ARG CODEX_VERSION=0.166.0
-ARG OPENCODE_VERSION=1.19.5
-RUN npm install --global --omit=dev \
-    --before="$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)" \
-    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    "@openai/codex@${CODEX_VERSION}" \
-    "opencode-ai@${OPENCODE_VERSION}" \
-  && mkdir -p /paperclip \
-  && chown node:node /paperclip
 
 ENV NODE_ENV=production \
+  PATH=/opt/agent-clis/node_modules/.bin:$PATH \
   HOME=/paperclip \
   HOST=0.0.0.0 \
   PORT=3100 \
