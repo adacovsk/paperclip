@@ -20,7 +20,7 @@ CALLS="$DIR/offloads"
 printf '#!/bin/sh\necho "$*" >> %s\nexit ${CV_RC:-0}\n' "$CALLS" > "$DIR/cv"; chmod +x "$DIR/cv"
 printf '#!/bin/sh\nexit ${CODE_MOVED:-0}\n' > "$DIR/fresh"; chmod +x "$DIR/fresh"
 printf '#!/bin/sh\nexit ${BUILD_LIVE:-1}\n' > "$DIR/census"; chmod +x "$DIR/census"
-printf '#!/bin/sh\necho "${CLOUD_VERIFY_RESOLVE:-0} $*" >> %s\nexit ${CV_RC:-0}\n' "$CALLS" > "$DIR/cv"; chmod +x "$DIR/cv"
+printf '#!/bin/sh\necho "${CLOUD_VERIFY_RESOLVE:-0} $*" >> %s\n[ -z "$CV_SAYS" ] || printf "checking\\n%%s\\n" "$CV_SAYS"\nexit ${CV_RC:-0}\n' "$CALLS" > "$DIR/cv"; chmod +x "$DIR/cv"
 LOCALS="$DIR/locals"
 printf '#!/bin/sh\necho "$*" >> %s\necho "local-verify $1: ${LOCAL_SAYS:-launched locally}"\nexit ${LOCAL_RC:-0}\n' "$LOCALS" > "$DIR/local"; chmod +x "$DIR/local"
 export RELAUNCH_CV="$DIR/cv" RELAUNCH_FRESHNESS="$DIR/fresh" RELAUNCH_CENSUS="$DIR/census" RELAUNCH_LOCAL="$DIR/local"
@@ -63,6 +63,13 @@ echo 99 > "$S/T-1.exit"
 check "a refused offload launches locally" "$(CV_RC=1 run retry)" 0
 check "  a retry in the normal lane" "$(locals)" "T-1 T-9"
 check "  and says so" "$(grep -c 'launched locally' "$DIR/out")" 1
+echo 99 > "$S/T-1.exit"
+check "a refusal's reason is kept" "$(CV_RC=1 CV_SAYS='uncommitted changes — commit them first' run retry)" 0
+check "  in the message" "$(grep -c 'refused the offload (uncommitted changes — commit them first); launched locally' "$DIR/out")" 1
+check "  and on disk, in full" "$(cat "$S/T-1.cloud.refused")" "$(printf 'checking\nuncommitted changes — commit them first')"
+echo 99 > "$S/T-1.exit"
+check "an accepted offload clears an old refusal" "$(run retry)" 0
+check "  leaving no refusal on disk" "$([ -f "$S/T-1.cloud.refused" ] && echo kept || echo gone)" gone
 echo 99 > "$S/T-1.exit"
 check "  a priority task's retry in the express lane" "$(CV_RC=1 RELAUNCH_EXPRESS=1 run retry)" 0
 check "    with --express" "$(locals)" "T-1 T-9 --express"
@@ -129,6 +136,7 @@ check "  on top of current main" "$(cd "$OPWT" && git merge-base --is-ancestor o
 check "an op branch the lane refuses is not built locally" "$(oprun CV_RC=1)" 1
 check "  no local launch" "$(locals)" ""
 check "  and says why" "$(grep -c 'has no local lane' "$DIR/out")" 1
+check "  with the lane's reason" "$(oprun CV_RC=1 CV_SAYS='lane closed' >/dev/null; grep -c 'refused the offload (lane closed)' "$DIR/out")" 1
 check "an op key with no worktree hands it to a model" "$(bash "$SUT" op-nothing op-nothing launch >/dev/null; echo $?)" 1
 
 echo "$PASS passed, $FAIL failed"

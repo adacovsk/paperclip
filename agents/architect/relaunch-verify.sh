@@ -28,6 +28,8 @@
 #         1  a model has to look: no worktree, wrong branch, dirty tree, a sync
 #            conflict, both lanes refused the build, or (launch) no commits to
 #            verify, a result or build already present, a resolve already tried
+# Files:  writes `<task>.cloud.refused` (the lane's full output) whenever the
+#         cloud lane refuses an offload, and removes it before each attempt.
 # Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME, FRESHNESS_CAP (default 2,
 #         as in §Landing), RELAUNCH_EXPRESS=1 (the task qualifies for the express
 #         lane: a first launch or retry passes it to the local build; a freshness
@@ -65,16 +67,26 @@ sync() {
            || { git merge --abort >/dev/null 2>&1; return 1; }; }
 }
 
+# The lane's own words for a refusal, kept in `<task>.cloud.refused` and echoed
+# as its last line. A refused offload silently becomes a local build, and
+# without the reason a closed lane, a dirty tree and a build the lane does not
+# take all read the same: local builds went unexplained while the lane sat open.
+refused() {
+  printf '%s\n' "$1" > "$S/$task.cloud.refused"
+  reason="${1##*$'\n'}"; reason="${reason:-no reason given}"
+}
+
 offload() {
-  rm -f "$S/$task.exit"
-  if "$CV" offload "$task" "$branch" "$verify" >/dev/null 2>&1; then
+  rm -f "$S/$task.exit" "$S/$task.cloud.refused"
+  if cv_out="$("$CV" offload "$task" "$branch" "$verify" 2>&1)"; then
     say "relaunched in the cloud lane ($1)"; exit 0
   fi
-  [ "$branch" = "task/$task" ] || { say "the cloud lane refused the offload, and $branch has no local lane ($1)"; exit 1; }
+  refused "$cv_out"
+  [ "$branch" = "task/$task" ] || { say "the cloud lane refused the offload ($reason), and $branch has no local lane ($1)"; exit 1; }
   # A refused offload (the lane closed, or a build it does not take) is a local
   # build, which is all the woken Architect would have done with it.
   if out="$("$LOCAL" "$task" "$verify" ${2:-} 2>&1)"; then
-    say "the cloud lane refused the offload; launched locally ($1)"; exit 0
+    say "the cloud lane refused the offload ($reason); launched locally ($1)"; exit 0
   fi
   # The sentinel is already gone, so the woken Architect finds "absent + no
   # build" and starts from Step 0.
@@ -95,11 +107,12 @@ case "$mode" in
     # Step 0: a conflict goes to the lane in resolve mode, from the un-rebased
     # head; only a resolve already tried makes it a model's (and the operator's).
     [ ! -e "$S/$task.cloud.resolve" ] || { say "conflicts with origin/main and a resolve verify was already tried"; exit 1; }
-    rm -f "$S/$task.exit"
-    if CLOUD_VERIFY_RESOLVE=1 "$CV" offload "$task" "$branch" "$verify" >/dev/null 2>&1; then
+    rm -f "$S/$task.exit" "$S/$task.cloud.refused"
+    if cv_out="$(CLOUD_VERIFY_RESOLVE=1 "$CV" offload "$task" "$branch" "$verify" 2>&1)"; then
       say "conflicts with origin/main; launched in resolve mode"; exit 0
     fi
-    say "the cloud lane refused the resolve offload"; exit 1
+    refused "$cv_out"
+    say "the cloud lane refused the resolve offload ($reason)"; exit 1
     ;;
   retry)
     offload "retry after an inconclusive build" "$express"
