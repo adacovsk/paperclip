@@ -284,19 +284,19 @@ check "open lane has no concurrency bound" "$(wc -l < "$DIR/setsid.log")" 6
 check "offload pushes each task"             "$(wc -l < "$PUSH_LOG")" 6
 check "offload push skips the pre-push hook" "$(grep -vc -- '--no-verify' "$PUSH_LOG")" 0
 usage 98 6
-OFFLOAD_TASK=AA-11 "$CV" offload AA-11 task/AA-11 >/dev/null 2>&1; check "week ceiling -> 1" "$?" 1
-check "closed lane detached nothing" "$(wc -l < "$DIR/setsid.log")" 6
+OFFLOAD_TASK=AA-11 "$CV" offload AA-11 task/AA-11 >/dev/null 2>&1; check "week ceiling does not gate the lane -> 0" "$?" 0
 usage 38 6
 echo "guard suite failed" > "$CLOUD_VERIFY_DIR/AA-12.cloud.rejected"
-OFFLOAD_TASK=AA-12 "$CV" offload AA-12 task/AA-12 >/dev/null 2>&1; check "rejection with no recorded head is not re-offloaded -> 1" "$?" 1
+OFFLOAD_TASK=AA-12 "$CV" offload AA-12 task/AA-12 >/dev/null 2>&1; check "rejection with no recorded head -> re-offloaded" "$?" 0
 
-echo "a rejection earns one informed retry at the same head:"
+echo "a rejection goes back to the cloud, told why, at the same head:"
 reject_at() { echo "$2" > "$CLOUD_VERIFY_DIR/$1.cloud.rejected"; echo "$3" > "$CLOUD_VERIFY_DIR/$1.cloud.rejected-head"; }
 reject_at AA-13 "guard suite failed" ccc333
 OFFLOAD_TASK=AA-13 "$CV" offload AA-13 task/AA-13 >/dev/null 2>&1; check "first rejection at this head -> re-offloaded" "$?" 0
 check "the retry carries the reason" "$(cat "$CLOUD_VERIFY_DIR/AA-13.cloud.prior-rejection" 2>/dev/null)" "guard suite failed"
 reject_at AA-13 "cloud commits delete files" ccc333
-OFFLOAD_TASK=AA-13 "$CV" offload AA-13 task/AA-13 >/dev/null 2>&1; check "second rejection at the same head -> 1" "$?" 1
+OFFLOAD_TASK=AA-13 "$CV" offload AA-13 task/AA-13 >/dev/null 2>&1; check "second rejection at the same head -> re-offloaded" "$?" 0
+check "  told the latest reason" "$(cat "$CLOUD_VERIFY_DIR/AA-13.cloud.prior-rejection" 2>/dev/null)" "cloud commits delete files"
 reject_at AA-14 "guard suite failed" ccc333; echo ccc333 > "$CLOUD_VERIFY_DIR/AA-14.cloud.retried-head"
 echo "old reason" > "$CLOUD_VERIFY_DIR/AA-14.cloud.prior-rejection"
 reject_at AA-14 "guard suite failed" ddd444

@@ -40,8 +40,9 @@
 # Usage:  local-verify.sh <task-id> <verify-task-id> [--express]
 #         --express  the freshness re-verify's express lane (CARGO_SEM_PRIORITY=1)
 # Exit:   0  launched; 1 not launched, and the last line of output says why
-# Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME,
-#         LOCAL_VERIFY_SEM / LOCAL_VERIFY_CALLBACK / LOCAL_VERIFY_SCOPE (test seams;
+# Env:    PAPERCLIP_PROJECT (required), XDG_CACHE_HOME, ARCHITECT_CLOUD_LANE (=1 hands the
+#         launch to cloud-verify.sh offload: the lane and local builds are exclusive),
+#         LOCAL_VERIFY_SEM / LOCAL_VERIFY_CALLBACK / LOCAL_VERIFY_SCOPE / LOCAL_VERIFY_CV (test seams;
 #         LOCAL_VERIFY_SCOPE=0 forces bare setsid), LOCAL_VERIFY_PRINT=1 prints the
 #         chain instead of launching it
 set -uo pipefail
@@ -57,6 +58,14 @@ for id in "$task" "$verify"; do
   [[ "$id" =~ ^[A-Za-z]+-[0-9]+$ ]] || { say "refusing id '$id'"; exit 1; }
 done
 [ -z "$express" ] || [ "$express" = "--express" ] || { say "unknown option $express"; exit 1; }
+# ONE TOGGLE: CLOUD LANE XOR LOCAL. With ARCHITECT_CLOUD_LANE=1 every verify
+# builds on a VM and none on this machine, so a launch here is handed to the
+# lane instead. A local chain is a full Bevy compile on the operator's laptop;
+# do not let any caller reach it while the lane is on.
+if [ "${ARCHITECT_CLOUD_LANE:-}" = 1 ]; then
+  cd "$PAPERCLIP_PROJECT/.paperclip/worktrees/$task" 2>/dev/null || { say "no worktree"; exit 1; }
+  exec "${LOCAL_VERIFY_CV:-$HERE/cloud-verify.sh}" offload "$task" "task/$task" "$verify"
+fi
 [ ! -e "$S/$task.exit" ] || { say "a sentinel is already present"; exit 1; }
 ! "$HERE/verify-census.sh" "$task" >/dev/null 2>&1 || { say "a local build is already running"; exit 1; }
 

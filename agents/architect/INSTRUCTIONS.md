@@ -401,12 +401,14 @@ without it the wake lands on whatever task your session last touched, and the
 green result waits for the next Coordinator fire.
 
 It pushes the branch, records its base, and detaches the watch. **Exit 0 → exit
-the run. Exit 1 → the lane is closed for this task; launch the local chain as
-usual.** Exit 1 is never a failure. The lane is open until the week usage
-ceiling is reached (the `cloud-pace` script beside this file, the pipeline's one quota
-gate), and while open there is
-no concurrency bound. Never call `watch` or `launch`
-directly — they bypass the gate.
+the run. Exit 1 → not offloaded: the lane is off (launch the local chain as
+usual), or the worktree cannot be published (wrong branch, uncommitted
+changes, origin unreachable — comment the reason and escalate to operator).
+**The lane and local builds are exclusive**: while `ARCHITECT_CLOUD_LANE=1` is
+set, every verify goes to the cloud with no usage gate and no concurrency
+bound, and `local-verify.sh` hands its launch to `offload` instead of building
+here. Only the operator turns the lane off to build locally. Never call `watch`
+or `launch` directly.
 
 **The VM's commits are untrusted until this box accepts them.** The VM builds the
 exact head you pushed and publishes only to its own `cloud-verify/` branch.
@@ -444,9 +446,8 @@ above, with these cloud-specific meanings (you can tell a cloud result by
 - **`95`** → rejected; the reason is in `{task-id}.cloud.rejected` and the tail
   of `{task-id}.cloud.log`. Your worktree was left at the head you pushed.
   Comment the reason, `rm -f "$EXIT"`, and **offload again with the same
-  prefixes**: the first rejection at a head earns one retry, and the VM is told
-  why its first attempt was discarded. Only when `offload` refuses (a second
-  rejection at that head) launch the **local** chain. A later head (a rebase or a
+  prefixes**: the VM is told
+  why its last attempt was discarded. Every rejection goes back to the cloud this way, told the latest reason. A later head (a rebase or a
   fix commit) offloads normally — the refusal does not outlive the head it judged.
 - **No sentinel, a `{task-id}.cloud.launched`, and no live watcher** (`{task-id}.pid` empty, or not a `cloud-verify` process) → the watcher died, not the VM: its session is still building or has already published. From the worktree run `"$CV" resume "{task-id}" "{verify-task-id}"` and exit the run. Never `offload` again in this state — that starts a second VM for a verdict the first one may already have written. **The one exception is `resume` exiting `4`**: that launch already delivered its verdict (or its session finished with nothing on origin), so there is nothing to wait for, and `resume` has dropped the launch record. Treat it as "absent + no build" and offload afresh; the verdict it gave described an older `main`, which is why its sentinel was cleared.
 - **`99`** → no verdict ref by the deadline. That is usually a slow session, not
@@ -455,10 +456,9 @@ above, with these cloud-specific meanings (you can tell a cloud result by
   head sha, so a late verdict from the first session satisfies the relaunch's
   poll instead of being thrown away. Twice running → escalate.
 
-**It spends quota, not relief from it.** Cloud draws the same account limits; the
-lane exists to use weekly quota that would otherwise go unused. A cold VM with no
-sccache is slower per build than a warm local one — offload anyway while the
-lane is open; the gate, not your read of the queue, decides.
+**Offload even when a local build looks faster.** A cold VM with no sccache is
+slower per build than a warm local one; offload anyway while the lane is on.
+The flag decides, not your read of the queue.
 
 ## Landing: commit, push, and open the PR (ONE atomic block)
 

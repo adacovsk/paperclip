@@ -1107,11 +1107,7 @@ def base_red_markers() -> list[BaseRed]:
 
 def verify_capacity() -> int | None:
     """Verifies that may still be dispatched now; None means unbounded (cloud lane open)."""
-    lane = subprocess.run(
-        [sys.executable, str(HERE.parent / "architect" / "cloud-pace.py")],
-        capture_output=True, text=True, timeout=60,
-    ).stdout.strip() if os.environ.get("ARCHITECT_CLOUD_LANE") == "1" else "0"
-    if lane == "1":
+    if os.environ.get("ARCHITECT_CLOUD_LANE") == "1":
         return None
     try:
         slots = int(Path("/tmp/cargo-sem.slots").read_text().strip())

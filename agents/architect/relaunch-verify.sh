@@ -83,8 +83,9 @@ offload() {
   fi
   refused "$cv_out"
   [ "$branch" = "task/$task" ] || { say "the cloud lane refused the offload ($reason), and $branch has no local lane ($1)"; exit 1; }
-  # A refused offload (the lane closed, or a build it does not take) is a local
-  # build, which is all the woken Architect would have done with it.
+  # With the lane on, a refused offload is a worktree the lane cannot publish,
+  # and a local build would only compile it on the operator's laptop.
+  [ "${ARCHITECT_CLOUD_LANE:-}" != 1 ] || { say "the cloud lane refused the offload ($1): $reason"; exit 1; }
   if out="$("$LOCAL" "$task" "$verify" ${2:-} 2>&1)"; then
     say "the cloud lane refused the offload ($reason); launched locally ($1)"; exit 0
   fi
