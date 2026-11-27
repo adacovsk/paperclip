@@ -51,7 +51,7 @@
   },
   "dependencies": {
     "@paperclipai/adapter-utils": "workspace:*",
-    "ws": "8.22.0"
+    "ws": "8.22.2"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
