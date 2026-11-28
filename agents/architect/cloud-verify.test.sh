@@ -311,6 +311,69 @@ check "a later offload without it clears the mark" "$([ -f "$CLOUD_VERIFY_DIR/AA
 check "CLOUD_VERIFY_WIDE=1 -> wide mark" "$([ -f "$CLOUD_VERIFY_DIR/AA-15.cloud.wide" ] && echo yes)" yes
 unset ARCHITECT_CLOUD_LANE
 
+echo "offload builds on current main, whoever calls it:"
+# Real git against a bare origin: the sync is what is under test, and a stub
+# would only restate it. The VM never rebases outside resolve mode, so a head
+# offloaded unsynced is built on whatever base it last had.
+(
+  RB="$DIR/realbin"; mkdir -p "$RB"
+  cp "$BIN/setsid" "$RB/setsid"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$RB/systemd-run"; chmod +x "$RB/systemd-run"
+  export PATH="$RB:$(printf '%s' "$PATH" | sed "s#$BIN:##")"
+  export ARCHITECT_CLOUD_LANE=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  O="$DIR/origin.git"; W="$DIR/work"
+  git init -q --bare -b main "$O"
+  git clone -q "$O" "$W" 2>/dev/null; cd "$W" || exit 1
+  git checkout -q -b main
+  printf 'a\n' > shared.txt; git add shared.txt; git commit -q -m base; git push -q origin main
+  main_moves() {  # file content: a commit on origin/main the task branch lacks
+    local t; t="$(mktemp -d)"
+    git clone -q "$O" "$t/c" 2>/dev/null
+    (cd "$t/c" && printf '%s\n' "$2" > "$1" && git add "$1" && git commit -q -m "main: $1" && git push -q origin main)
+    rm -rf "$t"
+  }
+  synced() { git fetch -q origin main && git merge-base --is-ancestor origin/main HEAD && echo yes || echo no; }
+
+  # A branch not yet on origin is rebased.
+  git checkout -q -b task/AA-60 main; printf 't\n' > t60.txt; git add t60.txt; git commit -q -m task60
+  main_moves m1.txt one
+  "$CV" offload AA-60 task/AA-60 >/dev/null 2>&1; check "unpushed branch -> offloaded" "$?" 0
+  check "  built on current main"          "$(synced)" yes
+  check "  rebased, not merged"            "$(git rev-list --merges --count origin/main..HEAD)" 0
+  check "  .base is current main"          "$(cat "$CLOUD_VERIFY_DIR/AA-60.base")" "$(git rev-parse origin/main)"
+  check "  the synced head is what went out" "$(git rev-parse origin/task/AA-60 2>/dev/null || git ls-remote origin task/AA-60 | cut -f1)" "$(git rev-parse HEAD)"
+
+  # A branch already on origin is merged: Landing's push is not forced.
+  before="$(git rev-parse HEAD)"
+  main_moves m2.txt two
+  "$CV" offload AA-60 task/AA-60 >/dev/null 2>&1; check "pushed branch -> offloaded" "$?" 0
+  check "  built on current main"          "$(synced)" yes
+  check "  the old head is kept (merge)"   "$(git merge-base --is-ancestor "$before" HEAD && echo yes)" yes
+
+  # An already-current head is published as it is.
+  before="$(git rev-parse HEAD)"
+  "$CV" offload AA-60 task/AA-60 >/dev/null 2>&1
+  check "current head -> unchanged"        "$(git rev-parse HEAD)" "$before"
+
+  # A conflict goes out in resolve mode on the unsynced head, once.
+  git checkout -q -b task/AA-61 origin/main; printf 'task\n' > shared.txt; git commit -q -am task61
+  main_moves shared.txt main
+  before="$(git rev-parse HEAD)"
+  out="$("$CV" offload AA-61 task/AA-61 2>&1)"; check "conflict -> offloaded" "$?" 0
+  check "  in resolve mode"                "$([ -f "$CLOUD_VERIFY_DIR/AA-61.cloud.resolve" ] && echo yes)" yes
+  check "  says so"                        "$(printf '%s' "$out" | grep -c 'resolve mode')" 1
+  check "  head left as it was"            "$(git rev-parse HEAD)" "$before"
+  check "  no merge or rebase in progress" "$(git status --porcelain | wc -l)" 0
+  "$CV" offload AA-61 task/AA-61 >/dev/null 2>&1; check "conflict after a resolve came back -> 1" "$?" 1
+
+  # Resolve mode asked for explicitly is never pre-synced: the VM resolves it.
+  rm -f "$CLOUD_VERIFY_DIR/AA-61.cloud.resolve"
+  CLOUD_VERIFY_RESOLVE=1 "$CV" offload AA-61 task/AA-61 >/dev/null 2>&1; check "explicit resolve -> offloaded" "$?" 0
+  check "  head left as it was"            "$(git rev-parse HEAD)" "$before"
+  echo "$PASS $FAIL" > "$DIR/sync.counts"
+)
+read -r PASS FAIL < "$DIR/sync.counts"
+
 echo "launch prompt follows the mode:"
 cat > "$BIN/git" <<'EOF'
 #!/usr/bin/env bash

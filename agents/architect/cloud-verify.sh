@@ -824,10 +824,21 @@ suppressions() {  # lines adding a lint or test suppression in $1..$2
   bash "$(dirname "$0")/suppressions.sh" "$1" "$2"
 }
 
+# §Landing's sync: a branch already on origin is merged, never rebased, because
+# Landing's push is not forced. Returns 1 on a conflict, with no rebase or merge
+# left in progress.
+sync_onto_main() {
+  { ! git ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1 && git rebase -q origin/main >/dev/null 2>&1; } \
+    || { git rebase --abort >/dev/null 2>&1
+         git merge -q --no-edit origin/main >/dev/null 2>&1 \
+           || { git merge --abort >/dev/null 2>&1; return 1; }; }
+}
+
 # The Architect's only entry point to the lane. Exit 0 = offloaded (a watch is
 # detached; exit the run as for a local launch). Exit 1 = not offloaded: the
 # lane is off, or the worktree cannot be published (wrong branch, uncommitted
-# changes, origin unreachable). Declining is never an error and writes no sentinel.
+# changes, origin unreachable, a conflict with main after a resolve verify
+# already came back). Declining is never an error and writes no sentinel.
 #
 # While the lane is on, every verify goes to the cloud: no concurrency bound, no
 # usage gate, and no rejection count that sends a head to the local box. The
@@ -851,13 +862,30 @@ cmd_offload() {
     rm -f "$STATE_DIR/$task.cloud.rejected" "$STATE_DIR/$task.cloud.rejected-head" "$STATE_DIR/$task.cloud.retried-head"
   fi
   mkdir -p "$STATE_DIR"
-  # The VM clones the remote, and Step 0's rebase has usually rewritten the branch
+  # The VM clones the remote, and the sync below has usually rewritten the branch
   # locally, so publish exactly this head. The base recorded here is what
   # acceptance scopes the VM's changes against.
   [ "$(git branch --show-current)" = "$branch" ] || { echo "not on $branch"; exit 1; }
   [ -z "$(git status --porcelain)" ] || { echo "uncommitted changes — commit them first"; exit 1; }
-  git fetch -q origin main && git merge-base HEAD origin/main > "$STATE_DIR/$task.base" \
-    || { echo "cannot read origin/main"; exit 1; }
+  git fetch -q origin main || { echo "cannot read origin/main"; exit 1; }
+  # Every offload builds on current main, whoever calls it. Outside resolve mode
+  # the VM is told not to rebase, so a head published as-is is built on whatever
+  # base it last synced to. Only some callers synced first: a requeued base-red
+  # verify went out on a head older than the fix it was waiting for, came back
+  # red on a test main had already repaired, and was re-recorded as main's red
+  # three times while its PR sat in draft. Syncing here, not in each caller, is
+  # what stops a new call site from reopening that.
+  if [ "${CLOUD_VERIFY_RESOLVE:-}" != "1" ] && ! git merge-base --is-ancestor origin/main HEAD; then
+    if ! sync_onto_main "$branch"; then
+      # A conflict is resolve mode's job, the hand-off Step 0 makes, but only
+      # once: a resolve that already came back belongs to a model.
+      [ ! -e "$STATE_DIR/$task.cloud.resolve" ] \
+        || { echo "conflicts with origin/main and a resolve verify was already tried"; exit 1; }
+      echo "conflicts with origin/main — offloading in resolve mode"
+      CLOUD_VERIFY_RESOLVE=1
+    fi
+  fi
+  git merge-base HEAD origin/main > "$STATE_DIR/$task.base" || { echo "cannot read origin/main"; exit 1; }
   # --no-verify: the pre-push hook runs the full guard suite, minutes under build
   # load, and the Architect's run ends and kills this command mid-hook — after
   # `.base` is written, before the push — leaving no sentinel and a guard-rewritten
