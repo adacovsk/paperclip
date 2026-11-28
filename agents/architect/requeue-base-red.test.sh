@@ -191,6 +191,33 @@ echo '[{"identifier":"T-1","id":"u1","status":"blocked","assigneeAgentId":"arch"
 out="$(bash "$R")"
 case "$out" in *"requeued T-1"*"touches assets/data/spells.json"*) ok "a fix to a data-guard site's file requeues";; *) fail "data site touch did not requeue: $out";; esac
 
+# 9c. The build predates a fix the marker's stamp already carries → requeued
+#     from the built base. Stamped with main at write time, the marker alone
+#     would wait for a commit after the stamp, and the fix is before it.
+reset
+g reset -q --hard "$B"
+printf 'fn f() { let _ = Ctx { a: 0 }; }\n' > "$PAPERCLIP_PROJECT/src/site.rs"; g commit -q -am "fix site"; FX="$(g rev-parse HEAD)"
+g update-ref refs/remotes/origin/main HEAD
+printf '%s\nT-1\nsrc/site.rs:1 E0063 missing field `attack_total` in initializer of `Ctx`\n' "$FX" > "$V/T-1.base-red"
+echo "$B" > "$V/T-1.base"; echo 1 > "$V/T-1.exit"
+echo '[{"identifier":"T-1","id":"u1","status":"blocked","assigneeAgentId":"arch"}]' > "$D/issues.json"
+out="$(bash "$R")"
+case "$out" in *"requeued T-1"*"touches src/site.rs"*"built on ${B:0:9}"*) ok "a stamp on main does not hide a fix the build predates";; *) fail "stale build left blocked on a stamped main: $out";; esac
+reset
+printf 'y2\n' > "$PAPERCLIP_PROJECT/other.txt"; g commit -q -am unrelated2
+g update-ref refs/remotes/origin/main HEAD
+printf '%s\nT-1\nsrc/site.rs:1 E0063 missing field `attack_total` in initializer of `Ctx`\n' "$FX" > "$V/T-1.base-red"
+echo "$B" > "$V/T-1.base"; echo 1 > "$V/T-1.exit"
+out="$(bash "$R")"
+case "$out" in *"requeued T-1"*"touches src/site.rs"*) ok "a fix between the built base and the stamp requeues";; *) fail "fix before the stamp did not requeue: $out";; esac
+# The same marker built on its own stamp is the old case: only the unrelated commit is new.
+reset
+printf '%s\nT-1\nsrc/site.rs:1 E0063 missing field `attack_total` in initializer of `Ctx`\n' "$FX" > "$V/T-1.base-red"
+echo "$FX" > "$V/T-1.base"; echo 1 > "$V/T-1.exit"
+out="$(bash "$R")"
+[ -e "$V/T-1.base-red" ] && ! grep -q PATCH "$D/calls" \
+  && ok "a build on the stamp still waits for a touching commit" || fail "built-on-stamp marker requeued: $out"
+
 # 10. A pending record left by a killed sweep, verify still unassigned → re-assigned.
 reset
 printf '%s\nT-1\nsrc/site.rs:1 E0063 x\n' "$B" > "$V/T-1.base-red"

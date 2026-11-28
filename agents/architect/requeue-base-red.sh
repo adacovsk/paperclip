@@ -22,12 +22,21 @@
 #      assignee toggled through null, which is what fires `wakeOnDemand`.
 #      Leaving `blocked` clears any hold on it; one the Dispatcher held, and so
 #      left unassigned, goes to the Architect.
-# The relaunch that follows rebases onto current `origin/main` (§Detached
-# launch), so a break that is really gone stays gone, and one that is still
-# there re-escalates with a fresh marker.
+# The relaunch that follows builds on current `origin/main`: a local launch
+# rebases inside its chain, and `cloud-verify.sh offload` syncs the branch
+# before publishing it. So a break that is really gone stays gone, and one that
+# is still there re-escalates with a fresh marker.
 #
 # A marker whose sha IS current `origin/main` is left alone: nothing has changed
 # on `main`, so re-running would only reproduce the same red.
+#
+# THE BUILT BASE, NOT THE MARKER'S SHA, IS WHERE THE RED WAS SEEN. A marker is
+# stamped with `origin/main` when it is written, and a build can be older than
+# that: one verify built a base that predated a test fix, was stamped with a
+# later main that already carried the fix, and so waited for a commit after the
+# stamp to touch a break that was already repaired. Nothing ever came. When
+# `<task>.base` (the base the last launch recorded) is an older ancestor of the
+# marker's sha, the sweep measures from it instead.
 #
 # MAIN MOVING IS NOT THE BREAK BEING FIXED. A marker that records its failing
 # sites is requeued only once some commit in `<sha>..origin/main` plausibly
@@ -179,16 +188,23 @@ for marker in "$S"/*.base-red; do
   task="$(basename "$marker" .base-red)"
   sha="$(sed -n 1p "$marker")"
   esc="$(sed -n 2p "$marker")"; esc="${esc:-$task}"
-  if [ "$sha" = "$MAIN" ]; then
+  from="$sha"
+  built="$(sed -n 1p "$S/$task.base" 2>/dev/null)"
+  if [ -n "$built" ] && [ "$built" != "$sha" ] \
+     && git -C "$PAPERCLIP_PROJECT" merge-base --is-ancestor "$built" "$sha" 2>/dev/null; then
+    from="$built"
+  fi
+  if [ "$from" = "$MAIN" ]; then
     echo "$task: main unchanged since the base-red ($sha) — left blocked"
     continue
   fi
   [ -e "$S/$task.requeue-pending" ] && continue   # still unfinished above; retried next pass
-  touched="$(break_touched "$marker" "$task" "$sha")"; rc=$?
+  touched="$(break_touched "$marker" "$task" "$from")"; rc=$?
   if [ "$rc" = 1 ]; then
-    echo "$task: nothing in ${sha:0:9}..${MAIN:0:9} touches the recorded break — left blocked"
+    echo "$task: nothing in ${from:0:9}..${MAIN:0:9} touches the recorded break — left blocked"
     continue
   fi
+  [ "$from" != "$sha" ] && touched="${touched:+$touched; }built on ${from:0:9}, older than the marker's ${sha:0:9}"
   why="${touched:-origin/main moved and the marker records no failing site}"
   if [ "$DRY" = 1 ]; then
     echo "$task: would requeue $esc (base-red $sha, main now $MAIN; $why)"; continue

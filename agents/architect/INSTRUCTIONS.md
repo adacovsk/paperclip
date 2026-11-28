@@ -327,9 +327,11 @@ These are hard rules. Past Architect runs have wasted 60+ minutes wrestling with
 
      **When every error left is one already on `main`, record that before you escalate**, so the escalation clears itself once `main` moves. **This holds whether or not you built.** Declining to relaunch because a source read shows `main` still broken is the same escalation and needs the same marker: the requeue script deletes the marker when it re-dispatches you, so an escalation that skips writing a fresh one leaves the task `blocked` with nothing left to wake it when `main` is fixed:
      ```sh
-     printf '%s\n%s\n' "$(git rev-parse origin/main)" "{verify-task-id}" > "$VERIFY_DIR/{task-id}.base-red"
+     BUILT="$(cat "$VERIFY_DIR/{task-id}.base" 2>/dev/null)"   # the base this red was seen on
+     printf '%s\n%s\n' "${BUILT:-$(git rev-parse origin/main)}" "{verify-task-id}" > "$VERIFY_DIR/{task-id}.base-red"
      printf '%s\n' "<path>:<line> <code> <message>" >> "$VERIFY_DIR/{task-id}.base-red"   # once per error left
      ```
+     **Stamp the base you built, not today's `origin/main`.** The requeue waits for a commit *after* the stamp to touch the break, so stamping a later `main` than the one built hides any fix that landed in between: one verify built a base older than a test fix, was stamped with a `main` that already had it, and sat `blocked` on a repair that was already in. `requeue-base-red.sh` also measures from `{task-id}.base` when it is older, but the marker should say what was seen. Never tell anyone a stale result was built on current `main` without reading the base off the verdict's `base:` line.
      The error lines are what a main-repair is filed from: when two or more verifies leave a marker on the same `origin/main`, the Dispatcher files one `ci-fix:` task carrying their errors under `## Compile errors` and assigns it to the Architect, so a break you found does not wait for the nightly Tester or an operator. Keep each to one line, file and line first.
      The Dispatcher runs `agents/architect/requeue-base-red.sh` on every sweep (and the Coordinator every fire): once a commit past that sha touches the break — a recorded site's file, or a line naming an identifier the error quotes in backticks — it deletes this task's stale result and re-dispatches it, and the relaunch rebases onto the new `main`. Record every site: a marker with none falls back to requeueing on any move of `main`, which re-dispatches the verify on every unrelated merge. A verify blocked on a marker is also left out of the stuck stock that gates promotion — the red is `main`'s, not the task's. Without the marker a base-red escalation stayed `blocked` after `main` was fixed until an operator deleted the sentinel by hand. A red that is partly yours gets no marker — it is not waiting on `main`. The Dispatcher holds a verify parked on a marker (`until_merge` on a live main-repair, else `other` naming the requeue), so the board reads what it waits on; the requeue re-dispatches it to you either way.
    - **Main-repair tasks: an error already on `origin/main` is in scope, wherever it is.** A task is main-repair when it — or the work task your `Verify:` subtask belongs to — carries the `ci-failure` label, a `ci-fix:` title, or a `Main-repair:` line in its body (written at intake for a task filed from a failing-`main` issue). Its whole purpose is a green `main`, so a second break on `main` that is not in its listed errors is no less its job than the listed ones: fix it in the existing file it is in, list it in the PR body's Verification section like any out-of-scope edit, and do not escalate it as "not mine". The diff-tie and hunk bounds above do not apply to these fixes — a lint is fixed by restructuring, not by editing uses of one identifier — but the rest do: no `#[allow]`/`#[expect]`/`#[ignore]`, no deleted file or test, no weakened assertion. Escalating instead is what stranded a main-repair task for hours: it verified green, rebased for freshness onto a `main` that had just picked up an unrelated compile break, called that break "not mine", and blocked the one fix the whole pipeline was waiting on. Offload it with `CLOUD_VERIFY_MAIN_REPAIR=1` (§Cloud overflow lane) so the VM is told the same and acceptance admits the edits.
@@ -369,6 +371,13 @@ chain, from the worktree with everything committed:
 CV="$HOME/code/paperclip/agents/architect/cloud-verify.sh"
 "$CV" offload "{task-id}" "task/{task-id}" "{verify-task-id}"
 ```
+
+`offload` syncs the branch onto current `origin/main` before it publishes (a
+merge for a branch already on origin, a rebase otherwise), because outside
+resolve mode the VM builds the published head exactly as it is. A sync that
+conflicts goes out in resolve mode, or exits 1 if a resolve verify already came
+back. So there is no stale-head offload to guard against, and none to promise:
+the verdict's `base:` line is what it was built on.
 
 Three prefixes change what the VM is asked to do; each is recorded for the
 detached watcher and cleared by the next offload that omits it:
